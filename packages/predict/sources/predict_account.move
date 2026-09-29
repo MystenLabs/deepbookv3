@@ -5,7 +5,7 @@
 /// (the `account` package).
 ///
 /// This is Predict's account-local state: open positions and sticky builder-code
-/// attribution. DUSDC/PLP custody lives in `Account`. The `PredictApp` witness
+/// attribution. USDC/PLP custody lives in `Account`. The `PredictApp` witness
 /// namespaces this slot, so only Predict writes it.
 ///
 /// Position mutations are package-internal. Builder-code configuration accepts an

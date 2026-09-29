@@ -2,9 +2,14 @@ name: Auto-approve after Codex review
 
 on:
   pull_request_target:
+    # pull_request_target loads this file from the PR base. Limit the trigger to
+    # main so a retarget cannot run a workflow from an untrusted base.
+    branches:
+      - main
     types:
       - labeled
       - synchronize
+      - edited
 
 permissions:
   contents: read
@@ -126,6 +131,7 @@ jobs:
             }
 
             core.setOutput("author", pull.user.login);
+            core.setOutput("base_ref", pull.base.ref);
             core.setOutput("base_sha", pull.base.sha);
             core.setOutput("body", pull.body || "");
             core.setOutput("changed_files", String(pull.changed_files));
@@ -225,6 +231,8 @@ jobs:
         if: steps.config.outputs.codex == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          EXPECTED_BASE_REF: ${{ steps.authorize.outputs.base_ref }}
+          EXPECTED_BASE_SHA: ${{ steps.authorize.outputs.base_sha }}
           EXPECTED_HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
           PR_NUMBER: ${{ steps.authorize.outputs.number }}
         with:
@@ -234,31 +242,58 @@ jobs:
             const path = require("path");
             const { owner, repo } = context.repo;
             const pullNumber = Number(process.env.PR_NUMBER);
+            const expectedBaseRef = process.env.EXPECTED_BASE_REF;
+            const expectedBaseSha = process.env.EXPECTED_BASE_SHA;
+            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
+
+            const assertAuthorizedPull = async (pull, when) => {
+              if (pull.head.sha !== expectedHeadSha) {
+                throw new Error(
+                  `PR #${pullNumber} ${when}: head changed; remove and re-add auto-approve`,
+                );
+              }
+              if (pull.base.ref !== expectedBaseRef) {
+                throw new Error(
+                  `PR #${pullNumber} ${when}: targets ${pull.base.ref}; only ${expectedBaseRef} is eligible`,
+                );
+              }
+              if (pull.base.sha === expectedBaseSha) {
+                return;
+              }
+              const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${expectedBaseSha}...${pull.base.sha}`,
+              });
+              if (compare.status !== "ahead" && compare.status !== "identical") {
+                throw new Error(
+                  `PR #${pullNumber} ${when}: base ${pull.base.sha.slice(0, 12)} is ${compare.status} relative to authorized ${expectedBaseSha.slice(0, 12)}`,
+                );
+              }
+            };
 
             const { data: pullBefore } = await github.rest.pulls.get({
               owner,
               repo,
               pull_number: pullNumber,
             });
-            if (pullBefore.head.sha !== process.env.EXPECTED_HEAD_SHA) {
-              throw new Error(
-                `PR #${pullNumber} changed before Codex review input was prepared`,
-              );
-            }
+            await assertAuthorizedPull(pullBefore, "before Codex review input was prepared");
 
             const { data: diff } = await github.request(
-              "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+              "GET /repos/{owner}/{repo}/compare/{basehead}",
               {
                 owner,
                 repo,
-                pull_number: pullNumber,
+                basehead: `${expectedBaseSha}...${expectedHeadSha}`,
                 headers: {
                   accept: "application/vnd.github.diff",
                 },
               },
             );
             if (typeof diff !== "string" || diff.length === 0) {
-              throw new Error(`GitHub returned an empty diff for PR #${pullNumber}`);
+              throw new Error(
+                `GitHub returned an empty compare diff for ${expectedBaseSha.slice(0, 12)}...${expectedHeadSha.slice(0, 12)}`,
+              );
             }
 
             const { data: pullAfter } = await github.rest.pulls.get({
@@ -266,11 +301,7 @@ jobs:
               repo,
               pull_number: pullNumber,
             });
-            if (pullAfter.head.sha !== process.env.EXPECTED_HEAD_SHA) {
-              throw new Error(
-                `PR #${pullNumber} changed while Codex review input was prepared`,
-              );
-            }
+            await assertAuthorizedPull(pullAfter, "while Codex review input was prepared");
 
             const reviewDirectory = path.join(
               process.env.GITHUB_WORKSPACE,
@@ -290,8 +321,9 @@ jobs:
                 title: pullAfter.title,
                 body: pullAfter.body || "",
                 author: pullAfter.user.login,
-                base_sha: pullAfter.base.sha,
-                head_sha: pullAfter.head.sha,
+                base_ref: expectedBaseRef,
+                base_sha: expectedBaseSha,
+                head_sha: expectedHeadSha,
                 changed_files: pullAfter.changed_files,
                 additions: pullAfter.additions,
                 deletions: pullAfter.deletions,
@@ -651,6 +683,8 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          BASE_REF: ${{ steps.authorize.outputs.base_ref }}
+          BASE_SHA: ${{ steps.authorize.outputs.base_sha }}
           HEAD_SHA: ${{ steps.authorize.outputs.head_sha }}
           PR_AUTHOR: ${{ steps.authorize.outputs.author }}
           PR_NUMBER: ${{ steps.authorize.outputs.number }}
@@ -661,7 +695,10 @@ jobs:
             const { owner, repo } = context.repo;
             const pullNumber = Number(process.env.PR_NUMBER);
             const botLogin = `${process.env.APP_SLUG}[bot]`;
-            const shortSha = process.env.HEAD_SHA.slice(0, 12);
+            const expectedBaseRef = process.env.BASE_REF;
+            const expectedBaseSha = process.env.BASE_SHA;
+            const expectedHeadSha = process.env.HEAD_SHA;
+            const shortSha = expectedHeadSha.slice(0, 12);
             const codexLine = "Codex found no significant issues in its review of this commit.";
 
             const { data: livePull } = await github.rest.pulls.get({
@@ -669,10 +706,27 @@ jobs:
               repo,
               pull_number: pullNumber,
             });
-            if (livePull.head.sha !== process.env.HEAD_SHA) {
+            if (livePull.head.sha !== expectedHeadSha) {
               throw new Error(
                 `PR #${pullNumber} changed before approval; remove and re-add auto-approve`,
               );
+            }
+            if (livePull.base.ref !== expectedBaseRef) {
+              throw new Error(
+                `PR #${pullNumber} now targets ${livePull.base.ref}; only ${expectedBaseRef} is eligible`,
+              );
+            }
+            if (livePull.base.sha !== expectedBaseSha) {
+              const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${expectedBaseSha}...${livePull.base.sha}`,
+              });
+              if (compare.status !== "ahead" && compare.status !== "identical") {
+                throw new Error(
+                  `PR #${pullNumber} base ${livePull.base.sha.slice(0, 12)} is ${compare.status} relative to authorized ${expectedBaseSha.slice(0, 12)}`,
+                );
+              }
             }
 
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
@@ -934,12 +988,14 @@ jobs:
 
   invalidate-stale-approval:
     name: Invalidate stale bot approval
-    if: github.event.action == 'synchronize'
+    if: >-
+      github.event.action == 'synchronize' ||
+      (github.event.action == 'edited' && github.event.changes.base.ref != null)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     concurrency:
-      group: invalidate-auto-approve-${{ github.repository }}-${{ github.event.pull_request.number }}
+      group: auto-approve-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
 
     steps:
@@ -989,6 +1045,9 @@ jobs:
             const pullNumber = context.payload.pull_request.number;
             const currentHeadSha = context.payload.pull_request.head.sha;
             const botLogin = `${process.env.APP_SLUG}[bot]`;
+            const baseRetargeted = context.payload.action === "edited";
+            const previousBaseRef = context.payload.changes?.base?.ref?.from;
+            const currentBaseRef = context.payload.pull_request.base.ref;
 
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner,
@@ -1001,9 +1060,12 @@ jobs:
               .sort((left, right) => left.id - right.id)
               .at(-1);
 
-            if (!latestBotReview
-              || latestBotReview.state !== "APPROVED"
-              || latestBotReview.commit_id === currentHeadSha) {
+            if (!latestBotReview || latestBotReview.state !== "APPROVED") {
+              core.info("No stale auto-approval needs to be invalidated");
+              core.setOutput("invalidated", "false");
+              return;
+            }
+            if (!baseRetargeted && latestBotReview.commit_id === currentHeadSha) {
               core.info("No stale auto-approval needs to be invalidated");
               core.setOutput("invalidated", "false");
               return;
@@ -1011,6 +1073,19 @@ jobs:
 
             const oldShortSha = latestBotReview.commit_id.slice(0, 12);
             const newShortSha = currentHeadSha.slice(0, 12);
+            const dismissMessage = baseRetargeted
+              ? `Pull request base changed from ${previousBaseRef} to ${currentBaseRef}; dismissing auto-approval of ${oldShortSha}`
+              : `New commit ${newShortSha} replaced auto-approved ${oldShortSha}`;
+            const fallbackBody = baseRetargeted
+              ? [
+                  `The pull request base changed from \`${previousBaseRef}\` to \`${currentBaseRef}\``,
+                  `after auto-approved commit \`${oldShortSha}\`.`,
+                  "Reapply the `auto-approve` label after the pull request targets the default branch again.",
+                ].join(" ")
+              : [
+                  `Commit \`${newShortSha}\` was pushed after auto-approved commit \`${oldShortSha}\`.`,
+                  "Reapply the `auto-approve` label to authorize the new commit.",
+                ].join(" ");
             let method = "dismissed";
             try {
               await github.request(
@@ -1020,7 +1095,7 @@ jobs:
                   repo,
                   pull_number: pullNumber,
                   review_id: latestBotReview.id,
-                  message: `New commit ${newShortSha} replaced auto-approved ${oldShortSha}`,
+                  message: dismissMessage,
                   event: "DISMISS",
                 },
               );
@@ -1033,36 +1108,41 @@ jobs:
                 pull_number: pullNumber,
                 commit_id: currentHeadSha,
                 event: "REQUEST_CHANGES",
-                body: [
-                  `Commit \`${newShortSha}\` was pushed after auto-approved commit \`${oldShortSha}\`.`,
-                  "Reapply the `auto-approve` label to authorize the new commit.",
-                ].join(" "),
+                body: fallbackBody,
               });
             }
 
             core.setOutput("invalidated", "true");
             core.setOutput("method", method);
             core.setOutput("old_head_sha", latestBotReview.commit_id);
+            core.setOutput("reason", baseRetargeted ? "base-retargeted" : "head-changed");
 
       - name: Record invalidation in Slack
         if: steps.config.outputs.slack == 'true' && steps.invalidate.outputs.invalidated == 'true'
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          CURRENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
           CURRENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           INVALIDATION_METHOD: ${{ steps.invalidate.outputs.method }}
+          INVALIDATION_REASON: ${{ steps.invalidate.outputs.reason }}
           OLD_HEAD_SHA: ${{ steps.invalidate.outputs.old_head_sha }}
+          PREVIOUS_BASE_REF: ${{ github.event.changes.base.ref.from }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const reason = process.env.INVALIDATION_REASON;
+            const detail = reason === "base-retargeted"
+              ? `Pull request base changed from \`${process.env.PREVIOUS_BASE_REF}\` to \`${process.env.CURRENT_BASE_REF}\` after approved commit \`${process.env.OLD_HEAD_SHA.slice(0, 12)}\`.`
+              : `Commit \`${process.env.CURRENT_HEAD_SHA.slice(0, 12)}\` replaced approved commit \`${process.env.OLD_HEAD_SHA.slice(0, 12)}\`.`;
             const payload = {
               text: [
                 `*Previous auto-approval invalidated* for <${process.env.PR_URL}|PR #${process.env.PR_NUMBER}>.`,
-                `Commit \`${process.env.CURRENT_HEAD_SHA.slice(0, 12)}\` replaced approved commit \`${process.env.OLD_HEAD_SHA.slice(0, 12)}\`.`,
-                `Method: \`${process.env.INVALIDATION_METHOD}\`. Reapply \`auto-approve\` for the new commit.`,
+                detail,
+                `Method: \`${process.env.INVALIDATION_METHOD}\`. Reapply \`auto-approve\` for the current commit.`,
               ].join("\n"),
               unfurl_links: false,
               unfurl_media: false,

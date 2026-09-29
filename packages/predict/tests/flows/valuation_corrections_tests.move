@@ -38,7 +38,7 @@ const MOVED_LIVE_PRICE: u64 = 102_000_000_000;
 /// Large enough that its required-backing jump drops the market below its cash
 /// target, forcing the top-up branch of a following rebalance.
 const TOP_UP_FORCING_QUANTITY: u64 = 14_000_000_000;
-/// Minimum supply-request escrow accepted by the queue (10 DUSDC).
+/// Minimum supply-request escrow accepted by the queue (10 USDC).
 const SUPPLY_AMOUNT: u64 = 10_000_000;
 
 // A 6-minute expiry (00:06:00, a 1-minute-cadence boundary). With `now_ms` at 120_000

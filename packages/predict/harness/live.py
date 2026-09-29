@@ -202,7 +202,7 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
     traders.
 
     The keeper is the single setup owner (publishes feeds.json, funds the traders with
-    DUSDC) and runs the market lifecycle; the updater is the sole WS consumer (warms the
+    USDC) and runs the market lifecycle; the updater is the sole WS consumer (warms the
     keeper's cadence set, writes snapshot.json); the traders read those shared files and fuzz
     mints/redeems. The core (keeper + updater) is SUPERVISED: a dead one is restarted (it
     re-attaches via the idempotent setup + reconciles markets from chain), up to
@@ -223,7 +223,7 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
                 {
                     **base,
                     "TRADER_ADDRESSES": ",".join(trader_addrs),
-                    "TRADER_DUSDC": meta["strategies"]["fuzz"]["fund"],
+                    "TRADER_USDC": meta["strategies"]["fuzz"]["fund"],
                     "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
                 },
             )
@@ -574,7 +574,7 @@ def campaign(
                     "keeperService.ts",
                     {
                         **base,
-                        "TRADER_DUSDC": strat_meta[strategy]["fund"],
+                        "TRADER_USDC": strat_meta[strategy]["fund"],
                         "TRADER_ADDRESSES": addr,
                         "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
                     },

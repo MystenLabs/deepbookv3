@@ -27,6 +27,7 @@ SCENARIO_COLUMNS = [
     "risk_free_rate",
     "strike",
     "is_up",
+    "higher_strike",
     "quantity",
     "order_ref",
     "close_quantity",
@@ -136,6 +137,7 @@ class Generator:
         is_up: bool,
         *,
         strike: int | None = None,
+        higher_strike: int | None = None,
     ) -> dict[str, str]:
         snapshot = self.snapshot(step)
         forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
@@ -157,6 +159,8 @@ class Generator:
         else:
             strike = replay.align_strike_to_tick(strike)
             lower, higher = replay.binary_range_bounds(strike, is_up)
+            if higher_strike is not None:
+                higher = replay.align_strike_to_tick(higher_strike)
             probability = replay.compute_range_price(
                 svi_for_replay(snapshot), forward, lower, higher
             )
@@ -193,9 +197,30 @@ class Generator:
             **oracle_fields(snapshot),
             strike=strike,
             is_up=is_up,
+            higher_strike=higher_strike,
             quantity=quantity,
             order_ref=order_ref,
         )
+
+    def finite_range_mint_row(self, step: int, order_ref: str) -> dict[str, str]:
+        snapshot = self.snapshot(step)
+        forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
+        svi = svi_for_replay(snapshot)
+        for width_bps in (5, 10, 20, 50, 100, 200, 500, 1_000):
+            lower = replay.align_strike_to_tick(forward * (10_000 - width_bps) // 10_000)
+            higher = replay.align_strike_to_tick(forward * (10_000 + width_bps) // 10_000)
+            if lower >= higher:
+                continue
+            prices = (
+                replay.compute_up_price(svi, forward, lower),
+                replay.compute_up_price(svi, forward, higher),
+            )
+            try:
+                replay.assert_range_entry_bounds(prices)
+            except ValueError:
+                continue
+            return self.mint_row(step, order_ref, True, strike=lower, higher_strike=higher)
+        raise GenerationError(f"could not find an admissible finite range for step {step}")
 
     def settlement_mint_row(
         self,
@@ -272,7 +297,7 @@ class Generator:
                     lp_ref="lp_withdraw_1",
                 ),
                 scenario_row(7, "flush", **oracle_fields(self.snapshot(7))),
-                self.mint_row(8, "o_round_trip", bool(self.rng.randrange(2))),
+                self.finite_range_mint_row(8, "o_round_trip"),
                 scenario_row(
                     9,
                     "redeem_live",

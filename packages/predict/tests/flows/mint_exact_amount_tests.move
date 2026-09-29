@@ -20,8 +20,8 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
+use usdc::usdc::USDC;
 
 /// 10_000 lots of 10_000 raw units, and the next lot up. Quantities are lot
 /// arithmetic and independent of the price; every budget and debit below is
@@ -92,7 +92,7 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
     );
 
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - expected_debit,
     );
 
@@ -124,7 +124,7 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
     );
 
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - next_lot.all_in_cost(),
     );
 
@@ -184,7 +184,7 @@ fun budget_mint_at_exact_all_in_cost_cap_succeeds() {
     );
 
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - expected_debit,
     );
 

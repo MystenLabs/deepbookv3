@@ -15,13 +15,13 @@ use deepbook_predict::{
     predict_account,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
+    range_test_helpers,
     test_constants
 };
 use deepbook_sessions::{
     session_config::{Self as session_config, SessionsConfig},
     sessions::{Self as sessions, SessionAuthorized, SessionRevoked, SessionsApp}
 };
-use dusdc::dusdc::DUSDC;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
@@ -34,6 +34,7 @@ use sui::{
     event,
     test_scenario::{Self as test, Scenario, return_shared}
 };
+use usdc::usdc::USDC;
 
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
@@ -91,10 +92,11 @@ const SETTLEMENT_PRICE_TICK_OFFSET: u64 = 1;
 const ONE_RAW_UNIT: u64 = 1;
 const ZERO_COST: u64 = 0;
 const ZERO_PREMIUM: u64 = 0;
+const ZERO_MIN_QUANTITY: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
-const FUTURE_VERSION: u64 = 2;
+const FUTURE_VERSION: u64 = 3;
 
 public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
@@ -563,6 +565,41 @@ fun unapproved_session_cannot_mint_exact_quantity() {
 }
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun unapproved_session_cannot_mint_exact_cost() {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    let LiveInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+
+    let order_id = sessions::mint_exact_cost(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        test_constants::mint_deposit(),
+        TEN_THOUSAND_LOTS,
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun unapproved_session_cannot_mint_exact_amount() {
     let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
     let LiveInputs {
@@ -771,7 +808,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
         scenario.ctx(),
     );
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
-    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
+    assert_eq!(wrapper.load_account().balance<USDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
     assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
     assert_eq!(
@@ -819,7 +856,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
     assert!(replacement_order_id.is_none());
     // The public order value is gross of the fixture's one minimum close fee.
     assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, clock),
+        wrapper.load_account().balance<USDC>(&root, clock),
         post_mint_balance + gross_value - DEFAULT_TRADE_FEE,
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
@@ -904,7 +941,7 @@ fun session_mints_exact_amount() {
     );
     assert_eq!(expected_quote.quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, clock),
+        wrapper.load_account().balance<USDC>(&root, clock),
         test_constants::mint_deposit() - expected_quote.all_in_cost(),
     );
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
@@ -926,11 +963,113 @@ fun session_mints_exact_amount() {
 }
 
 #[test]
+fun session_mints_exact_cost() {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    authorize_flow_session(&mut fixture, SESSION_DURATION_MS);
+    let market_id = fixture.market_id;
+    let LiveInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    let next_lot_quote = market.quote_mint_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        ZERO_PREMIUM,
+        NEXT_LOT_QUANTITY,
+        true,
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    predict_helpers::assert_atm_entry_probability(next_lot_quote.entry_probability());
+    let expected_quote = market.quote_mint_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        ZERO_PREMIUM,
+        TEN_THOUSAND_LOTS,
+        true,
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    predict_helpers::assert_atm_entry_probability(expected_quote.entry_probability());
+    // One raw unit below the next lot's ALL-IN cost must size exactly ten
+    // thousand lots and debit that fill's own all-in cost. The session path must
+    // size the same fill Predict's own cost quote does.
+    let budget = next_lot_quote.all_in_cost() - ONE_RAW_UNIT;
+    let cost_quote = market.quote_mint_exact_cost_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        budget,
+        ZERO_MIN_QUANTITY,
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    let order_id = sessions::mint_exact_cost(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        budget,
+        TEN_THOUSAND_LOTS,
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    assert_eq!(cost_quote.quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(cost_quote.all_in_cost(), expected_quote.all_in_cost());
+    assert!(expected_quote.all_in_cost() <= budget);
+    assert_eq!(
+        wrapper.load_account().balance<USDC>(&root, clock),
+        test_constants::mint_deposit() - expected_quote.all_in_cost(),
+    );
+    assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
+    return_live_inputs(LiveInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    });
+    finish_flow_fixture(fixture);
+}
+
+#[test]
 fun session_redeems_settled_order() {
     let expiry_ms = test_constants::short_expiry_ms();
     let mut fixture = setup_flow_fixture(expiry_ms);
     authorize_flow_session(&mut fixture, SETTLEMENT_SESSION_DURATION_MS);
     let market_id = fixture.market_id;
+    // Keep both finite boundaries quotable before exercising session settlement.
+    let mut market_bundle = fixture.predict.take_market_bundle(market_id);
+    range_test_helpers::prepare_range(&mut fixture.predict, &mut market_bundle);
+    let timestamp_ms = fixture.predict.clock().timestamp_ms();
+    fixture.clock.set_for_testing(timestamp_ms);
+    predict_helpers::return_market_bundle(market_bundle);
     let lower_tick = predict_helpers::strike_tick();
     let higher_tick = lower_tick + SETTLEMENT_HIGHER_TICK_OFFSET;
     let LiveInputs {
@@ -976,7 +1115,7 @@ fun session_redeems_settled_order() {
         scenario.ctx(),
     );
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
-    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
+    assert_eq!(wrapper.load_account().balance<USDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
     return_live_inputs(LiveInputs {
         market,
@@ -1016,7 +1155,7 @@ fun session_redeems_settled_order() {
         scenario.ctx(),
     );
     assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, clock),
+        wrapper.load_account().balance<USDC>(&root, clock),
         post_mint_balance + test_constants::mint_quantity(),
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));

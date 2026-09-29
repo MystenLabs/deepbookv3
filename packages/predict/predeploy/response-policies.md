@@ -1,8 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-08-17. This is the tracked register of **settled response-policy
-decisions**: for each degenerate or adversarial state the protocol can reach,
-the behavior someone deliberately chose, why, and the tests that pin it.
+Updated 2026-09-04. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
 
 `open-items.md` tracks work that is still open; when an item closes, the
 *decision* it produced graduates into an entry here instead of surviving only
@@ -51,7 +49,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-1: The flush executes at any exact NAV mark (price circuit breakers removed)
 
 - **Trigger state:** frozen flush mark implies a PLP price outside the former
-  `[0.01, 100]` DUSDC band, or a pool NAV below the former dust floor.
+  `[0.01, 100]` USDC band, or a pool NAV below the former dust floor.
 - **Controller:** market — pool NAV is set by trading outcomes; supply by fill
   history. `total_supply ≤ k × pool_value` is not a maintainable invariant.
 - **Blast radius:** the mark is assembled by the staged flush (RP-29) and every
@@ -80,7 +78,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-2: Non-executable LP queue heads at the drain — refund
 
 - **Trigger state:** at the frozen mark, the head request's fill is not
-  executable: the implied PLP price is outside `[0.01, 100]` DUSDC/PLP,
+  executable: the implied PLP price is outside `[0.01, 100]` USDC/PLP,
   supply would mint zero shares, withdraw would pay zero, or the computed
   quote does not fit in u64.
 - **Controller:** market (the mark) × user (request size). The one
@@ -106,11 +104,95 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   direction of the old invariant: the protocol never *manufactures* the
   degenerate ratio, even though it cannot forbid NAV collapse.
 - **Risk profile:** `BEST-GUESS` — organic reachability requires near-total LP
-  wipeout (pool value in a micro-DUSDC band at the flush instant) and cannot
+  wipeout (pool value in a micro-USDC band at the flush instant) and cannot
   be cheaply forced (attacker must win oracle-priced bets). The asymmetry is
   the ratchet: improbable per flush, irreversible once. Harness campaign
   candidate: drive NAV collapse and measure the window width and ratchet
   onset.
+- **Reachability of the UPPER band, re-checked 2026-09-22 for
+  `plp::add_usdc_to_plp`:** that entrypoint moves pool value up by an
+  arbitrary amount with no bet to win, so it would have made the above-ceiling
+  ratchet cheaply forcible — about 1,000 USDC against the 10 PLP genesis-lock
+  share base, after which every supply and withdraw head refunds and
+  `total_supply` can never grow to bring the price back down. It is therefore
+  admission-gated at the source: the contribution must leave pool cash — idle
+  plus the net cash deployed into active expiries
+  (`pool_accounting::deployed_expiry_cash`) — at or below 10 USDC per PLP
+  (`constants::contribution_price_ceiling_factor`, `ceil(cash/10) <= supply`),
+  a tenth of this policy's band ceiling. The ceiling sits inside the band
+  because LP fills after a contribution only push the price up: shares round
+  down and retained supply and withdraw fees stay in the pool. The first
+  version admitted contributions up to the band itself, and a pool contributed
+  to exactly 100 USDC/PLP left the band on the next uneven deposit (found in
+  the second external review, fixed 2026-09-23). Deployed cash is counted because
+  the mark counts it: the first version of the gate read idle alone, and since
+  `rebalance_expiry_cash` is permissionless, anyone could move idle into a
+  market and contribute again against the emptied idle, pushing gross pool value
+  past the ceiling with contributions alone (found in the external review of #1315, fixed
+  2026-09-23). Parking stays neutral only while a market has received back no
+  more than it was sent: net funding floors at zero per market, so idle moved
+  into a market that has already returned profit is not counted until it makes
+  up that profit. A contribution can therefore land above the ceiling by up to
+  `Σ max(0, received − sent)` over active markets. Accepted: leaving the band
+  that way still needs about nine times the pool's cash of such returned profit
+  on top of a full contribution. That guard keeps contributions from being the route, but it
+  does not make the upper band unforceable: retained withdraw fees also add
+  value without minting shares, and the residual below records what that
+  route costs. Aborting there is on-ladder — a single-user, user-recoverable action,
+  not a shared or mandatory path — and it keeps the protocol from
+  *manufacturing* the degenerate ratio, which is the maintainable direction
+  this policy already names. Market-driven NAV moves into the band are
+  unaffected and stay owned here.
+- **Accepted residual of that gate (revised 2026-09-23):** it bounds pool
+  cash, not the mark, and it bounds it at a tenth of the band, so after a
+  contribution the price must still rise tenfold by other means to leave the
+  band. Derived, not measured — each fill's effect follows from the drain's
+  rounding and fee formulas, and a simulation of them agrees. Rounding leaves
+  under one PLP base unit's worth of USDC per fill, so crossing on dust alone
+  would take about nine fills per base unit of supply. A supply fee at the 5%
+  cap raises the price at most `1/(1 − 5%)`, about 1.05x, per flush. A
+  withdraw fee at rate `r` raises it by `1 + r·f/(1 − f)` when one flush burns
+  a fraction `f` of shares, and it accumulates across flushes: fees retained
+  over any number of supply-and-withdraw round trips cross the band once they
+  add up to `(band − p)·supply` USDC, whatever each trip's size. That is a
+  pre-existing route to the upper band that needs no contribution — about 990
+  USDC of retained fees from parity on the 10 PLP genesis share base, or 900
+  USDC from the contribution ceiling there, plus the round-trip capital and two
+  flushes per trip. The mark also carries market-driven NAV: trader premiums
+  and fees held in market cash beyond what the pool sent, net of marked
+  liabilities. Crossing from the contribution ceiling that way needs the pool
+  to gain `9/(1 − share)` times its cash from trading once the protocol profit
+  share is held out — ten times at the default 10%. Trader losses can do that,
+  but against a fair oracle they are a coin flip bounded by market backing: an
+  unrealized mark reverses when P&L moves back, and only losses realized at
+  settlement stay. Trading fees do it deterministically and do not reverse: a
+  hedged UP and DOWN pair of equal quantity pays `quantity + fees` in and takes
+  `quantity` back whichever side wins, so the pool keeps exactly the fees for
+  the trader's cost of the fees alone. With the contribution ceiling at the
+  band itself that route needed one trade — a 50-contract ATM mint left a
+  ceiling-parked genesis pool at 1,000.225 USDC over 10 PLP, 100.0225
+  USDC/PLP, and refunded the next supply (reproduced 2026-09-23 by setting the
+  contribution ceiling back to the band under the pinning test below). At a tenth of the band it needs about ten times pool cash in
+  fees, volume-bound like the withdraw-fee round trips above. Every route costs
+  the attacker at least the full value it adds to the pool,
+  which accrues to existing holders — griefing that destroys the attacker's
+  value rather than extracting any. The gate's job is therefore narrower than
+  making the state unforceable: a contribution never itself takes the pool out
+  of the band, and ordinary LP activity after one has nine times the pool's
+  cash of room. Counting trader inflows too would need the mark, which needs a
+  flush; RP-1 already rejected mark-level guards because they brick the
+  legitimate appreciation and recapitalization states. A stored last-flush NAV
+  would only move the approximation (stale between flushes, over- and
+  under-rejecting as active NAV moves) at the cost of new vault state written
+  on the flush path. Pool cash errs toward refusing: a market that has lost
+  cash to traders still counts what the pool sent it, so while such a market is
+  active a contribution can be refused even at or below parity. The refusal
+  clears once that market is settled and swept, both permissionless. Pinned
+  below: the gate's own boundaries, with and without deployed cash, and one
+  trade's fee income at the ceiling staying inside the band. UNPINNED: the
+  trader-loss crossing needs oracle-priced P&L moves, and the withdraw-fee
+  route needs withdrawals to fill, which the LP flow fixture cannot do (its
+  module doc explains why).
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
@@ -124,9 +206,21 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `non_executable_withdraw_refunds_spend_withdraw_budget`, and
   `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
+  `lp_flow_tests.move` pins the upper-band admission gate from both sides —
+  `a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills`,
+  `a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee`,
+  `a_contribution_past_the_price_ceiling_aborts`,
+  `the_ceiling_rises_with_the_share_base`,
+  `a_contribution_to_the_ceiling_with_deployed_cash_is_accepted_and_fills`,
+  `a_contribution_past_the_ceiling_through_deployed_cash_aborts`,
+  `parking_idle_in_a_market_does_not_reopen_the_ceiling`, and
+  `fee_income_at_the_contribution_ceiling_stays_inside_the_band`.
+  `pool_accounting_tests.move` pins the parking residual —
+  `parking_into_a_market_that_returned_profit_lowers_guard_cash`.
 - **Reopen when:** request-limit semantics change in a way that interacts with
-  protocol-triggered refunds, or a new LP request type adds another
-  non-executable fill mode.
+  protocol-triggered refunds, a new LP request type adds another
+  non-executable fill mode, or a new entrypoint moves pool value without
+  moving `total_supply` (each one needs its own upper-band admission gate).
 
 ## RP-3: `lp_pool_value` floors at zero
 
@@ -173,19 +267,20 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   operator steering live pricing away from the Pyth spot; a provider magnitude
   that does not fit Predict's `u64` pricing domain; or, while
   `use_pyth_spot_for_forward` is set, an independently fresh Pyth spot whose
-  source timestamp is older than the Block Scholes spot observation's publish
+  source timestamp is older than the Block Scholes spot observation's source
   time.
 - **Controller:** external (oracle operator).
 - **Blast radius:** every live price — entry prices and NAV marks.
   The same load sits inside mandatory `plp::value_expiry`, so one over-wide
-  observation for any active market also aborts the pool-wide flush and blocks
+  selected observation for any active market also aborts the pool-wide flush and blocks
   queued LP fills until the observation is replaced.
 - **Response:** accept provider quality inside the static pricing-safe envelope
   and disclose it (commit `057f9565`); select Pyth by its own freshness rather
   than relative source time; fail closed on provider-width overflow. The
   cross-feed deviation guards are gone. Representable inputs still must satisfy
-  positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`, the
-  sigma band, and positive minimum total variance. A correct-but-adversarial
+  positive spot/forward, bounded basis, bounded SVI `b` and `m`, `|rho| ≤ 1`, the
+  sigma band, and positive minimum total variance, which is the only constraint
+  on `a`. A correct-but-adversarial
   source can steer prices anywhere inside that envelope. While
   `use_pyth_spot_for_forward` is set, every independently fresh usable Pyth spot
   reanchors the Block Scholes basis even when the Block Scholes spot is newer;
@@ -194,6 +289,45 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `EBlockScholesInputTooWide` before the `u128`-to-`u64` cast and semantic
   envelope. Recovery is a newer signed, representable observation followed by
   retrying the affected action or flush.
+- **Sigma floor (lowered from 1e-3 to 1e-5):** Block Scholes SSVI surfaces
+  narrow `sigma` toward expiry. In their SSVI backfill (BTC, February–June 2026,
+  6.5M slices; `evidence/rp5-ssvi-backfill-2026-09-28.md`) 83% of slices at most
+  a minute from expiry, 55% of slices one to five minutes out, and 12% of slices
+  five minutes to an hour out sit below 1e-3, with a minimum of 4.7e-5. The 1e-3
+  floor rejected 1.6M of them, and every pricer load over such a slice aborted:
+  mints and live closes on that market, and the flush's atomic snapshot stage,
+  so the pool-wide flush could not start and queued LP fills waited. None is
+  below 1e-5, the floor the provider recommends. Duty inventory of the old
+  floor: (1) it kept `sigma²` representable in the 1e9 smile root — replaced by
+  taking the root from exact `u128` squares at 1e18, without which the lowered
+  floor misprices real one-minute slices by up to 49% relative off the forward;
+  (2) it kept the root, the skew slope's divisor, away from zero — any positive
+  floor does, so 1e-5 is the provider's number rather than an arithmetic need,
+  and for SSVI slices the gate's minimum-variance rounding binds first: with the
+  provider's `eta ≤ 2`, `sigma < 1e-5` means a minimum total variance under
+  4e-10, which rounds to zero at 1e9 (P-33);
+  (3) the root's `u128` input is bounded by `|k − m| ≤ 144.4` and `sigma ≤ 100`,
+  not by the floor; (4) it did not bound the skew correction: `w'` is at most
+  `2b` for any `sigma`, so the correction's headroom is set by `b` and the
+  variance. Positive total variance stays owned by the analytical-minimum check
+  and the per-strike `ENonPositiveVariance` backstop, neither of which reads the
+  floor.
+- **`a` magnitude cap removed (was `|a| ≤ 100`):** Block Scholes recommends no
+  bound on `a` beyond positive total variance. Negative `a` was already admitted
+  and still is: slices in the SSVI backfill carry it (0.27% of one-minute slices,
+  and slices further out too), none of them SSVI, since an SSVI slice has
+  `a = theta·(1 − rho²)/2 ≥ 0` (P-37), and every one passes the minimum-variance
+  check. `a` is now constrained only by that minimum and its `u64` provider
+  width. Duty inventory of the cap: (1) it bounded the roll-down's
+  `u128` result — `a < 2^64` already keeps `a × 1e9` under `u128`; (2) it bounded
+  the 1e18 total-variance sum, `sqrt(w)`, and `d2`'s numerator — all stay inside
+  `u128`/`u64` at `a = u64::MAX`; (3) it kept the minimum-variance check's `u64`
+  sum `a + b·sigma·sqrt(1 − rho²)` from overflowing — replaced by comparing the
+  two terms, so an extreme `a` is rejected or admitted by name, never by an
+  arithmetic abort. No price-quality duty: at `a = +100` the at-the-forward
+  digital is already about 3e-7, so the cap never separated sane surfaces from
+  degenerate ones; on the negative side it only limited how much of `b · sigma`
+  could be cancelled, which the minimum-variance check governs anyway.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity
@@ -224,16 +358,39 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `block_scholes_svi_a_above_u64_aborts_with_named_width_error`,
   `block_scholes_svi_b_above_u64_aborts_with_named_width_error`,
   `block_scholes_svi_rho_above_u64_aborts_with_named_width_error`,
-  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`, and
-  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`;
+  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`,
+  `surface_with_svi_sigma_below_min_aborts`,
+  `surface_with_zero_svi_sigma_aborts`,
+  `short_dated_negative_a_offsetting_the_minimum_increment_aborts`,
+  `zero_svi_a_with_unit_rho_aborts_at_load`,
+  `negative_svi_a_with_unit_rho_aborts_at_load`,
+  `smile_root_at_the_otm_envelope_corner_prices_the_tail_to_zero`,
+  `smile_root_at_the_itm_envelope_corner_prices_the_tail_to_one`,
+  `svi_a_at_the_provider_width_limit_prices_to_zero`,
+  `svi_a_at_the_provider_width_limit_with_shape_ceilings_and_positive_m_prices_to_zero`,
+  `svi_a_at_the_provider_width_limit_with_shape_ceilings_and_negative_m_prices_to_zero`,
+  `negative_svi_a_at_the_provider_width_limit_aborts_at_load`,
+  `negative_svi_a_past_the_former_cap_cancels_to_one_unit_of_variance`, and
+  `negative_svi_a_past_the_former_cap_offsetting_the_minimum_increment_aborts`;
+  `pricing_exact_tests.move` —
+  `surface_at_the_sigma_floor_prices_at_its_vertex`,
+  `short_dated_slice_with_negative_a_prices_to_true_math`,
+  `one_minute_slice_the_1e9_root_mispriced_prices_to_true_math`,
+  `negative_svi_a_past_the_former_cap_prices_to_true_math`,
+  `positive_svi_a_past_the_former_cap_prices_to_true_math`, and
+  `unit_rho_surface_with_one_unit_of_a_prices_to_true_math`;
   `pool_valuation_flow_tests.move` —
-  `overwide_block_scholes_spot_aborts_pool_valuation_flush` and
-  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`.
+  `overwide_block_scholes_spot_aborts_pool_valuation_flush`,
+  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`,
+  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`, and
+  `short_dated_ssvi_surface_completes_pool_valuation_flush`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
   a bounded-skew source rule, or explicit unavailable classification rather than
-  the named mandatory-path abort.
+  the named mandatory-path abort. Revisit the SVI bounds if the provider
+  publishes `sigma < 1e-5` or a live surface with `|a| > 100` reaches a NAV mark.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -241,16 +398,23 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   valuation to a favorable oracle state and capture mispriced LP fills.
 - **Controller:** protocol (who may start a flush is protocol-controlled — so
   this one *is* enforceable as an invariant).
-- **Response:** gate the flush behind the revocable `MarketLifecycleCap`; the
-  accepted cost is a trust assumption — the operator chooses the valuation
-  instant (never the price: the mark is the exact NAV at that instant) and
-  must run flushes for LP liveness.
+- **Response:** gate the flush behind the revocable `PoolValuationCap` (a
+  separate key from the market-creation `MarketLifecycleCap`); the accepted
+  cost is a trust assumption — the operator chooses the valuation instant
+  (never the price: the mark is the exact NAV at that instant) and must run
+  flushes for LP liveness.
 - **Reasoning + disclosure:** `docs/risks.md` "The privileged flush"; audit
   lens L8 (NAV-timing manipulation closed by privilege).
 - **Risk profile:** `BEST-GUESS` — operator-timing abuse bounded by mark
   exactness; liveness depends on flush cadence (disclosed).
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `pool_valuation_cap_tests.move` —
+  `mint_pool_valuation_cap_while_protocol_frozen_aborts`,
+  `generate_proof_with_revoked_pool_valuation_cap_aborts`,
+  `revoke_unknown_pool_valuation_cap_aborts`, and
+  `destroy_pool_valuation_cap_does_not_revoke`; every flow test that starts a
+  flush does so through `flow_test_helpers::start_flush`, which mints the proof
+  from the fixture's `PoolValuationCap`, so a flush start without that cap has
+  no test-visible path.
 - **Reopen when:** a continuous/permissionless valuation design (e.g.
   commit-reveal or TWAP mark) is ever proposed.
 
@@ -368,7 +532,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (resolves P-9)
 
-> **RETIRED 2026-08-18 — the trading-loss rebate and DEEP staking were removed.** The trigger state (a settled market with unresolved rebates priced at claim-time `active_stake`) is unreachable: there is no rebate reserve, no `ExpiryTradingSummary`, and no claim. P-9 stays resolved — this entry remains its tombstone — and the settled-market cleanout survives as `redeem_settled_permissionless` alone, whose own gas incentive is the surviving half of the measurements below. The entry is kept verbatim for the decision record; nothing in it describes shipped behavior. Removal record: `docs/design/decisions.md` § "Staking and the trading-loss rebate removal".
+> **RETIRED 2026-08-18 — the trading-loss rebate and DEEP staking were removed.** The trigger state (a settled market with unresolved rebates priced at claim-time `active_stake`) is unreachable: there is no rebate reserve, no `ExpiryTradingSummary`, and no claim. P-9 stays resolved — this entry remains its tombstone — and the settled-market cleanout survives as `redeem_settled_permissionless` alone, whose own gas incentive is the surviving half of the measurements below. Since 2026-09-25 that entrypoint accepts only admin-allowlisted keepers (`docs/design/decisions.md` section "Settled-redeem keeper allowlist"), so the cleanout is no longer open to arbitrary self-incentivized callers. The entry is kept verbatim for the decision record; nothing in it describes shipped behavior. Removal record: `docs/design/decisions.md` § "Staking and the trading-loss rebate removal".
 
 - **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
   settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
@@ -450,7 +614,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Trigger state:** a queued LP supply or withdraw request reaches the head of
   its FIFO queue during a flush, the frozen mark is executable, but the quoted
   output is below the request's minimum output (`min_plp_out` for supply,
-  `min_dusdc_out` for withdraw).
+  `min_usdc_out` for withdraw).
 - **Controller:** market (the frozen mark) × user (the request-time limit). The
   protocol controls only what happens to the request once it is at the head.
 - **Blast radius:** `lp_book::drain` runs inside `finish_flush`, and every LP
@@ -925,121 +1089,41 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   1.4e14 against a `u64` ceiling of 1.8e19. That is headroom, not a proof — `b`
   ranges to 100e9, so the rounding slack in `inner` is large enough in principle
   to drive `w` lower — so the cap stays and is pinned at its own inputs.
-- **Pinning tests:** `pricing_guard_tests.move` —
-  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a loadable
-  surface whose per-strike variance is positive but floors to zero at 1e9 (the
-  region this policy admits) and asserts the independently generated digital;
+- **Pinning tests:** `pricing_exact_tests.move` —
+  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a
+  loadable surface whose per-strike variance at the forward is positive but under
+  one raw unit at 1e9 (0.99993e-9, the region this policy admits) and asserts the
+  independently generated digital, and
+  `one_raw_unit_variance_surface_prices_to_true_math` pins a surface whose
+  forward variance is exactly one raw unit; `pricing_guard_tests.move` —
   `d2_saturates_at_the_normal_clamp_instead_of_overflowing` drives the cap at the
   helper's scalar inputs, where a `w` of one raw unit at 1e18 makes the quotient
   exceed `u64` (unit-tests rule 4 — the guard is exercised at its own inputs
   because no admissible surface has been shown to reach it);
   `boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts` still
-  aborts (the surface it pins is negative on the true value, not only after
-  truncation), and `zero_total_variance_aborts_at_load` pins the unchanged
-  construction gate. Both new tests were mutation-checked: restoring the coarse
-  1e9 rejection fails the first two, and deleting the cap fails the second.
+  aborts: its rounded minimum clears the load gate by one raw unit, and at the
+  forward, the smile's minimum, the true variance is about 1e-9 while the floored
+  smile root takes that unit back, so the computed variance is 0. That is the
+  per-strike rounding boundary the backstop exists for, not a surface that is
+  negative in true math. `zero_total_variance_aborts_at_load` pins the unchanged
+  construction gate. Mutation checks: flooring the variance increment to 1e9 fails
+  the sub-unit test, and deleting the cap fails the `d2` test.
 - **Reopen when:** a surface is observed whose true total variance is positive
   but so small that `sqrt(w)` itself underflows the 1e9 result scale, or if the
   saturation cap is ever read by something other than `normal_cdf`/`normal_pdf`.
 
 ---
 
-## RP-21: Block Scholes series age from their publish timestamps (resolves P-2, P-24; reanchored by DBU-715)
+## RP-21: Block Scholes series age from per-update source timestamps (resolves P-2, P-24; reanchored by DBU-715 and DBU-779)
 
-- **Trigger state:** the Block Scholes publisher retransmits an unchanged spot,
-  forward, or normalized SVI tuple, or stops publishing a series entirely. A
-  retransmission advances the transport envelope while the series retains the
-  model timestamp at which the provider last derived the value; for SVI,
-  time-to-expiry also continues to decrease.
-- **Controller:** external × protocol clock — the publisher controls the
-  series values, model timestamps, and envelope cadence; elapsed time is
-  objective on-chain state.
-- **Blast radius:** every live quote, mint, redeem, and NAV read
-  that consumes the series. A stale spot affects every market on the
-  underlying; a stale forward or SVI affects its expiry. Because a flush must
-  value every active market, any one stale required series blocks the pool-wide
-  flush and all queued LP fills. Exact settlement does not use these latest-series freshness checks; its post-grace Block Scholes fallback reads insert-only exact history.
-- **Response:** fail closed on publish age — a series is usable while its
-  signed batch envelope time is inside the window, and each publish is trusted
-  as the provider's assertion that the carried value is current then. Spot and
-  forward age out at `block_scholes_price_freshness_ms` (10s by default); SVI
-  ages out at `block_scholes_svi_freshness_ms` (60s by default, configurable up
-  to a 120s maximum). A retransmission of an unchanged tuple therefore
-  refreshes the series and re-anchors the SVI roll-down at its new publish
-  time; pricing halts only when envelopes stop arriving, and recovery is
-  resumed publishing followed by retrying the affected action or flush. The
-  store keys ordering on model time first and never lets a series' stored
-  envelope time regress (`propbook::block_scholes_store::apply`), so the anchor
-  is monotone. Predict computes
-  `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and
-  `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)` with
-  `anchor_tte_ms = expiry - published_at`, both **at 1e18** with
-  a `u256` intermediate, and hands them to the variance path in that domain;
-  `rho`, `m`, and `sigma` are unchanged. The scaled results are carried at 1e18
-  rather than narrowed back to 1e9 because the roll-down multiplies terms that
-  are themselves tiny on short-dated surfaces — a 1e9 floor costs up to a whole
-  raw unit of `a`, and a short-dated `a` is only about ten raw units, so the
-  truncation alone breached the ratified price-deviation bound (P-14's defect,
-  one layer upstream). The SVI freshness bound also caps the
-  roll-down attenuation at `anchor_tte / remaining <= 1 + freshness / remaining`,
-  which puts the floor-to-zero arm (`anchor_tte >= 1e9 * remaining_ms`) out of
-  reach of any live quote; the residual non-positive-variance cases are the
-  sign/cancellation ones — they depend on the sign of `a` and on cancellation
-  between `a` and `b·inner`, not on `a` alone. The existing
-  `ENonPositiveVariance` guard remains authoritative for that state, including
-  in pool valuation.
-- **Reasoning:** the provider contract (stated 2026-08-09) is that the model
-  timestamp is re-derived roughly every 20 seconds and that an SVI publish
-  whose model time is unchanged carries the same calibration already rolled
-  down to its new publish time — duplicate SVI retransmission does not exist.
-  The published `a`/`b` therefore always describe the variance remaining over
-  the horizon from publish, making the publish time the only correct roll-down
-  anchor: the previous model anchor under-scaled the surface whenever publish
-  lagged calibration (it re-applied a discount the provider had already
-  applied). Keying freshness on the same clock keeps one economic clock per
-  read and makes liveness a transport property: a quiet-but-publishing feed
-  keeps pricing (the earlier model-keyed policy halted the flush on exactly
-  that state), at the trust cost that the contract itself is unverifiable
-  on-chain — a provider republishing without actually rolling or recalibrating
-  moves quotes as if the surface were current. Calibration age is observable
-  off-chain from `BlockScholesObservationRecorded`, which is where a tripwire
-  belongs: an on-chain model-age abort would be a state-triggered abort on the
-  mandatory flush over an externally-controlled variable, the guard class RP-5
-  removed (`docs/risks.md` § stopped transport). The pre-expiry
-  variance abort is likewise accepted: the flush is retriable, and flooring
-  variance to a fabricated positive value would hide an unusable effective
-  surface.
-- **Risk profile:** `BEST-GUESS` — the timestamp and arithmetic policy are
-  deterministic and pinned. The provider's publish cadence per series, and
-  therefore the frequency of a 10s or 60s envelope breach, is not measured;
-  this measurement is operational validation of the accepted fail-closed
-  policy, not a prerequisite for its correctness. Whether linear roll-down is
-  the best calibration model remains owned by the still-open O-1 calibration
-  work.
-- **Pinning tests:** `pricing_tests.move` —
-  `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
-  `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
-  `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
-  `svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp`;
-  `pricing_guard_tests.move` —
-  `live_quote_with_a_freshly_retransmitted_aged_spot_model_succeeds`,
-  `live_quote_with_a_freshly_retransmitted_aged_forward_model_succeeds`,
-  `live_quote_with_a_freshly_retransmitted_aged_svi_model_succeeds`,
-  `live_quote_with_stale_block_scholes_surface_aborts`,
-  `live_quote_with_fresh_spot_but_stale_forward_aborts`,
-  `live_quote_with_fresh_prices_but_stale_svi_aborts`,
-  `pre_expiry_roll_down_keeps_positive_variance`,
-  `terminal_roll_down_to_zero_is_preempted_by_envelope_freshness`, and
-  `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
-  correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
-  units against a 21-unit budget); `block_scholes_store_tests.move` —
-  `svi_data_in_an_older_envelope_is_skipped_even_with_a_newer_model_time`.
-- **Reopen when:** the provider changes series or timestamp semantics or is
-  observed republishing surfaces it has stopped re-deriving, observed
-  envelope-age breaches materially interrupt LP flush liveness or lack timely
-  recovery, Predict adopts partial/async pool valuation, Predict adopts a
-  calibrated non-linear horizon transform, or live pricing stops consuming SVI
-  total variance as variance-to-expiry.
+- **Trigger state:** Block Scholes delivers a spot, forward, or SVI update whose provider source timestamp does not advance, stops advancing a required series, or advances the enclosing batch timestamp without advancing that series.
+- **Controller:** external × protocol clock — the publisher controls the signed series values and their `value_timestamp` or `svi_timestamp`; elapsed time is objective on-chain state.
+- **Blast radius:** every live quote, mint, redeem, and NAV read that consumes the series. A stale spot affects every market on the underlying; a stale forward or SVI affects its expiry. Because a flush must value every active market, any one stale required series blocks the pool-wide flush and all queued LP fills. Exact settlement does not use these latest-series freshness checks; its post-grace Block Scholes fallback reads insert-only exact history.
+- **Response:** fail closed on source age. Spot and forward map the signed update's `value_timestamp` to `source_timestamp_ms`; SVI maps `svi_timestamp`. A series advances only when that source timestamp is strictly newer than the stored one, and a retransmission with an unchanged source timestamp does not refresh it. Spot and forward age out at `block_scholes_price_freshness_ms` (2s by default, four provider publish opportunities at the 500ms spot/forward cadence); SVI ages out at `block_scholes_svi_freshness_ms` (60s by default, configurable up to 120s). Recovery requires a newer provider source update followed by retrying the affected action or flush. The signed batch timestamp remains on `BlockScholesBatchIngested` for transport observability but does not participate in observation ordering, freshness, or roll-down. Predict computes `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)` with `anchor_tte_ms = expiry - source_timestamp_ms`, both at 1e18 with a `u256` intermediate, and hands them to the variance path in that domain; `rho`, `m`, and `sigma` are unchanged. The scaled results stay at 1e18 because a 1e9 floor costs up to a whole raw unit of `a`, enough to breach the ratified price-deviation bound on short-dated surfaces. The SVI freshness bound keeps the floor-to-zero arm unreachable for a live quote; the existing `ENonPositiveVariance` guard remains authoritative for sign/cancellation cases, including pool valuation.
+- **Reasoning:** Block Scholes confirmed that `value_timestamp` is the source time for spot and forward and `svi_timestamp` is the source time for SVI. Using those signed per-update timestamps gives each observation one economic clock for ordering, freshness, provenance, and SVI roll-down. The batch timestamp answers when the provider emitted a container, not when a carried series changed, so letting it renew freshness would turn retransmission into a false data update. Removing the duplicate `model_timestamp_ms` field also prevents local names from implying two observation clocks where the provider defines one. The pre-expiry variance abort remains accepted: the flush is retriable, and flooring variance to a fabricated positive value would hide an unusable effective surface.
+- **Risk profile:** `BEST-GUESS` — the timestamp mapping and arithmetic policy are deterministic and pinned. The provider's source cadence per series, and therefore the frequency of a 2s or 60s source-age breach, is not measured; that measurement is operational validation of the accepted fail-closed policy, not a prerequisite for its correctness. Whether linear roll-down is the best calibration model remains owned by the still-open O-1 calibration work.
+- **Pinning tests:** `pricing_tests.move` — `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`, `roll_down_handles_one_ms_boundary_and_u256_intermediates`, `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and `svi_retransmit_does_not_reanchor_roll_down_or_the_snapshotted_timestamp`; `pricing_guard_tests.move` — `live_quote_with_a_retransmitted_aged_spot_source_aborts`, `live_quote_with_a_retransmitted_aged_forward_source_aborts`, `live_quote_with_a_retransmitted_aged_svi_source_aborts`, `live_quote_with_stale_block_scholes_surface_aborts`, `live_quote_with_fresh_spot_but_stale_forward_aborts`, `live_quote_with_fresh_prices_but_stale_svi_aborts`, `pre_expiry_roll_down_keeps_positive_variance`, `terminal_roll_down_to_zero_is_preempted_by_source_freshness`, and `w_prime_keeps_the_rolled_b_precision`; `block_scholes_store_tests.move` — `a_retransmission_advances_batch_observability_without_refreshing_source`, `newer_source_data_in_an_older_batch_is_stored`, and `newer_svi_source_data_in_an_older_batch_is_stored`.
+- **Reopen when:** the provider changes series or timestamp semantics, observed source-age breaches materially interrupt LP flush liveness or lack timely recovery, Predict adopts partial/async pool valuation, Predict adopts a calibrated non-linear horizon transform, or live pricing stops consuming SVI total variance as variance-to-expiry.
 
 ---
 
@@ -1124,7 +1208,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   remaining amount and rounded **up** — at worst the carried request is held to a
   fractionally stricter limit than it originally signed, never a laxer one.
 - **Ordering — the limit is checked first.** A partial fill mints fewer shares (or pays
-  less DUSDC) than the whole request, so it is only defensible if the *price* was
+  less USDC) than the whole request, so it is only defensible if the *price* was
   acceptable. Pricing is linear at a frozen mark, so "this prefix clears the LP's rate"
   is exactly the existing `shares >= min_output` test on the full amount — checking the
   limit first costs no new arithmetic and makes `min_output` a **price floor rather than
@@ -1144,9 +1228,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   so the headroom an exit frees is priced at the *next* flush, not the current one
   — the mark is frozen, and re-reading it mid-drain would break the single-mark
   guarantee that makes supply and withdraw prices agree.
-- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but no launch
-  figure has been chosen and the cap is inert at its default, so nothing about how
-  it behaves against real deposit flow has been measured.
+- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but the 500,000 USDC default has not been measured against real deposit flow.
 - **Pinning tests:** `lp_book_tests.move` — `supply_within_pool_cap_fills`,
   `supply_larger_than_headroom_partially_fills_to_the_cap`,
   `supply_carries_when_the_pool_has_no_headroom`,
@@ -1170,15 +1252,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `lp_flow_tests.move` pins the cap to configured state rather than a constant
   (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
   `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
-  `protocol_config_tests.move` pins the shipped default and the valuation-lock
+  `protocol_config_tests.move` pins the 500,000 USDC default and the valuation-lock
   guard; `risk_config_tests.move` pins the bounds and the floor.
-- **Reopen when:** a launch figure is set (the profile should become `MEASURED`
-  against observed deposit flow); or a request-time admission check is wanted for
-  UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or
-  withdrawals are ever drained before supplies, which would change whose headroom is
-  being measured; or per-flush drain work is bounded structurally rather than by the
-  operator's budgets, which would also bound how much of a capped pool's queue one
-  flush churns through (see RP-12's per-flush cost note).
+- **Reopen when:** observed deposit flow can measure whether the 500,000 USDC default admits the intended capital; or a request-time admission check is wanted for UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or withdrawals are ever drained before supplies, which would change whose headroom is being measured; or per-flush drain work is bounded structurally rather than by the operator's budgets, which would also bound how much of a capped pool's queue one flush churns through (see RP-12's per-flush cost note).
 
 ---
 
@@ -1221,8 +1297,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   trader can still write in tx N and trade in N+1, or sandwich the updater's
   ~1.4–1.8s push, but then carries inventory and cannot guarantee ordering — a
   directional bet, not risk-free extraction. Pricing that residual is separate
-  ΔP-surcharge work. Also noted without acting: `pyth_spot_freshness_ms`
-  defaults to 10_000, a wide staleness budget relative to 1m markets.
+  ΔP-surcharge work. The wide `pyth_spot_freshness_ms` budget this entry
+  previously noted without acting is now narrowed: the default is 2_000, down
+  from 10_000, matching the Block Scholes price bound. This bounds absolute
+  staleness only — equal bounds do not order the two spots against each other,
+  so an in-window Pyth spot may still be older than the Block Scholes spot it
+  re-anchors; that relative-freshness residual stays with RP-5. The residual
+  cross-transaction window is also unchanged — it is bounded by the push cycle,
+  not by the freshness budget.
 - **Pinning tests:**
   `write_feed_then_load_pricer_same_tx_aborts`,
   `write_feed_then_mint_next_tx_succeeds`,
@@ -1594,5 +1676,60 @@ worth-fixing.
 - **Risk profile:** `MITIGATED-BY-CONSTRUCTION` — the guarantee is a type ability, not a runtime check, so it holds for every current and future trade path that takes `&Pricer` without a separate audit. The residual is purely the fidelity of the freeze/thaw round trip.
 - **Pinning tests:** `pricing_tests.move` — `freeze_then_thaw_preserves_the_mark` (the round trip reproduces the up-price, the range price, and the source timestamps bit-for-bit); the full flush's use of the frozen mark end to end is exercised by the staged-flush tests in `pool_valuation_flow_tests.move`. The core invariant — no trade path accepts a storable mark — is compile-time and needs no runtime pin.
 - **Reopen when:** `store` is added back to `Pricer`, OR any live trade / quote entrypoint is changed to accept a `FrozenPricer` (or any other storable pricing type), OR a public constructor/unwrapper for `FrozenPricer` is exposed — any of these restores the persisted-mark path this entry closes.
+
+---
+
+## RP-33: A mint cannot cost more than its maximum settlement payout
+
+- **Trigger state:** a complete mint quote has `all_in_cost > quantity` after adding the premium, trader-paid trading fee after sponsor subsidy, builder fee, EWMA congestion penalty, and inventory-impact charge; even the winning terminal outcome can return only `quantity`.
+- **Controller:** mixed — the oracle mark and EWMA state are market-controlled, fee policy is protocol-controlled, sponsor incentives are externally funded, and builder attribution belongs to the trader's account.
+- **Blast radius:** one caller's prospective mint; no order or payment has been allocated when the condition is evaluated.
+- **Response:** `abort` with `EMintCostAboveMaxPayout` from the shared quote computation, so both quote entrypoints and both mint entrypoints reject the same guaranteed-loss terms.
+- **Reasoning:** caller-supplied `max_cost` is slippage protection and can be disabled on exact-quantity mints, while the configured entry-probability band is independent tail-pricing policy. Comparing the final trader debit with `quantity` directly enforces the economic boundary across every variable fee component without coupling it to either control.
+- **Risk profile:** n/a (bound semantics, not a probabilistic risk).
+- **Pinning tests:** `mint_redeem_guard_tests.move` — `mint_cost_above_maximum_payout_aborts`; `quote_mint_tests.move` — `quote_at_maximum_payout_mints` and `quote_above_maximum_payout_aborts` pin exact equality as admitted and one USDC base unit above as rejected.
+- **Reopen when:** settlement can pay more than `quantity`, a mint charge becomes recoverable at settlement, or the protocol intentionally supports externally compensated loss-leading positions.
+
+## RP-34: Enabled cadences admit cash targets starting at 1,000 USDC
+
+- **Trigger state:** an administrator configures an enabled cadence's `initial_expiry_cash` below 1,000 USDC.
+- **Controller:** protocol administrator through `registry::set_template_cadence_config`.
+- **Blast radius:** the configuration transaction; existing markets retain their creation-time cash targets.
+- **Response:** reject with `EInvalidCadenceConfig`; admit targets at or above 1,000 USDC and no greater than `max_expiry_allocation`. A fully zeroed cadence remains disabled. The minimum stays upgrade-required, with no new admin setter or network-specific exception.
+- **Duty inventory:** the relaxed 10,000-USDC guard set the minimum initial cash target and, through `initial_expiry_cash <= max_expiry_allocation`, the minimum allocation cap and inventory-impact scale. Both minima become 1,000 USDC and remain strictly positive. The constant has no other production consumer. Runtime rebalancing uses each market's snapshotted target; payout backing, impact reserves, net-allocation limits, and active-market/node bounds are unchanged. No arithmetic upper bound or denominator positivity check is removed.
+- **Risk profile:** smaller targets and allocation caps allow less prefunded trading capacity and a smaller inventory-impact scale; they do not authorize underbacked trades or force capital out of existing markets. This is a configuration-envelope decision, not a throughput or liquidity measurement.
+- **Pinning tests:** `registry_create_tests.move` — `set_cadence_config_accepts_1000_and_2000_usdc_targets`, `set_cadence_config_initial_cash_below_floor_aborts`, `set_cadence_config_initial_cash_above_allocation_aborts`, `cadence_configs_disable_round_trip`; `pool_valuation_flow_tests.move` — `minimum_cash_target_rebalances_without_changing_pool_capital`, `above_minimum_cash_target_rebalances_without_changing_pool_capital`.
+- **Reopen when:** the floor gains a runtime consumer, allocation-cap scaling changes, or existing market targets become mutable.
+
+## RP-35: Live pricing requires a retained source-time-matched Block Scholes pair
+
+- **Trigger state:** the latest expiry forward has no exact source-timestamp spot among the ten most recent accepted spot observations, either because that spot has not landed or because newer spots evicted it.
+- **Controller:** oracle source and permissionless relayer timing; only authenticated observations enter the store.
+- **Blast radius:** live quotes, mints, live closes, and the atomic pool snapshot. One missing pair prevents that snapshot and delays queued LP fills; terminal settlement retains its independent exact-history path.
+- **Response:** abort with `EBlockScholesPriceUnavailable` without selecting an older forward, a nearest-time spot, or a permanent settlement-history row. Recovery requires a latest forward with a retained matching spot, or arrival of its matching spot while it can still advance the spot series. Apply the existing freshness, width, pricing-envelope, and writer-digest guards to the selected observations, including when the forward-source setting uses Block Scholes directly.
+- **Reasoning:** fail closed rather than constructing basis from different provider ticks. The bounded history tolerates spot-first arrival while keeping the latest forward authoritative. Equal or older timestamps cannot evict entries or replace provenance; `insert_at` remains settlement-only.
+- **Risk profile:** `BEST-GUESS` — ten observations bound storage and lookup work, not a guaranteed retention duration. An authenticated spot-only stream can evict a forward's match and interrupt the mandatory snapshot. Source-time equality is not a guarantee of provider economic accuracy.
+- **Pinning tests:** `pricing_tests.move` — `newer_spot_does_not_change_the_basis_of_an_older_forward`, `forward_first_prices_when_its_matching_spot_arrives`, `latest_forward_without_matching_spot_aborts`, `evicted_matching_spot_aborts_even_while_pair_is_fresh`; `block_scholes_store_tests.move` — `recent_spot_ring_wraps_without_touching_forwards_or_settlement_history`.
+- **Reopen when:** observed arrival skew routinely exhausts ten spots, missing pairs cause unacceptable snapshot interruption, or forward retention or settlement-history semantics change.
+- **Mandatory-path tests:** `pool_valuation_flow_tests.move` — `evicted_spot_pair_blocks_pool_snapshot`, `newer_matched_pair_restores_pool_snapshot_after_eviction`.
+
+---
+
+## RP-36: All-in budget sizing searches the charged total; the budget fit is exact to one lot (DBU-834)
+
+- **Trigger state:** a caller wants to spend a fixed total on a mint. `mint_exact_amount` sizes on premium and charges fees on top, so the total is knowable only by quoting first, subtracting an estimated fee load off-chain, and padding it against fee state that moves before execution — underspending and leaving dust, or breaching `max_cost` and aborting.
+- **Controller:** user for the budget and the fill floor; market for the surface, the fee-incentive balance, the EWMA state, and the book the impact charge is read against.
+- **Blast radius:** the single mint transaction or quote; no shared or mandatory path.
+- **Response:** proceed — `mint_exact_cost` makes the total the sizing input. A binary search over lot counts evaluates `mint_quote_at`, the same sum the mint charges, against execution-time state, and first finds the largest lot-rounded quantity whose all-in cost fits `max_cost`. The payout check below may then reduce that quantity. When the budget is what limits the fill, the unspent remainder is below the incremental all-in cost of one more lot. A fill stepped down from the maximum-payout bound (below) or saturated at the lot cap can leave more (`order::max_quantity_lots`; RP-13 carries the same caveat for the premium shape). Insufficient expiry cash backing aborts the mint instead of resizing it. The read-only quote does not preflight cash backing or exposure-index capacity.
+- **Why the budget search is exact:** every all-in term is nondecreasing in quantity while pre-trade state is fixed. Premium and each fee leg are `mul_down` of a quantity-independent rate; the trader-paid fee is `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose subsidy gains at most one unit per fee unit because the admin-set rate is capped at one half, below one (`config_constants::max_fee_incentive_subsidy_rate`), and read once per search, so every probe prices against the same rate; the builder fee is a `min` of nondecreasing terms; the surcharge's firing condition is quantity-independent; and the impact charge is monotone because the prospective liability `max(M, R + q) + lambda * (T + q - that)` rises at `lambda` while `R + q <= M`, rises at 1 once the candidate carries the max itself with the gap `T - R` frozen, and both arms evaluate to `M + lambda * (T - R)` exactly at the switch `q = M - R`. The arms meet where they join and neither falls, **independently of `backing_buffer_lambda`**. The premium-only fit bounds the search domain from above because every other term is nonnegative.
+- **The maximum-payout bound is NOT monotone, so it is kept out of that search.** `all_in_cost <= quantity` compares two rising quantities, and the independent floors in each cost term let it flip from false back to true at a larger lot wherever unit cost sits within rounding of one. At the `quote_mint_tests` above-payout fee rate it flips 21 times across the first 400 lots: 2_970_000 costs 2_970_001 and fails while 3_990_000 costs exactly 3_990_000 and passes. A binary search that folded the bound into its predicate returned 2_960_000 for a 4_000_000 budget — undersized by a quarter, and a spurious `EMintQuantityBelowMin` for any caller whose floor sat in between, on a mint an exact-quantity request of the same size performs. Nondecreasing cost proves the budget half of such a predicate, not the payout half.
+- **So the bound is consulted second, and only when it binds:** sizing first finds the budget fill; if that fill clears its own maximum payout it is returned, which is every market where the bound is not what limits the fill. Only if it breaches — which a rising marginal impact rate or an exhausted sponsor subsidy can cause on a budget the account can afford — does a second search run strictly below it, where every candidate already fits `max_cost`. A positive result clears the payout bound, but this fallback is conservative: its non-monotone predicate means it may miss a larger admissible fill or one meeting the caller's `min_quantity`. The floor rejects an undersized result; it does not make the search complete. Minimum-premium admission can also reject a fallback even when an unvisited larger fill would pass. When the search finds no smaller fill the budget fill is admitted, so a market where every size is loss-making reports `EMintCostAboveMaxPayout` — what an exact-quantity mint reports — rather than an empty fill's admission error. `compute_mint_quote` still enforces RP-33 on whatever is admitted. Aborting outright instead of stepping down was rejected: it fires on the `std::u64::max_value!()` budget the entrypoint documents, and the read-only quote would abort identically, leaving an SDK no way to discover a workable budget.
+- **Accounting and backing coverage:** `mint_exact_cost_accounting_tests.move` — `cost_quote_does_not_size_to_cash_backing` proves a smaller exact-quantity mint is backed even when the budget quote sizes past available backing; `cost_mint_without_enough_backing_aborts_instead_of_resizing` pins the resulting mint abort. `repeated_cost_mints_route_combined_fees_and_return_impact_escrow` pins combined builder, sponsor, referral, and impact accounting across consecutive mints and live closes.
+- **Failure asymmetry:** a candidate is only ever accepted after its cost was checked, so a returned fill can never be over-budget, and the charge re-asserts both bounds. A wrong monotonicity assumption costs maximality, never money.
+- **Slippage guard:** `min_quantity`. The budget is fixed, so every adverse move between building and executing the transaction — price, congestion surcharge, sponsor subsidy, inventory impact, a payout-limited step-down — arrives as fewer contracts, and one floor on the fill catches all of them (`EMintQuantityBelowMin`). It is the exact-input counterpart of `mint_exact_quantity`'s `max_cost`, and bounds the all-in price per contract at `max_cost / min_quantity`, which is why the shape carries no `max_probability` (RP-19's reasoning: a second argument would restate the same constraint on a signature that cannot be narrowed after deploy). Zero accepts any fill; unlike `mint_exact_amount`'s `max_cost` it is not required, because a caller who omits it still cannot overspend.
+- **Unchanged:** `mint_exact_amount` still searches the premium relation, so RP-13 and RP-19 continue to describe it; RP-13's reopen condition ("a fee folded into the budget") is met by a sibling entrypoint, not by a change to the relation it governs.
+- **Risk profile:** n/a (sizing semantics, not a probabilistic risk). Cost, stated honestly: the budget search runs up to ~32 probes bounded by the lot cap, and the step-down search up to ~32 more in the rare case it runs. The range is priced once and both payout-tree reads are hoisted out of the loops, so no probe touches storage — but each probe does re-derive the quantity-independent fee rates, which costs a `sqrt_down` per finite leg (seven u128 divides each) plus one more inside the congestion penalty. Hoisting those would mean a probe that no longer routes through the function that charges, which is the invariant this entry exists to protect; the recompute is the price of that guarantee.
+- **Pinning tests:** `mint_exact_cost_tests.move` — `budget_below_the_next_lot_mints_the_largest_fitting_fill` and `budget_at_the_next_lot_all_in_cost_spends_it_exactly` (budget sizing pinned from both sides, the second at zero dust), `premium_budget_sizing_overspends_the_same_figure`; the non-monotone payout bound: `payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill` with `lot_below_the_sized_fill_is_inadmissible` (false at a smaller lot, true at the larger one sizing returns), `fill_at_the_largest_admissible_quantity_clears_its_own_floor`, `budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot`, `overshoot_past_the_maximum_payout_steps_down_instead_of_aborting` with `lot_above_a_payout_limited_fill_is_inadmissible`, `market_where_every_fill_is_loss_making_aborts_on_the_payout_bound`, `fill_whose_cost_equals_its_maximum_payout_mints`; slippage: `quantity_floor_aborts_when_the_price_moves_after_the_quote`, `quantity_floor_aborts_when_a_surcharge_lands_after_the_quote`, `quantity_floor_at_the_repriced_fill_mints`, `payout_limited_fill_below_the_quantity_floor_aborts`, against `congestion_surcharge_after_the_quote_resizes_instead_of_aborting`, `price_move_after_the_quote_resizes_instead_of_aborting` and `premium_budget_mint_aborts_when_the_surcharge_lands_after_the_quote`; each cost term inside the budget: `builder_fee_is_sized_inside_the_budget`, `builder_fee_at_its_own_rate_cap_sizes_exactly`, `sponsor_subsidy_is_sized_inside_the_budget`, `configured_subsidy_rate_is_sized_inside_the_budget`, `subsidy_capped_by_the_sponsored_balance_still_sizes_exactly`, `two_finite_legs_size_exactly`, `inventory_impact_is_sized_inside_the_budget`, `impact_above_the_curve_kink_still_sizes_exactly`, `impact_over_a_disjoint_book_sizes_exactly`, `impact_on_a_range_that_already_holds_exposure_sizes_exactly`; monotonicity of the total walked lot by lot: `all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch`, `all_in_cost_never_falls_across_the_subsidy_cap`, `all_in_cost_never_falls_across_the_subsidy_cap_at_the_maximum_rate`, `all_in_cost_never_falls_at_the_maximum_backing_buffer`; budget edges: `zero_budget_aborts`, `dust_budget_below_the_minimum_premium_aborts`, `empty_balance_caps_the_budget_to_zero`, `oversized_budget_and_balance_saturate_at_the_lot_cap`, `account_quote_is_the_exact_debit_of_the_mint_it_sizes`, `account_quote_caps_the_budget_to_the_account_balance`, `whole_balance_budget_leaves_less_than_one_lot_unspent`; the sized position is an ordinary one: `cost_sized_position_closes_live`, `cost_sized_winner_redeems_its_full_quantity_at_settlement`; `referral_fee_flow_tests.move` — `cost_sized_mint_routes_the_referral_and_emits_the_sized_fill`; `mint_terms_binding_tests.move` — `admitting_a_range_quoted_on_another_exposure_aborts`.
+- **Reopen when:** a mint charge becomes non-monotone in quantity (a volume discount, a per-order flat component that shrinks with size, an impact curve that can fall as liability rises), the subsidy-rate ceiling rises above one, a sizing mode arrives where `min_quantity` no longer bounds price per contract, the search's probe stops routing through the function that charges, or any bound other than the budget is folded into the budget search's predicate without a proof that it is monotone in quantity.
 
 ---

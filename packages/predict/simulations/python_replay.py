@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import csv
 import json
+import math
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -16,7 +18,7 @@ from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v5"
 LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
 EXPECTED_ACTION_SEQUENCE = (
     "mint",
@@ -107,6 +109,7 @@ SCENARIO_COLUMNS = (
     "risk_free_rate",
     "strike",
     "is_up",
+    "higher_strike",
     "quantity",
     "order_ref",
     "close_quantity",
@@ -143,15 +146,15 @@ POS_INF_STRIKE = (1 << 64) - 1  # constants::pos_inf!() == u64::MAX
 ORACLE_MIN_STRIKE = 1 * ORACLE_TICK_SIZE
 ORACLE_MAX_STRIKE = (POS_INF_TICK - 1) * ORACLE_TICK_SIZE
 MIN_PREMIUM = 1_000_000
-DUSDC_DECIMALS = 1_000_000
-VAULT_SEED = 500_000 * DUSDC_DECIMALS
-MANAGER_SEED = 500_000 * DUSDC_DECIMALS
-MIN_BOOTSTRAP_LIQUIDITY = 10 * DUSDC_DECIMALS
+USDC_DECIMALS = 1_000_000
+VAULT_SEED = 500_000 * USDC_DECIMALS
+MANAGER_SEED = 500_000 * USDC_DECIMALS
+MIN_BOOTSTRAP_LIQUIDITY = 10 * USDC_DECIMALS
 INITIAL_ACCOUNT_PLP_BALANCE = VAULT_SEED
 INITIAL_TOTAL_PLP_SUPPLY = INITIAL_ACCOUNT_PLP_BALANCE + MIN_BOOTSTRAP_LIQUIDITY
-INITIAL_EXPIRY_CASH = 50_000 * DUSDC_DECIMALS
+INITIAL_EXPIRY_CASH = 50_000 * USDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
-MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
+MAX_EXPIRY_ALLOCATION = 250_000 * USDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -368,9 +371,6 @@ class I64:
         quotient = self.magnitude * FLOAT_SCALING // other.magnitude
         return I64(quotient, self.is_negative != other.is_negative)
 
-    def square_scaled(self) -> int:
-        return self.mul_scaled(self).magnitude
-
 
 def scenario_quantity_scale() -> int:
     return 1
@@ -412,6 +412,22 @@ def binary_range_ticks(strike: int, is_up: bool) -> tuple[int, int]:
     if is_up:
         return tick, POS_INF_TICK
     return 0, tick
+
+
+def mint_range_ticks(row: dict[str, Any]) -> tuple[int, int]:
+    lower, higher = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+    if row.get("higherStrike") is not None:
+        if not row["isUp"]:
+            raise ValueError("higher_strike requires is_up=true")
+        higher_strike = row["higherStrike"]
+        if higher_strike % ORACLE_TICK_SIZE != 0:
+            raise ValueError("higher_strike must be a whole tick multiple")
+        higher = higher_strike // ORACLE_TICK_SIZE
+        if higher >= POS_INF_TICK:
+            raise ValueError("higher_strike must be finite")
+        if lower >= higher:
+            raise ValueError("higher_strike must exceed strike")
+    return lower, higher
 
 
 def strikes_from_ticks(lower_tick: int, higher_tick: int) -> tuple[int, int]:
@@ -543,6 +559,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     **_oracle_values(row, index),
                     "strike": _uint(row, "strike", index),
                     "isUp": _bool(row, "is_up", index),
+                    "higherStrike": _uint(row, "higher_strike", index) if row.get("higher_strike") else None,
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
                     "orderRef": _ref(row, "order_ref", index),
                 }
@@ -936,10 +953,10 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     k = ln_fixed(strike).sub(ln_fixed(forward))
     m = I64(svi["m"], svi["mNegative"])
     k_minus_m = k.sub(m)
-    k_minus_m_squared = k_minus_m.square_scaled()
+    # The smile root takes a 1e18 input of exact squares and returns at 1e9
+    # (fixed_math's `sqrt_u128_down`); isqrt is its exact floor.
     sigma = svi["sigma"]
-    sigma_squared = deepbook_mul(sigma, sigma)
-    sq = sqrt_down(k_minus_m_squared + sigma_squared)
+    sq = math.isqrt(k_minus_m.magnitude * k_minus_m.magnitude + sigma * sigma)
     rho = I64(svi["rho"], svi["rhoNegative"])
     rho_km = rho.mul_scaled(k_minus_m)
     inner = rho_km.add(I64(sq))
@@ -1158,7 +1175,7 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     if action == "mint":
-        lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+        lower_tick, higher_tick = mint_range_ticks(row)
         return {
             **oracle_input,
             "order_ref": row["orderRef"],
@@ -1197,7 +1214,7 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
 
 def initial_state() -> dict[str, int]:
     return {
-        "account_dusdc_balance": MANAGER_SEED,
+        "account_usdc_balance": MANAGER_SEED,
         "account_plp_balance": INITIAL_ACCOUNT_PLP_BALANCE,
         "expiry_cash_balance": INITIAL_EXPIRY_CASH,
         "inventory_impact_reserve": 0,
@@ -1221,7 +1238,7 @@ def initial_state() -> dict[str, int]:
 
 def state_snapshot(state: dict[str, int]) -> dict[str, str]:
     visible = (
-        "account_dusdc_balance",
+        "account_usdc_balance",
         "account_plp_balance",
         "expiry_cash_balance",
         "inventory_impact_reserve",
@@ -1355,21 +1372,40 @@ def pricing_svi(oracle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def price_range(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> int:
-    if "lower_tick" in row_or_order:
-        lower, higher = strikes_from_ticks(
-            row_or_order["lower_tick"],
-            row_or_order["higher_tick"],
-        )
-    else:
-        strike = align_strike_to_tick(row_or_order["strike"])
-        lower, higher = binary_range_bounds(strike, row_or_order["isUp"])
-    return compute_range_price(
-        pricing_svi(oracle),
-        live_forward(oracle["spot"], oracle["forward"]),
-        lower,
-        higher,
+def range_prices(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> tuple[int | None, int | None]:
+    ticks = (
+        (row_or_order["lower_tick"], row_or_order["higher_tick"])
+        if "lower_tick" in row_or_order else mint_range_ticks(row_or_order)
     )
+    lower, higher = strikes_from_ticks(*ticks)
+    svi = pricing_svi(oracle)
+    forward = live_forward(oracle["spot"], oracle["forward"])
+    return (
+        None if lower == NEG_INF_STRIKE else compute_up_price(svi, forward, lower),
+        None if higher == POS_INF_STRIKE else compute_up_price(svi, forward, higher),
+    )
+
+
+def range_probability(prices: tuple[int | None, int | None]) -> int:
+    lower, higher = prices
+    return max(0, (FLOAT_SCALING if lower is None else lower) - (0 if higher is None else higher))
+
+
+def range_trading_fee(prices: tuple[int | None, int | None], quantity: int, time_to_expiry_ms: int | None) -> int:
+    return sum(deepbook_mul(fee_rate(p, time_to_expiry_ms), quantity) for p in prices if p is not None)
+
+
+def assert_range_entry_bounds(prices: tuple[int | None, int | None]) -> None:
+    lower, higher = prices
+    if lower is not None:
+        assert_entry_probability_bounds(lower)
+    if higher is not None:
+        assert_entry_probability_bounds(FLOAT_SCALING - higher)
+    assert_entry_probability_bounds(range_probability(prices))
+
+
+def price_range(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> int:
+    return range_probability(range_prices(row_or_order, oracle))
 
 
 def mint_order(
@@ -1381,25 +1417,27 @@ def mint_order(
     oracle = model["last_oracle"]
     if oracle is None:
         raise ValueError("mint requires an oracle snapshot")
-    probability = price_range(row, oracle)
-    assert_entry_probability_bounds(probability)
+    prices = range_prices(row, oracle)
+    assert_range_entry_bounds(prices)
+    probability = range_probability(prices)
     quantity = row["quantity"]
     premium = deepbook_mul(probability, quantity)
     if premium < MIN_PREMIUM:
         raise ValueError("premium below minimum")
-    fee = deepbook_mul(
-        fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
-        quantity,
-    )
-    lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+    fee = range_trading_fee(prices, quantity, model_fee_time_to_expiry_ms(model, timestamp_ms))
+    lower_tick, higher_tick = mint_range_ticks(row)
     before = live_payout_liability(model)
-    model["tree"].insert_range(lower_tick, higher_tick, quantity)
-    after = live_payout_liability(model)
+    quoted_model = {**model, "tree": deepcopy(model["tree"])}
+    quoted_model["tree"].insert_range(lower_tick, higher_tick, quantity)
+    after = live_payout_liability(quoted_model)
     impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
     total_cost = premium + fee + impact_charge
-    if total_cost > state["account_dusdc_balance"]:
+    if total_cost > quantity:
+        raise ValueError("mint cost above maximum payout")
+    if total_cost > state["account_usdc_balance"]:
         raise ValueError("insufficient account balance for mint")
 
+    model["tree"] = quoted_model["tree"]
     sequence = model["next_order_sequence"]
     model["next_order_sequence"] += 1
     model["orders"][row["orderRef"]] = {
@@ -1409,7 +1447,7 @@ def mint_order(
         "sequence": sequence,
         "position_root_sequence": sequence,
     }
-    state["account_dusdc_balance"] -= total_cost
+    state["account_usdc_balance"] -= total_cost
     state["expiry_cash_balance"] += total_cost
     state["inventory_impact_reserve"] += impact_charge
     update_required_cash(model, state)
@@ -1453,14 +1491,12 @@ def redeem_live(
     oracle = model["last_oracle"]
     if oracle is None:
         raise ValueError("live redeem requires an oracle snapshot")
-    probability = price_range(order, oracle)
+    prices = range_prices(order, oracle)
+    probability = range_probability(prices)
     redeem_amount = deepbook_mul(probability, close_quantity)
     fee = min(
         redeem_amount,
-        deepbook_mul(
-            fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
-            close_quantity,
-        ),
+        range_trading_fee(prices, close_quantity, model_fee_time_to_expiry_ms(model, timestamp_ms)),
     )
     before = live_payout_liability(model)
     model["tree"].remove_range(order["lower_tick"], order["higher_tick"], close_quantity)
@@ -1479,7 +1515,7 @@ def redeem_live(
             "sequence": replacement_sequence,
         }
 
-    state["account_dusdc_balance"] += redeem_amount + impact_rebate - fee
+    state["account_usdc_balance"] += redeem_amount + impact_rebate - fee
     state["expiry_cash_balance"] += fee - redeem_amount - impact_rebate
     state["inventory_impact_reserve"] -= impact_rebate
     update_required_cash(model, state)
@@ -1645,7 +1681,7 @@ def drain_supply_queue(
         if frozen_pool_value == 0 or frozen_total_supply == 0:
             model["supply_queue"].pop(0)
             state["supply_requests_pending"] -= 1
-            state["account_dusdc_balance"] += request["amount"]
+            state["account_usdc_balance"] += request["amount"]
             updates.append(
                 {
                     "type": "request_cancelled",
@@ -1669,7 +1705,7 @@ def drain_supply_queue(
         if shares < request["min_output"]:
             model["supply_queue"].pop(0)
             state["supply_requests_pending"] -= 1
-            state["account_dusdc_balance"] += request["amount"]
+            state["account_usdc_balance"] += request["amount"]
             updates.append(
                 {
                     "type": "request_cancelled",
@@ -1706,10 +1742,10 @@ def drain_supply_queue(
             {
                 "type": "supply_filled",
                 "index": str(request["index"]),
-                "dusdc_amount": str(fill),
+                "usdc_amount": str(fill),
                 "shares_minted": str(shares),
-                "fee_dusdc": str(fee),
-                "dusdc_remaining": str(remaining),
+                "fee_usdc": str(fee),
+                "usdc_remaining": str(remaining),
                 "requests_pending_after": str(state["supply_requests_pending"]),
             }
         )
@@ -1781,7 +1817,7 @@ def drain_withdraw_queue(
         remaining = request["amount"] - burn
         state["vault_idle_balance"] -= payout
         state["vault_total_plp_supply"] -= burn
-        state["account_dusdc_balance"] += payout
+        state["account_usdc_balance"] += payout
         if remaining == 0:
             model["withdraw_queue"].pop(0)
             state["withdraw_requests_pending"] -= 1
@@ -1797,8 +1833,8 @@ def drain_withdraw_queue(
                 "type": "withdraw_filled",
                 "index": str(request["index"]),
                 "shares_burned": str(burn),
-                "dusdc_amount": str(payout),
-                "fee_dusdc": str(fee),
+                "usdc_amount": str(payout),
+                "fee_usdc": str(fee),
                 "shares_remaining": str(remaining),
                 "requests_pending_after": str(state["withdraw_requests_pending"]),
             }
@@ -1947,7 +1983,7 @@ def redeem_settled(
     )
     model["settled_liability"] -= payout
     state["expiry_cash_balance"] -= payout
-    state["account_dusdc_balance"] += payout
+    state["account_usdc_balance"] += payout
     update_required_cash(model, state)
     return [
         {

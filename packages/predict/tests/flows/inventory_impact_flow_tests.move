@@ -8,8 +8,8 @@
 module deepbook_predict::inventory_impact_flow_tests;
 
 use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
+use usdc::usdc::USDC;
 
 const IMPACT_SCALE: u64 = 10_000_000_000;
 const IMPACT_MAX_RATE: u64 = 200_000_000; // 20%
@@ -45,7 +45,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
             + EXPECTED_SINGLE_ORDER_CHARGE,
     );
 
-    let balance_before_mint = fx.account_balance_bundle<DUSDC>(&account);
+    let balance_before_mint = fx.account_balance_bundle<USDC>(&account);
     let cash_before_mint = helpers::market(&market).cash_balance();
     let order_id = fx.mint_exact_quantity_bundle(
         &mut market,
@@ -58,7 +58,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     );
 
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         balance_before_mint - quote.all_in_cost(),
     );
     assert_eq!(
@@ -78,7 +78,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     // close fee.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let gross = fx.live_order_value_bundle(&market, order_id);
-    let balance_before_close = fx.account_balance_bundle<DUSDC>(&account);
+    let balance_before_close = fx.account_balance_bundle<USDC>(&account);
     fx.redeem_live_bundle(
         &mut market,
         &mut account,
@@ -88,7 +88,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
 
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), 0);
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         balance_before_close + gross + EXPECTED_SINGLE_ORDER_CHARGE - ORDINARY_MIN_FEE,
     );
     helpers::assert_market_backed_bundle(&market);
@@ -160,7 +160,7 @@ fun setup_enabled_market(): (helpers::Fixture, ID, helpers::Trader) {
     let mut fx = helpers::setup_market_default();
     fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
     fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    fx.set_default_cadence_allocation(IMPACT_SCALE, test_constants::default_initial_expiry_cash());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     let trader = fx.create_funded_manager(test_constants::mint_deposit());
     (fx, expiry_id, trader)
@@ -170,7 +170,7 @@ fun setup_enabled_referred_market(): (helpers::Fixture, ID, helpers::Trader) {
     let mut fx = helpers::setup_market_default();
     fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
     fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    fx.set_default_cadence_allocation(IMPACT_SCALE, test_constants::default_initial_expiry_cash());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     let referrer = fx.create_funded_manager_as(test_constants::bob(), 0);
     let trader = fx.create_funded_manager_with_referrer_as(

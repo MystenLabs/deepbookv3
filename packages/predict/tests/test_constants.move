@@ -31,8 +31,8 @@ public fun carol(): address { CAROL }
 /// FLOAT_SCALING (1e9): `500_000_000` = 50%, `1_000_000_000` = 100%.
 public fun float(): u64 { math::float_scaling!() }
 
-/// One whole DUSDC quote unit = `10^dusdc_decimals!()` = `1_000_000` raw units.
-public fun dusdc_unit(): u64 { 10u64.pow(constants::dusdc_decimals!()) }
+/// One whole USDC quote unit = `10^usdc_decimals!()` = `1_000_000` raw units.
+public fun usdc_unit(): u64 { 10u64.pow(constants::usdc_decimals!()) }
 
 // === Default market bring-up (test-fixture choices) ===
 
@@ -86,8 +86,8 @@ public fun default_cadence_window_size(): u64 { 1 }
 /// Default per-expiry allocation cap used by test market cadence configs.
 public fun default_max_expiry_allocation(): u64 { 250_000_000_000 }
 
-/// Default minimum DUSDC cash target used by test market cadence configs.
-public fun default_initial_expiry_cash(): u64 { constants::expiry_cash_floor!() }
+/// Fixed 10,000-USDC target for existing economic scenarios, independent of the admission minimum.
+public fun default_initial_expiry_cash(): u64 { 10_000_000_000 }
 
 /// The canonical finite strike tick the flow tests mint against. With the default
 /// 1e9 tick size it maps to the raw strike `100e9` (`default_strike_tick *
@@ -95,7 +95,7 @@ public fun default_initial_expiry_cash(): u64 { constants::expiry_cash_floor!() 
 /// `(strike_tick, +inf)` UP range).
 public fun default_strike_tick(): u64 { 100 }
 
-/// Default DUSDC cash seeded into expiry markets while pool funding is absent.
+/// Default USDC cash seeded into expiry markets while pool funding is absent.
 public fun default_seeded_expiry_cash(): u64 { 300_000_000_000 }
 
 /// Protocol-reserve profit share the default fixture sets (10% in FLOAT_SCALING).
@@ -128,13 +128,12 @@ public fun default_svi_rho_magnitude(): u64 { math::float_scaling!() }
 /// wing contribution rounded to zero for default-grid strikes.
 public fun default_svi_m(): u64 { 10 * math::float_scaling!() }
 
-/// Default SVI `sigma` for live oracle test fixtures: 1e-3 in 1e9 fixed point, the
-/// lower edge of propbook's accepted vol-of-vol band.
+/// Default SVI `sigma` for live oracle test fixtures: 1e-3 in 1e9 fixed point.
 public fun default_svi_sigma(): u64 { 1_000_000 }
 
-/// Mirrors `pricing.move`'s private SVI sigma floor for tests that intentionally
-/// seed envelope-edge surfaces.
-public fun pricing_min_svi_sigma(): u64 { default_svi_sigma() }
+/// Mirrors `pricing.move`'s private SVI sigma floor (1e-5) for tests that
+/// intentionally seed envelope-edge surfaces.
+public fun pricing_min_svi_sigma(): u64 { 10_000 }
 
 /// Mirrors `pricing.move`'s private SVI input ceiling for tests that intentionally
 /// seed envelope-edge surfaces.

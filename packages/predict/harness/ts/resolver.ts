@@ -11,7 +11,7 @@ import { type Svi, directionProbability, forwardPrice } from "./pricer.js";
 const SCALE = 1_000_000_000; // 1e9 fixed-point (float_scaling) — probability
 const PROB_SLACK = 1.1; // max_probability = quoted p + 10% (per-contract slippage cap)
 const COST_SLACK = 1.2; // max_cost = spend + 20% (covers net_premium + fees + slippage)
-const DUSDC_DECIMALS = 1_000_000; // DUSDC raw — quantity/payout/cash are DUSDC-scaled, not 1e9
+const USDC_DECIMALS = 1_000_000; // USDC raw — quantity/payout/cash are USDC-scaled, not 1e9
 const POS_INF_TICK = 2 ** 30 - 1; // range_codec pos-inf sentinel
 
 export interface MarketParams {
@@ -40,9 +40,9 @@ export interface Resolved {
   reason?: string;
   strikeUsd: number;
   predictedProbability: number;
-  quantity: bigint; // DUSDC-scaled (1e6), lot-rounded
+  quantity: bigint; // USDC-scaled (1e6), lot-rounded
   maxProbability1e9: bigint; // per-contract probability cap (quoted p + slack), 1e9-scaled
-  maxCost: bigint; // all-in DUSDC withdrawal cap (spend + headroom), 1e6-scaled
+  maxCost: bigint; // all-in USDC withdrawal cap (spend + headroom), 1e6-scaled
 }
 
 
@@ -79,9 +79,9 @@ export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams
   if (p < mkt.minEntryProbability || p > mkt.maxEntryProbability)
     reasons.push(`p=${p.toFixed(4)} outside [${mkt.minEntryProbability}, ${mkt.maxEntryProbability}]`);
 
-  // quantity (DUSDC max-payout units) = spend / p; lot-round down so
-  // net_premium <= spend. DUSDC-scaled (1e6), matching the on-chain payout/cash unit.
-  const qtyRaw = Math.floor((inst.spendUsd / p) * DUSDC_DECIMALS / lot) * lot;
+  // quantity (USDC max-payout units) = spend / p; lot-round down so
+  // net_premium <= spend. USDC-scaled (1e6), matching the on-chain payout/cash unit.
+  const qtyRaw = Math.floor((inst.spendUsd / p) * USDC_DECIMALS / lot) * lot;
   if (qtyRaw < lot) reasons.push("sized quantity below one lot");
 
   return {
@@ -91,6 +91,6 @@ export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams
     predictedProbability: p,
     quantity: BigInt(Math.max(qtyRaw, 0)),
     maxProbability1e9: BigInt(Math.min(SCALE, Math.round(p * PROB_SLACK * SCALE))),
-    maxCost: BigInt(Math.round(inst.spendUsd * COST_SLACK * DUSDC_DECIMALS)),
+    maxCost: BigInt(Math.round(inst.spendUsd * COST_SLACK * USDC_DECIMALS)),
   };
 }

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Defines Predict's upgrade-required scales, hard limits, time units, and event discriminators.
-/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, and contract quantities use six decimal base units unless stated otherwise.
+/// Prices, probabilities, and rates use 1e9 fixed point; USDC, PLP, and contract quantities use six decimal base units unless stated otherwise.
 module deepbook_predict::constants;
 
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 1 }
+public macro fun current_version(): u64 { 4 }
 
 // === Scaling ===
 
@@ -17,8 +17,8 @@ public macro fun current_version(): u64 { 1 }
 /// form into the package's 1e9-scaled `u64`.
 public(package) macro fun float_scaling_decimals(): u64 { 9 }
 
-/// Decimals of the DUSDC settlement asset (the pool's denomination).
-public macro fun dusdc_decimals(): u8 { 6 }
+/// Decimals of the USDC settlement asset (the pool's denomination).
+public macro fun usdc_decimals(): u8 { 6 }
 
 // === Position Sizing ===
 
@@ -30,8 +30,8 @@ public macro fun min_premium(): u64 { 1_000_000 }
 
 // === Pool Funding ===
 
-/// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
-public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
+/// Minimum configurable per-expiry cash target, in 6-decimal USDC units.
+public(package) macro fun expiry_cash_floor(): u64 { 1_000_000_000 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
@@ -39,7 +39,7 @@ public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 // === Async LP Requests ===
 // Request admission thresholds and cancellation reasons are upgrade-required protocol values.
 
-/// Minimum DUSDC a single supply request must escrow: 10 DUSDC (6-decimal units).
+/// Minimum USDC a single supply request must escrow: 10 USDC (6-decimal units).
 public(package) macro fun min_supply_request(): u64 { 10_000_000 }
 
 /// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
@@ -52,15 +52,32 @@ public(package) macro fun request_cancel_reason_non_executable(): u8 { 1 }
 public(package) macro fun request_cancel_reason_limit_missed(): u8 { 2 }
 
 /// Permanent genesis liquidity locked at the one-time `plp::lock_capital` bootstrap:
-/// 10 DUSDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
+/// 10 USDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
 
+/// Minimum USDC a single no-shares contribution may add (`plp::add_usdc_to_plp`):
+/// 10 USDC (6-decimal units), matching the supply-request floor. Its own knob rather
+/// than a reuse of `min_supply_request` because queue admission and contribution
+/// admission are separate policies that may diverge.
+public(package) macro fun min_usdc_contribution(): u64 { 10_000_000 }
+
 /// Executable frozen-mark band: the PLP price must be within this factor of unit
-/// parity (1 DUSDC per whole PLP) in both directions — [0.01, 100] DUSDC. dUSDC
+/// parity (1 USDC per whole PLP) in both directions — [0.01, 100] USDC. USDC
 /// and PLP both use 6 decimals, so unit parity is raw-unit parity and the band
 /// test needs no price unit.
 public(package) macro fun executable_price_band_factor(): u64 { 100 }
+
+/// Ceiling a no-shares contribution (`plp::add_usdc_to_plp`) may raise pool cash to:
+/// 10 USDC per whole PLP, a tenth of the executable band's ceiling. The gap is not
+/// slack. LP fills after a contribution only move the price up — fill rounding and
+/// retained supply and withdraw fees all stay in the pool — so a contribution that
+/// filled the pool to the band itself would be pushed out of it by the next uneven
+/// or fee-charged fill. A tenth leaves LP activity nine times the pool's cash of
+/// room; retained fees cross it only once they add up to that much (RP-2).
+public(package) macro fun contribution_price_ceiling_factor(): u64 {
+    executable_price_band_factor!() / 10
+}
 
 /// Maximum active pre-expiry markets that can require live NAV valuation in one
 /// full-pool flush.
@@ -126,16 +143,7 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
 
-/// Fraction of the trading fee paid by sponsor-funded incentives.
-public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
-
-/// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.
-public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
-
-/// Fraction of the expiry allocation cap an expiry can receive over its lifetime.
-public(package) macro fun fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
-
-/// Minimum DUSDC a single fee-incentive sponsorship may contribute.
+/// Minimum USDC a single fee-incentive sponsorship may contribute.
 public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
 
 // === Settlement ===

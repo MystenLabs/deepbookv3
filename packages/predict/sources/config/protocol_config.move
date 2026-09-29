@@ -3,12 +3,14 @@
 
 /// Protocol-wide configuration and flow gates for Predict.
 ///
-/// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, the protocol-wide emergency freeze, and the full-pool valuation
-/// in-flight state (flag + flush ordinal, held across the transactions a flush
-/// spans; keeper/config flows gate on it, trading flows read it only to discard
-/// stale stamps lazily). Flow modules decide which gates apply before they mutate expiry,
-/// oracle, pool, or account state.
+/// This shared object owns the admin-tunable config structs, the fee-incentive
+/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
+/// protocol-wide emergency freeze, the allowlist of keepers that may redeem settled
+/// orders without owner auth, and the full-pool valuation in-flight state (flag +
+/// flush ordinal, held across the transactions a flush spans; keeper/config flows
+/// gate on it, trading flows read it only to discard stale stamps lazily). Flow
+/// modules decide which gates apply before they mutate expiry, oracle, pool, or
+/// account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -20,7 +22,12 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
-use sui::clock::Clock;
+use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists as UID.exists_;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -29,6 +36,9 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
+const ETradeWindowClosed: u64 = 7;
+const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
+const ESettledRedeemKeeperNotFound: u64 = 9;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -41,7 +51,7 @@ public struct ProtocolConfig has key {
     /// surcharge routed to the referrer, in FLOAT_SCALING.
     referral_fee_rate: u64,
     /// Fee charged on an executed PLP supply fill, in FLOAT_SCALING, deducted from
-    /// the DUSDC taken in before shares are priced. Ships at zero — a deposit
+    /// the USDC taken in before shares are priced. Ships at zero — a deposit
     /// dilutes the pool's risk per dollar rather than concentrating it, so it is
     /// not taxed; the knob exists to keep that reversible.
     plp_supply_fee_rate: u64,
@@ -56,8 +66,8 @@ public struct ProtocolConfig has key {
     /// flush, so this is an LP-queue liveness knob (RP-12).
     lp_request_limit_flush_attempts: u64,
     /// Ceiling on LP-attributable pool value that queued supplies may raise the pool
-    /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
-    /// the pool is uncapped until an operator sets a figure (RP-23).
+    /// to, enforced at the flush against the frozen mark. Defaults to 500,000 USDC
+    /// (RP-23).
     max_lp_pool_value: u64,
     /// Hard staleness bound: `finish_flush` refuses to complete a flush in flight
     /// longer than this, so no LP request fills at a mark older than the window;
@@ -66,6 +76,10 @@ public struct ProtocolConfig has key {
     /// settlement — trading continues — so this also bounds LP-fill latency and is
     /// tuned alongside flush cadence (RP-29).
     max_valuation_window_ms: u64,
+    /// Window before a market's expiry in which live quotes, mints, and live
+    /// redeems abort. Read live at trade time rather than snapshotted per market,
+    /// so it can be widened on markets already trading. `0` disables.
+    no_trade_window_ms: u64,
     strike_exposure_template_config: StrikeExposureConfig,
     ewma_config: EwmaConfig,
     /// Minimum package version permitted to run version-gated flows. Monotonic;
@@ -105,6 +119,31 @@ public struct ProtocolConfig has key {
     flush_seq: u64,
 }
 
+/// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of keepers
+/// allowed to call `expiry_market::redeem_settled_permissionless`. The set was
+/// added after deploy, so it lives off the struct layout; an absent field is an
+/// empty set, which closes the keeper path.
+public struct SettledRedeemKeepersKey() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
+/// subsidy rate. The rate became admin-tunable after deploy, so it lives off the
+/// struct layout; an absent field reads as
+/// `config_constants::default_fee_incentive_subsidy_rate`, the fixed rate earlier
+/// package versions charged, so no migration step is needed.
+public struct FeeIncentiveSubsidyRateKey() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive live
+/// target rate, stored off the struct layout for the same reason. An absent field
+/// reads as `config_constants::default_fee_incentive_live_target_rate`, the fixed
+/// share earlier package versions used.
+public struct FeeIncentiveLiveTargetRateKey() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
+/// lifetime cap rate template, stored off the struct layout for the same reason. An
+/// absent field reads as `config_constants::default_fee_incentive_lifetime_cap_rate`,
+/// the fixed share earlier package versions used.
+public struct FeeIncentiveLifetimeCapRateKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -134,6 +173,47 @@ public fun valuation_in_progress(config: &ProtocolConfig): bool {
 /// Return the live referral fee rate for SDK and devInspect reads.
 public fun referral_fee_rate(config: &ProtocolConfig): u64 {
     config.referral_fee_rate
+}
+
+/// Return the live fee-incentive subsidy rate: the fraction of each mint's trading
+/// fee paid from the market's sponsor-funded fee-incentive balance, in
+/// FLOAT_SCALING. `public` for SDK and devInspect reads: the quote already reports
+/// the subsidy it applied, but a client needs the rate to explain it.
+public fun fee_incentive_subsidy_rate(config: &ProtocolConfig): u64 {
+    config.u64_field_or(
+        FeeIncentiveSubsidyRateKey(),
+        config_constants::default_fee_incentive_subsidy_rate!(),
+    )
+}
+
+/// Return the live fee-incentive target rate: the share of an expiry's allocation
+/// cap each live rebalance tops its sponsor-funded balance up to, in FLOAT_SCALING.
+/// `public` for SDK and devInspect reads, so a client can tell how much a market
+/// can hold before reading its balance.
+public fun fee_incentive_live_target_rate(config: &ProtocolConfig): u64 {
+    config.u64_field_or(
+        FeeIncentiveLiveTargetRateKey(),
+        config_constants::default_fee_incentive_live_target_rate!(),
+    )
+}
+
+/// Return the fee-incentive lifetime cap rate that newly created expiry markets
+/// snapshot: the share of an expiry's allocation cap it may receive in
+/// sponsor-funded incentives over its life, in FLOAT_SCALING. `public` for SDK and
+/// devInspect reads.
+public fun fee_incentive_lifetime_cap_rate(config: &ProtocolConfig): u64 {
+    config.u64_field_or(
+        FeeIncentiveLifetimeCapRateKey(),
+        config_constants::default_fee_incentive_lifetime_cap_rate!(),
+    )
+}
+
+/// Window before expiry in which live quotes, mints, and live redeems abort.
+/// `public` for SDK and devInspect reads: a client that cannot see this value
+/// can only learn the window closed by decoding `ETradeWindowClosed` from a
+/// failed quote.
+public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
+    config.no_trade_window_ms
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -390,6 +470,26 @@ public fun set_ewma_enabled(
     config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
 }
 
+/// Set the window before expiry in which live quotes, mints, and live redeems
+/// abort. `0` disables the block. Read live at trade time, so a change applies
+/// to markets already trading and stays available as an incident control.
+///
+/// Deliberately not gated on `assert_not_valuation_in_progress`, matching
+/// `set_trading_paused`: a stalled flush must not be able to trap a safety
+/// control. Nothing in the flush reads this value, so a mid-valuation change
+/// cannot skew a frozen mark.
+public fun set_no_trade_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_no_trade_window_ms(value);
+    config.no_trade_window_ms = value;
+    config_events::emit_no_trade_window_updated(value, clock.timestamp_ms());
+}
+
 /// Set whether trading is paused.
 public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
     config.assert_version();
@@ -403,6 +503,38 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
 /// engaged freeze unclearable without a package upgrade — defeating the point.
 public fun set_frozen(config: &mut ProtocolConfig, _admin_cap: &AdminCap, frozen: bool) {
     config.set_frozen_internal(frozen);
+}
+
+/// Allow `keeper` to call `expiry_market::redeem_settled_permissionless`.
+/// Admin-only and version-gated. Aborts if `keeper` is already allowed.
+public fun add_settled_redeem_keeper(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    keeper: address,
+) {
+    config.assert_version();
+    if (!config.id.exists_(SettledRedeemKeepersKey())) {
+        config.id.add(SettledRedeemKeepersKey(), vec_set::empty<address>());
+    };
+    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
+    assert!(!keepers.contains(&keeper), ESettledRedeemKeeperAlreadyAdded);
+    keepers.insert(keeper);
+    config_events::emit_settled_redeem_keeper_updated(keeper, true);
+}
+
+/// Revoke `keeper`'s access to `expiry_market::redeem_settled_permissionless`.
+/// Admin-only. Bypasses the version gate, like the registry's cap revocations, so
+/// revocation stays available under the emergency freeze and from a package
+/// version below the runtime floor. Aborts if `keeper` is not allowed.
+public fun remove_settled_redeem_keeper(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    keeper: address,
+) {
+    assert!(config.is_settled_redeem_keeper(keeper), ESettledRedeemKeeperNotFound);
+    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
+    keepers.remove(&keeper);
+    config_events::emit_settled_redeem_keeper_updated(keeper, false);
 }
 
 /// Advance the version floor to this package's compiled-in `current_version!()`.
@@ -435,6 +567,83 @@ public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &Admin
     config.assert_version();
     config_constants::assert_referral_fee_rate(rate);
     config.referral_fee_rate = rate;
+}
+
+/// Set the fraction of each mint's trading fee paid from the market's sponsor-funded
+/// fee-incentive balance. Read live at mint time, so the new rate applies to the next
+/// mint on every market, including markets already trading; `0` stops incentives
+/// from being spent without moving them. The subsidy never changes the trading fee
+/// charged, only how much of it the trader pays; on a referred mint the referral is
+/// computed on the trader-paid part, so a higher rate also shrinks the referral.
+///
+/// Binds every mint only once the version watermark has retired package versions
+/// older than 4: those compiled in a fixed 20% and never read this rate, so until
+/// then a mint routed through one still draws 20% from the market's balance. A
+/// zero rate does not stop `rebalance_expiry_cash` allocating the pool reserve into
+/// markets; to wind incentives down, also withdraw the reserve
+/// (`plp::withdraw_fee_incentives`), or, once the watermark has retired versions
+/// older than 4, set the live target rate to zero, which keeps the reserve in the
+/// pool.
+///
+/// Not gated on the valuation flag, matching `set_referral_fee_rate`: nothing in the
+/// flush reads this rate, and a mint that consumes a subsidy mid-flush lands after
+/// the snapshot captured that market's cash, so it cannot reach the frozen mark.
+public fun set_fee_incentive_subsidy_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_fee_incentive_subsidy_rate(rate);
+    config.set_u64_field(FeeIncentiveSubsidyRateKey(), rate);
+    config_events::emit_fee_incentive_subsidy_rate_updated(rate, clock.timestamp_ms());
+}
+
+/// Set the share of an expiry's allocation cap each live rebalance tops its
+/// sponsor-funded fee-incentive balance up to. Read at every rebalance, so it
+/// applies to markets already trading. Lowering it never claws back a balance
+/// already allocated: a market above the new target receives nothing more until it
+/// spends below it. `0` stops the pool reserve being allocated to markets, so it
+/// stays in the pool and withdrawable. It may exceed a market's lifetime cap: the
+/// cap still bounds what the market receives, so the target is not checked against
+/// the lifetime cap rate.
+///
+/// Binds every rebalance only once the version watermark has retired package
+/// versions older than 4: `rebalance_expiry_cash` is permissionless, and those
+/// versions top a market up to a fixed 2% whatever this is set to. Not gated on the
+/// valuation flag: the flush never reads it, and the reserve and market incentive
+/// balances it moves between are outside PLP NAV.
+public fun set_fee_incentive_live_target_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_fee_incentive_live_target_rate(rate);
+    config.set_u64_field(FeeIncentiveLiveTargetRateKey(), rate);
+    config.emit_fee_incentive_allocation_rates_updated(clock);
+}
+
+/// Set the share of an expiry's allocation cap it may receive in sponsor-funded fee
+/// incentives over its life. Snapshotted into each expiry's pool accounting row when
+/// the market is created, so markets already created keep the cap they were created
+/// with, and `vault_events::FeeIncentiveLifetimeCapSnapshotted` reports each market's cap.
+///
+/// Binds market creation only once the version watermark has retired package
+/// versions older than 4, which snapshot a fixed 10% whatever this is set to. Not
+/// gated on the valuation flag, for the same reason as the live target rate.
+public fun set_template_fee_incentive_lifetime_cap_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_fee_incentive_lifetime_cap_rate(rate);
+    config.set_u64_field(FeeIncentiveLifetimeCapRateKey(), rate);
+    config.emit_fee_incentive_allocation_rates_updated(clock);
 }
 
 /// Set the fee charged on executed PLP supply fills. Admin-gated and validated
@@ -532,6 +741,14 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
 
+/// Whether `keeper` may call `expiry_market::redeem_settled_permissionless`.
+public(package) fun is_settled_redeem_keeper(config: &ProtocolConfig, keeper: address): bool {
+    let key = SettledRedeemKeepersKey();
+    if (!config.id.exists_(key)) return false;
+    let keepers: &VecSet<address> = config.id.borrow(key);
+    keepers.contains(&keeper)
+}
+
 /// Abort unless the protocol is operational: not emergency-frozen, and the
 /// running package version is at or above the watermark floor.
 ///
@@ -548,6 +765,22 @@ public(package) fun assert_version(config: &ProtocolConfig) {
 /// separately via `assert_version` when the flow is version-gated.
 public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
+}
+
+/// Abort when `expiry_ms` is inside the no-trade window. The blocked region is
+/// `remaining <= window`, so a `0` window blocks nothing and disables the check.
+/// `now < expiry_ms` guards the subtraction against underflow for any future
+/// caller; on today's paths it cannot be false, because a `&Pricer` only exists
+/// if `load_live_pricer` already asserted `now < expiry` in the same transaction.
+public(package) fun assert_trade_window_open(
+    config: &ProtocolConfig,
+    expiry_ms: u64,
+    clock: &Clock,
+) {
+    let window = config.no_trade_window_ms();
+    if (window == 0) return;
+    let now = clock.timestamp_ms();
+    assert!(now < expiry_ms && expiry_ms - now > window, ETradeWindowClosed);
 }
 
 /// Abort unless a valuation lock is currently active.
@@ -630,6 +863,30 @@ fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
 }
 
+/// Emit both fee-incentive allocation rates, sampled after the setter's write.
+fun emit_fee_incentive_allocation_rates_updated(config: &ProtocolConfig, clock: &Clock) {
+    config_events::emit_fee_incentive_allocation_rates_updated(
+        config.fee_incentive_live_target_rate(),
+        config.fee_incentive_lifetime_cap_rate(),
+        clock.timestamp_ms(),
+    );
+}
+
+/// Read a `u64` knob made tunable after deploy and stored in a dynamic field, or
+/// `default` when it has never been set.
+fun u64_field_or<K: copy + drop + store>(config: &ProtocolConfig, key: K, default: u64): u64 {
+    if (!config.id.exists_(key)) return default;
+    *config.id.borrow(key)
+}
+
+fun set_u64_field<K: copy + drop + store>(config: &mut ProtocolConfig, key: K, value: u64) {
+    if (config.id.exists_(key)) {
+        *config.id.borrow_mut(key) = value;
+    } else {
+        config.id.add(key, value);
+    };
+}
+
 fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
@@ -641,6 +898,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
         max_valuation_window_ms: config_constants::default_max_valuation_window_ms!(),
+        no_trade_window_ms: config_constants::default_no_trade_window_ms!(),
         strike_exposure_template_config: strike_exposure_config::new(),
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),

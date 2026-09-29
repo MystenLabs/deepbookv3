@@ -22,13 +22,12 @@ use deepbook_predict::{
     order::{Self, Order},
     order_events,
     predict_account,
-    pricing::{Self, Pricer, FrozenPricer},
+    pricing::{Self, Pricer, FrozenPricer, RangePrice},
     protocol_config::ProtocolConfig,
     range_codec,
-    strike_exposure::{Self, MintTerms, StrikeExposure},
+    strike_exposure::{Self, MintRange, MintTerms, StrikeExposure},
     strike_exposure_config
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -36,6 +35,7 @@ use propbook::{
     registry::OracleRegistry
 };
 use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
+use usdc::usdc::USDC;
 
 const EMintPaused: u64 = 0;
 const EMarketNotSettled: u64 = 1;
@@ -48,6 +48,8 @@ const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
+const EMintCostAboveMaxPayout: u64 = 11;
+const ENotSettledRedeemKeeper: u64 = 12;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -55,10 +57,10 @@ public struct ExpiryMarket has key {
     /// Propbook underlying this market was created for.
     propbook_underlying_id: u32,
     expiry: u64,
-    /// DUSDC custody and payout backing.
+    /// USDC custody and payout backing.
     cash: ExpiryCash,
-    /// Sponsor-funded DUSDC available to subsidize this market's taker fees.
-    fee_incentive_balance: Balance<DUSDC>,
+    /// Sponsor-funded USDC available to subsidize this market's taker fees.
+    fee_incentive_balance: Balance<USDC>,
     /// Exposure lifecycle state for this expiry's strike ticks.
     strike_exposure: StrikeExposure,
     /// Smoothed gas-price stats backing the congestion trade penalty.
@@ -88,13 +90,15 @@ public struct ValuationStamp has drop, store {
     snapshot_impact_reserve: u64,
 }
 
-/// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
-/// `quantity` is the exact requested quantity or the conservatively budget-sized
-/// fill. `trading_fee` is the trading fee before the sponsor subsidy, and
+/// Read-only all-in cost quote for a prospective live mint, in USDC base units.
+/// `quantity` is the exact requested quantity, the premium-budget fill, or the
+/// all-in-budget fill. `trading_fee` is the trading fee before the sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes.
+/// fee policy because it is escrowed for risk-reducing live closes. Quote
+/// construction aborts when `all_in_cost` exceeds `quantity`, the position's
+/// maximum settlement payout.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -141,7 +145,7 @@ public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.try_settlement_price()
 }
 
-/// Return expiry DUSDC custody for SDK and devInspect state reads.
+/// Return expiry USDC custody for SDK and devInspect state reads.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
 }
@@ -178,7 +182,7 @@ public fun inventory_impact_max_rate(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_max_rate()
 }
 
-/// Return the immutable DUSDC scale of this market's inventory-impact curve for
+/// Return the immutable USDC scale of this market's inventory-impact curve for
 /// SDK and devInspect state reads.
 public fun inventory_impact_scale(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_scale()
@@ -313,7 +317,7 @@ public fun quote_mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -326,7 +330,13 @@ public fun quote_mint(
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
 }
 
 /// Quote the all-in cost of a mint request for one account, reading its builder
@@ -346,9 +356,9 @@ public fun quote_mint_for_account(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     let account = wrapper.load_account();
-    let max_premium = max_premium.min(account.balance<DUSDC>(root, clock));
+    let max_premium = max_premium.min(account.balance<USDC>(root, clock));
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -361,7 +371,58 @@ public fun quote_mint_for_account(
         );
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
+}
+
+/// Quote `mint_exact_cost` for one account: the fill that mint would size for
+/// `max_cost`, capped by total account balance including unsettled accumulator
+/// funds, with that fill's cost decomposition. Applies the mint's live-mint gates,
+/// sizing, `min_quantity` floor, and admission, but does not preflight
+/// exposure-index capacity or cash backing. `quantity` is the figure to derive a
+/// `min_quantity` slippage floor from. Public for SDK and devInspect pre-trade
+/// pricing.
+public fun quote_mint_exact_cost_for_account(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer, clock);
+    let account = wrapper.load_account();
+    let max_cost = max_cost.min(account.balance<USDC>(root, clock));
+    let builder_code_id = predict_account::builder_code_id(account);
+    let terms = market.quote_exact_cost_terms(
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        &builder_code_id,
+        max_cost,
+        min_quantity,
+        clock,
+        ctx,
+    );
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
 }
 
 // === MintQuote Getters ===
@@ -422,7 +483,7 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 /// The position's strike range is the tick pair `(lower_tick, higher_tick]`
 /// (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
-/// strikes to ticks. `max_cost` caps the all-in DUSDC withdrawal, while
+/// strikes to ticks. `max_cost` caps the all-in USDC withdrawal, while
 /// `max_probability` caps the quoted per-contract probability before fees.
 /// Callers can pass `std::u64::max_value!()` for either uncapped guard. Returns
 /// the minted order ID for future order-scoped flows.
@@ -441,8 +502,8 @@ public fun mint_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_live_mint_allowed(config, pricer);
-    wrapper.settle<DUSDC>(root, clock);
+    market.assert_live_mint_allowed(config, pricer, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     market.mint_prepared(
         account,
@@ -465,12 +526,12 @@ public fun mint_exact_quantity(
 /// quantity and must meet `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
-/// `max_premium`, so `max_cost` — not `max_premium` — bounds the all-in DUSDC
+/// `max_premium`, so `max_cost` — not `max_premium` — bounds the all-in USDC
 /// withdrawal (`premium + trader-paid fee + builder_fee + EWMA penalty`).
 /// `max_cost` is required: unlike `mint_exact_quantity`'s guards there is no
 /// value that disables it, because the budget shape exists to bound spend. The
-/// sizing budget is first capped to the account's available DUSDC after
-/// settlement; fees still require additional available DUSDC at payment time.
+/// sizing budget is first capped to the account's available USDC after
+/// settlement; fees still require additional available USDC at payment time.
 /// Any unspent premium dust remains in the account because order quantity must
 /// be an integer number of `position_lot_size` lots.
 public fun mint_exact_amount(
@@ -488,10 +549,10 @@ public fun mint_exact_amount(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     assert!(max_cost > 0, EMintCostCapRequired);
-    wrapper.settle<DUSDC>(root, clock);
-    let max_premium = max_premium.min(wrapper.load_account().balance<DUSDC>(root, clock));
+    wrapper.settle<USDC>(root, clock);
+    let max_premium = max_premium.min(wrapper.load_account().balance<USDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     market.mint_prepared(
         account,
@@ -511,6 +572,70 @@ public fun mint_exact_amount(
     )
 }
 
+/// Mint a lot-rounded position within an all-in `max_cost` budget.
+///
+/// Unlike `mint_exact_amount`, fees are sized inside the budget: the quantity
+/// search evaluates the all-in withdrawal the mint charges (`premium +
+/// trader-paid fee + builder_fee + EWMA penalty + inventory_impact_charge`)
+/// against the fee-incentive, congestion, and book state at execution, so the
+/// debit never exceeds `max_cost`. `max_cost` is first capped to the account's
+/// available USDC after settlement, so `std::u64::max_value!()` sizes against the
+/// whole balance.
+///
+/// The budget search finds the largest fitting quantity. If that quantity costs
+/// more than its maximum payout, a conservative search tries a smaller fill;
+/// rounding can make that fallback miss a larger admissible fill. Only when the
+/// budget is the limiting constraint is the remainder less than the incremental
+/// all-in cost of one more lot. Payout-limited fills and lot-cap saturation can
+/// leave more. Insufficient expiry cash backing aborts the mint; sizing does not
+/// shrink the fill to available backing, and the quote does not preflight it.
+///
+/// `min_quantity` is this entrypoint's slippage guard. The budget is fixed, so
+/// every adverse move between building the transaction and executing it — the
+/// price, the congestion surcharge, the sponsor subsidy, the inventory-impact
+/// charge — shows up as fewer contracts, and a fill below `min_quantity` aborts
+/// `EMintQuantityBelowMin`. It bounds the all-in price per contract at
+/// `max_cost / min_quantity`, which is why the shape carries no separate
+/// probability cap; passing `0` accepts any fill the budget buys. A budget too
+/// small to admit `constants::min_premium` aborts `EPremiumBelowMinimum` rather
+/// than minting nothing, and zero is such a budget: unlike `mint_exact_amount`
+/// there is no `max_cost` cap to require, because here the budget IS the sizing
+/// input. Other requirements match `mint_exact_quantity`. Returns the minted
+/// order ID.
+public fun mint_exact_cost(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    market.assert_live_mint_allowed(config, pricer, clock);
+    wrapper.settle<USDC>(root, clock);
+    let max_cost = max_cost.min(wrapper.load_account().balance<USDC>(root, clock));
+    let account = wrapper.load_account_mut(auth);
+    market.reconcile_stale_valuation_stamp(config);
+    let builder_code_id = predict_account::builder_code_id(account);
+    let terms = market.quote_exact_cost_terms(
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        &builder_code_id,
+        max_cost,
+        min_quantity,
+        clock,
+        ctx,
+    );
+    market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
+}
+
 /// Redeem a live order you hold account authority over.
 ///
 /// A live order is priced and closed (partial or full). Settled orders must use
@@ -520,7 +645,7 @@ public fun mint_exact_amount(
 /// Two close-side slippage floors, the mirror of mint's `max_probability` /
 /// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
 /// quoted per-contract range probability (same units as mint's `max_probability`).
-/// `min_proceeds` floors the all-in net DUSDC credited to the account
+/// `min_proceeds` floors the all-in net USDC credited to the account
 /// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
 /// of mint's all-in `max_cost`.
 public fun redeem_live(
@@ -537,7 +662,7 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    market.assert_live_flow_allowed(config, pricer);
+    market.assert_live_flow_allowed(config, pricer, clock);
     market.redeem_live_with_auth(
         wrapper,
         auth,
@@ -579,10 +704,13 @@ public fun redeem_settled(
     )
 }
 
-/// Permissionlessly redeem a settled order without account-owner authority.
+/// Redeem a settled order without account-owner authority, as an allowlisted keeper.
 ///
-/// This keeper path uses Predict app-auth from the account registry, so
-/// `deauthorize_app<PredictApp>` disables this automation. Owners can still use
+/// Despite the name, only a sender admin has added through
+/// `protocol_config::add_settled_redeem_keeper` may call this; the allowlist
+/// starts empty. The payout still goes to the order's account. This keeper path
+/// uses Predict app-auth from the account registry, so
+/// `deauthorize_app<PredictApp>` also disables it. Owners can still use
 /// `redeem_settled` with owner auth to redeem their own settled positions.
 public fun redeem_settled_permissionless(
     market: &mut ExpiryMarket,
@@ -595,6 +723,7 @@ public fun redeem_settled_permissionless(
     ctx: &mut TxContext,
 ) {
     market.assert_settled_flow_allowed(config);
+    assert!(config.is_settled_redeem_keeper(ctx.sender()), ENotSettledRedeemKeeper);
     let auth = predict_account::generate_auth_as_app(account_registry);
     market.redeem_settled_with_auth(
         wrapper,
@@ -731,13 +860,13 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
 }
 
 /// Receive pool-provided cash without interpreting pool allocation policy.
-public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
+public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<USDC>) {
     market.cash.receive(cash);
     market.assert_cash_backing();
 }
 
 /// Receive sponsor-funded fee incentives allocated by the pool vault.
-public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<DUSDC>) {
+public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<USDC>) {
     market.fee_incentive_balance.join(incentives);
 }
 
@@ -785,14 +914,14 @@ public(package) fun snapshot_nav(market: &ExpiryMarket, frozen: &FrozenPricer): 
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
-public(package) fun release_fee_incentives(market: &mut ExpiryMarket): Balance<DUSDC> {
+public(package) fun release_fee_incentives(market: &mut ExpiryMarket): Balance<USDC> {
     let amount = market.fee_incentive_balance.value();
     if (amount == 0) return balance::zero();
     market.fee_incentive_balance.split(amount)
 }
 
 /// Release pool cash while preserving expiry-local payout backing.
-public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<USDC> {
     if (amount == 0) {
         return balance::zero()
     };
@@ -803,7 +932,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 }
 
 /// Release settled cash above payout liability and the impact escrow.
-public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
+public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<USDC> {
     let settled_liability = market.payout_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
@@ -871,8 +1000,13 @@ fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &Protocol
 }
 
 // --- Gates: the first call of every public entry ---
-fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
-    market.assert_live_flow_allowed(config, pricer);
+fun assert_live_mint_allowed(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+) {
+    market.assert_live_flow_allowed(config, pricer, clock);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
 }
@@ -884,10 +1018,19 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 // so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
 // mid-stamp cash move would skew the figures the seal freezes. That stage is one
 // PTB, so this never blocks a trade in any other transaction.
-fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
+fun assert_live_flow_allowed(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+) {
     config.assert_version();
     config.assert_snapshot_not_in_progress();
     market.assert_pricer_bound(pricer);
+    // Shared by every live mint, quote, and live redeem, so the pre-expiry block
+    // lands once here. Settlement and settled redemption take other paths and stay
+    // open, so the window delays a close rather than stranding the position.
+    config.assert_trade_window_open(market.expiry, clock);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
@@ -928,13 +1071,171 @@ fun mint_prepared(
             exact_quantity,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
-    // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
+    market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
+}
+
+/// Size the largest lot-rounded quantity whose all-in cost fits `max_cost`, step
+/// down if that fill would cost more than it could ever pay out, then admit it.
+///
+/// The budget search is exact. Every all-in term is nondecreasing in quantity
+/// while the pre-trade price, fee incentives, EWMA state, and book are fixed:
+/// premium and each fee leg are `mul_down` of a quantity-independent rate; the
+/// trader-paid fee is
+/// `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose
+/// subsidy grows at most one unit per fee unit because the configured rate is
+/// capped below one; the builder fee is a `min` of
+/// nondecreasing terms; the penalty's firing condition is quantity-independent;
+/// and the impact charge is monotone (`mint_range_inventory_impact`). The probe
+/// is the helper the charge uses, and the premium-only fit bounds the domain from
+/// above because every other term is nonnegative.
+///
+/// The maximum-payout bound (`all_in_cost <= quantity`) is deliberately NOT part
+/// of that search. It is not monotone in quantity: cost and quantity both rise,
+/// and the independent floors in each cost term let `cost(q) <= q` flip from
+/// false back to true at a larger lot wherever unit cost sits within rounding of
+/// one. A binary search over it would discard admissible fills. So the bound is
+/// consulted only after the budget fill is known, and only if that fill breaches
+/// it — which a rising marginal impact rate or an exhausted sponsor subsidy can
+/// cause on a budget the account can afford. The step-down search runs strictly
+/// below the budget fill, so every candidate already fits `max_cost`. A positive
+/// result clears the payout bound, but maximality is not guaranteed because that
+/// predicate is not monotone. It can miss a larger admissible fill, including one
+/// meeting `min_quantity`, so the final admission can still abort. When the
+/// search finds no smaller fill, the budget fill is admitted so the caller sees
+/// `EMintCostAboveMaxPayout` rather than an empty fill's admission error.
+/// `compute_mint_quote` still enforces the bound on whatever is admitted.
+fun quote_exact_cost_terms(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    builder_code_id: &Option<ID>,
+    max_cost: u64,
+    min_quantity: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): MintTerms {
+    let range = market.strike_exposure.quote_mint_range(pricer, lower_tick, higher_tick);
+    let lot = constants::position_lot_size!();
+    // Sampled once: the rate is a dynamic-field read that no probe should repeat.
+    let subsidy_rate = config.fee_incentive_subsidy_rate();
+
+    let mut lo = 0;
+    let mut hi = range.max_quantity_for_premium(max_cost) / lot;
+    while (lo < hi) {
+        let mid = (lo + hi + 1) / 2;
+        let cost = market.all_in_cost_at(
+            config,
+            &range,
+            builder_code_id,
+            mid * lot,
+            subsidy_rate,
+            clock,
+            ctx,
+        );
+        if (cost <= max_cost) {
+            lo = mid
+        } else {
+            hi = mid - 1
+        }
+    };
+    let budget_lots = lo;
+
+    let budget_quantity = budget_lots * lot;
+    let lots = if (
+        budget_lots == 0
+            || market.all_in_cost_at(
+                config,
+                &range,
+                builder_code_id,
+                budget_quantity,
+                subsidy_rate,
+                clock,
+                ctx,
+            ) <= budget_quantity
+    ) {
+        budget_lots
+    } else {
+        let mut lo = 0;
+        let mut hi = budget_lots - 1;
+        while (lo < hi) {
+            let mid = (lo + hi + 1) / 2;
+            let quantity = mid * lot;
+            let cost = market.all_in_cost_at(
+                config,
+                &range,
+                builder_code_id,
+                quantity,
+                subsidy_rate,
+                clock,
+                ctx,
+            );
+            if (cost <= quantity) {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        };
+        if (lo == 0) budget_lots else lo
+    };
+    market.strike_exposure.mint_terms(range, lots * lot, min_quantity)
+}
+
+/// All-in cost of minting `quantity` over `range`, computed by the helper the mint
+/// charges with (`mint_quote_at`) against pre-trade state, without admission.
+fun all_in_cost_at(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    range: &MintRange,
+    builder_code_id: &Option<ID>,
+    quantity: u64,
+    fee_incentive_subsidy_rate: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): u64 {
+    market
+        .mint_quote_at(
+            range.mint_range_price(),
+            quantity,
+            range.mint_range_premium(quantity),
+            market.strike_exposure.mint_range_inventory_impact(range, quantity),
+            builder_code_id,
+            market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
+            fee_incentive_subsidy_rate,
+            clock,
+        )
+        .all_in_cost
+}
+
+/// Charge and record one admitted mint: price its fees and congestion penalty
+/// against pre-trade state, enforce the all-in `max_cost`, fold the EWMA, route
+/// the referral share, allocate the order, settle payment, and emit `OrderMinted`.
+/// `builder_code_id` is the caller's single read of the account's attribution.
+fun mint_with_terms(
+    market: &mut ExpiryMarket,
+    account: &mut Account,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    terms: MintTerms,
+    builder_code_id: Option<ID>,
+    max_cost: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    let penalty_amount = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     let referrer_account_id = account.referrer_account_id();
     let referrer_receive_address = account.referrer_receive_address();
-    let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
+    let quote = market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_amount,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    );
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+    market.ewma.update(config.ewma_config(), clock, ctx);
     let referral_fee = if (referrer_receive_address.is_some()) {
         let referral_fee_basis =
             quote.trading_fee - quote.fee_incentive_subsidy + quote.penalty_fee;
@@ -981,17 +1282,44 @@ fun compute_mint_quote(
     terms: &MintTerms,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
+    fee_incentive_subsidy_rate: u64,
     clock: &Clock,
 ): MintQuote {
-    let entry_probability = terms.entry_probability();
-    let quantity = terms.quantity();
-    let trading_fee = market
-        .strike_exposure
-        .trading_fee(market.expiry, entry_probability, quantity, clock);
-    let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
+    let quote = market.mint_quote_at(
+        terms.mint_price(),
+        terms.quantity(),
+        terms.premium(),
+        terms.inventory_impact_charge(),
+        builder_code_id,
+        penalty_fee,
+        fee_incentive_subsidy_rate,
+        clock,
+    );
+    assert!(quote.all_in_cost <= quote.quantity, EMintCostAboveMaxPayout);
+    quote
+}
+
+/// Sum one mint's fee components and all-in cost from its quantity-dependent
+/// inputs, without admission or the maximum-payout bound. The single home of the
+/// all-in sum: execution reaches it through `compute_mint_quote`, and the all-in
+/// budget search probes candidate quantities with it directly.
+fun mint_quote_at(
+    market: &ExpiryMarket,
+    price: &RangePrice,
+    quantity: u64,
+    premium: u64,
+    inventory_impact_charge: u64,
+    builder_code_id: &Option<ID>,
+    penalty_fee: u64,
+    fee_incentive_subsidy_rate: u64,
+    clock: &Clock,
+): MintQuote {
+    let trading_fee = market.strike_exposure.trading_fee(market.expiry, price, quantity, clock);
+    let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(
+        trading_fee,
+        fee_incentive_subsidy_rate,
+    );
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
-    let premium = terms.premium();
-    let inventory_impact_charge = terms.inventory_impact_charge();
     let all_in_cost =
         premium
         + (trading_fee - fee_incentive_subsidy)
@@ -1001,7 +1329,7 @@ fun compute_mint_quote(
 
     MintQuote {
         quantity,
-        entry_probability,
+        entry_probability: price.probability(),
         premium,
         trading_fee,
         fee_incentive_subsidy,
@@ -1012,10 +1340,12 @@ fun compute_mint_quote(
     }
 }
 
-fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
-    math::mul_down(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
-        .fee_incentive_balance
-        .value())
+fun fee_incentive_subsidy_amount(
+    market: &ExpiryMarket,
+    fee_amount: u64,
+    fee_incentive_subsidy_rate: u64,
+): u64 {
+    math::mul_down(fee_amount, fee_incentive_subsidy_rate).min(market.fee_incentive_balance.value())
 }
 
 /// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
@@ -1047,7 +1377,7 @@ fun settle_mint_payment(
         clock.timestamp_ms(),
         ctx,
     );
-    let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
+    let mut payment = account.withdraw<USDC>(quote.all_in_cost, ctx).into_balance();
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
     let referral_fee_payment = payment.split(referral_fee);
@@ -1078,7 +1408,7 @@ fun redeem_live_with_auth(
     ctx: &mut TxContext,
 ): Option<u256> {
     market.reconcile_stale_valuation_stamp(config);
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
     let terms = market.strike_exposure.quote_live_close(pricer, &order, close_quantity);
@@ -1109,7 +1439,7 @@ fun redeem_live_with_auth(
         .strike_exposure
         .trading_fee(
             market.expiry,
-            range_probability,
+            terms.close_price(),
             close_quantity,
             clock,
         )
@@ -1199,7 +1529,7 @@ fun redeem_settled_with_auth(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
 
@@ -1215,7 +1545,7 @@ fun redeem_settled_with_auth(
     // splitting/depositing a 0 coin.
     if (payout_amount > 0) {
         let payout = market.cash.pay_authorized(payout_amount);
-        account.deposit<DUSDC>(payout.into_coin(ctx));
+        account.deposit<USDC>(payout.into_coin(ctx));
     };
     market.assert_cash_backing();
 
@@ -1256,7 +1586,7 @@ fun settle_live_redeem_payment(
     market.cash.receive(fee);
     send_builder_fee(builder_code_id, builder_fee);
     market.assert_cash_backing();
-    account.deposit<DUSDC>(payout.into_coin(ctx));
+    account.deposit<USDC>(payout.into_coin(ctx));
 }
 
 // --- Shared by the mint and redeem flows ---
@@ -1284,7 +1614,7 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     }
 }
 
-fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
+fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<USDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
         return
@@ -1293,7 +1623,7 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     balance::send_funds(fee, builder_code_id.to_address());
 }
 
-fun send_referral_fee(referrer_receive_address: Option<address>, fee: Balance<DUSDC>) {
+fun send_referral_fee(referrer_receive_address: Option<address>, fee: Balance<USDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
         return

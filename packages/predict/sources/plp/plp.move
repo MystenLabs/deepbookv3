@@ -4,7 +4,7 @@
 /// PLP token and pool vault.
 ///
 /// PoolVault owns the PLP treasury cap, idle
-/// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
+/// USDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
 /// accounting, and the queued LP supply/withdraw requests. It coordinates the
 /// full-pool NAV valuation — an atomic oracle snapshot followed by resumable
 /// per-market valuation transactions, with trading live throughout (see
@@ -22,13 +22,11 @@ use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     lp_book::{Self, LpBook},
-    market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
     pricing::FrozenPricer,
     protocol_config::ProtocolConfig,
     vault_events
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -43,6 +41,7 @@ use sui::{
     coin_registry::{Self, MetadataCap},
     vec_map::{Self, VecMap}
 };
+use usdc::usdc::USDC;
 
 const EMissingExpiryValuation: u64 = 0;
 const ENotBootstrapped: u64 = 1;
@@ -56,9 +55,19 @@ const EIncompleteValuationSnapshot: u64 = 8;
 const EExpiredMarketNotSettled: u64 = 9;
 const EValuationWindowExpired: u64 = 10;
 const ESnapshotStageOpen: u64 = 11;
+const EBelowMinUsdcContribution: u64 = 12;
+const EContributionExceedsPriceCeiling: u64 = 13;
+const EInsufficientFeeIncentiveReserve: u64 = 14;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
+
+/// Transaction-local proof that an allowlisted `PoolValuationCap` authorized a
+/// flush start. `registry::generate_pool_valuation_proof` issues one after checking
+/// the allowlist, and `start_pool_valuation` consumes it. With no abilities, it
+/// cannot be stored, transferred, or dropped, so a revoked cap cannot start a
+/// valuation and a proof cannot outlive its transaction.
+public struct PoolValuationProof {}
 
 /// Transaction-local proof that the snapshot stage is still open.
 ///
@@ -80,14 +89,15 @@ public struct SnapshotStage {}
 /// Pool-level vault state.
 public struct PoolVault has key {
     id: UID,
-    /// Protocol-owned DUSDC excluded from PLP redemption. No package entrypoint
+    /// Protocol-owned USDC excluded from PLP redemption. No package entrypoint
     /// withdraws this balance.
-    protocol_reserve_balance: Balance<DUSDC>,
-    /// Sponsor-funded DUSDC reserved for taker fee sponsorship, excluded from PLP NAV.
-    fee_incentive_reserve: Balance<DUSDC>,
+    protocol_reserve_balance: Balance<USDC>,
+    /// Sponsor-funded USDC reserved for taker fee sponsorship, excluded from PLP NAV.
+    /// Admin may reclaim it through `withdraw_fee_incentives`.
+    fee_incentive_reserve: Balance<USDC>,
     /// PLP share issuance plus queued supply/withdraw escrow.
     lp: LpBook<PLP>,
-    /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
+    /// Idle USDC custody, registered expiries, and per-expiry cash-flow rows.
     expiry_accounting: Ledger,
     /// In-flight full-pool valuation, held across transactions. `Some` exactly
     /// while the `ProtocolConfig` valuation flag is engaged.
@@ -210,12 +220,12 @@ public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
 }
 
-/// Return idle DUSDC for SDK and devInspect state reads.
+/// Return idle USDC for SDK and devInspect state reads.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.expiry_accounting.idle_balance()
 }
 
-/// Return protocol-owned DUSDC for SDK and devInspect state reads.
+/// Return protocol-owned USDC for SDK and devInspect state reads.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
 }
@@ -265,16 +275,16 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Begin a full-pool valuation using a registry-issued lifecycle proof. The proof
-/// grants control over when current oracle state is frozen for queued LP fills.
-/// Starting engages the cross-transaction valuation flag, snapshots the active
-/// expiry set and each LP queue's eligibility cutoff, and opens the atomic
+/// Begin a full-pool valuation using a registry-issued pool-valuation proof. The
+/// proof grants control over when current oracle state is frozen for queued LP
+/// fills. Starting engages the cross-transaction valuation flag, snapshots the
+/// active expiry set and each LP queue's eligibility cutoff, and opens the atomic
 /// snapshot stage: freeze every active market's pricer under the returned
 /// `SnapshotStage`, then seal it in the same transaction.
 public fun start_pool_valuation(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
-    lifecycle_proof: MarketLifecycleProof,
+    valuation_proof: PoolValuationProof,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     clock: &Clock,
@@ -285,7 +295,7 @@ public fun start_pool_valuation(
     // back a second `SnapshotStage` hot potato. A stranded flush is always sealed
     // (seal cleared the flag), so superseding it with a fresh start is unaffected.
     config.assert_snapshot_not_in_progress();
-    lifecycle_proof.destroy_proof();
+    let PoolValuationProof {} = valuation_proof;
     start_pool_valuation_internal(config, vault, supply_budget, withdraw_budget, clock);
     SnapshotStage {}
 }
@@ -460,9 +470,9 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
 /// was valued exactly once, price the pool NAV, then drain the supply/withdraw queues
-/// at that frozen mark (mint PLP for supplies, burn PLP and pay DUSDC for
+/// at that frozen mark (mint PLP for supplies, burn PLP and pay USDC for
 /// withdrawals), release the valuation flag, retire the in-flight valuation, and
-/// return the LP-attributable pool-wide DUSDC NAV (frozen idle + Σ active NAV,
+/// return the LP-attributable pool-wide USDC NAV (frozen idle + Σ active NAV,
 /// net of the pending-protocol-profit exclusion priced from the frozen profit
 /// basis — every term as of the snapshot instant).
 /// Each drain fills only requests submitted before the flush's snapshot instant
@@ -620,13 +630,15 @@ public fun rebalance_expiry_cash(
     vault.sweep_or_rebalance_expiry(market, config, clock);
 }
 
-/// Sponsor taker fee incentives with DUSDC. Anyone may contribute; the payment
+/// Sponsor taker fee incentives with USDC. Anyone may contribute; the payment
 /// joins a pool-level reserve that is excluded from PLP NAV and later allocated to
-/// expiry markets by the normal rebalance flow.
+/// expiry markets by the normal rebalance flow. A contribution is not
+/// earmarked to its sponsor: admin can withdraw any of the reserve through
+/// `withdraw_fee_incentives`.
 public fun sponsor_fee_incentives(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
-    payment: Coin<DUSDC>,
+    payment: Coin<USDC>,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
@@ -645,9 +657,111 @@ public fun sponsor_fee_incentives(
     );
 }
 
-/// Bootstrap the pool exactly once: permanently lock `payment` DUSDC of minimum
+/// Withdraw `amount` USDC of sponsor-funded fee incentives from the pool-level
+/// reserve, for sponsorship the protocol no longer wants to spend. Admin-only.
+///
+/// Reaches the reserve only. Incentives already allocated to a live market stay in
+/// that market's `fee_incentive_balance` and return to the reserve when its
+/// settled-market sweep runs, after which they can be withdrawn here; setting
+/// `protocol_config::set_fee_incentive_subsidy_rate` to zero stops them being spent
+/// in the meantime. The per-expiry lifetime allocation counters are not credited
+/// back: they bound what a market may ever receive, and a withdrawal does not
+/// change what a market already received.
+///
+/// Not gated on the valuation flag, in either stage of a flush: the reserve is
+/// excluded from PLP NAV and no flush figure, frozen or live, reads it, so a
+/// withdrawal cannot reach the mark.
+public fun withdraw_fee_incentives(
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<USDC> {
+    config.assert_version();
+    assert!(amount <= vault.fee_incentive_reserve.value(), EInsufficientFeeIncentiveReserve);
+    let withdrawn = vault.fee_incentive_reserve.split(amount);
+    vault_events::emit_fee_incentives_withdrawn(
+        vault.id(),
+        amount,
+        vault.fee_incentive_reserve.value(),
+    );
+    withdrawn.into_coin(ctx)
+}
+
+/// Add USDC straight to pool idle liquidity without minting any PLP. Anyone may
+/// call it; the payment is an outright gift to the existing share base, so the
+/// caller receives nothing back and no share of it is recoverable.
+///
+/// This is the incentive/top-up path: because no shares are issued, the whole
+/// `payment` lands inside the value the next flush's mark divides by an unchanged
+/// `total_supply`, which raises NAV per PLP for every current holder. It deliberately
+/// does not touch the profit basis — the basis tracks cash sent to and returned from
+/// expiries, so an outside contribution is neither a debit nor a credit, and the
+/// protocol reserve therefore takes no cut of it (`lp_pool_value` leaves `exclusion`
+/// unchanged while `gross_pool_value` grows). Sending the same USDC through
+/// `request_supply` instead mints shares against it, so only the supply fee would
+/// reach existing holders — zero as shipped.
+///
+/// Three gates, each closing a state this entrypoint would otherwise manufacture:
+///
+/// - **Bootstrapped pool.** At `total_supply == 0` there is no share base to credit;
+///   the USDC would only inflate the genesis lock's non-withdrawable stake.
+/// - **Contribution price ceiling.** Pool cash after the contribution — idle plus the
+///   net cash deployed into active expiries — may price at most
+///   `contribution_price_ceiling_factor` USDC per PLP, a tenth of the band a flush
+///   mark needs to be fillable. Above the band every supply and withdraw head is
+///   refunded (RP-2) and `total_supply` grows only through a supply fill, so nothing
+///   brings the price back down — a terminal state that an unbounded contribution
+///   against a small share base would otherwise reach for the price of the
+///   contribution. The ceiling sits well inside the band because later fills only
+///   push the price up (rounding and retained fees stay in the pool), so a pool left
+///   exactly at the band would leave it on the next uneven or fee-charged fill. The
+///   test is one-sided
+///   because a contribution can only move the price up. It reads pool cash rather
+///   than pool NAV — NAV needs a flush — and
+///   counts deployed cash because the mark does: `rebalance_expiry_cash` is
+///   permissionless, so an idle-only test could be emptied into a market and passed
+///   again. Cash is exactly the protocol-controlled share: the guard forbids this
+///   entrypoint from *manufacturing* the degenerate ratio and leaves market-driven
+///   NAV moves (trader premiums and P&L) to RP-1/RP-2, which own them.
+/// - **No flush in flight.** The seal freezes idle mid-flush, so an ungated
+///   contribution would land on one side or the other of that capture depending only
+///   on when the contributor's transaction executed — either paying that flush's
+///   queued withdrawals or not. `sponsor_fee_incentives` takes the same gate.
+///   `rebalance_expiry_cash` may run mid-window because it only moves cash between
+///   two figures the seal already froze; new value is different.
+public fun add_usdc_to_plp(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    payment: Coin<USDC>,
+    ctx: &TxContext,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    let total_supply = vault.lp.total_supply();
+    assert!(total_supply > 0, ENotBootstrapped);
+    let amount = payment.value();
+    assert!(amount >= constants::min_usdc_contribution!(), EBelowMinUsdcContribution);
+    //   price <= ceiling  <=>  cash <= ceiling·supply  <=>  ceil(cash/ceiling) <= supply
+    // `ceiling` is a tenth of `lp_book::is_executable_mark`'s band, so the fill
+    // rounding and retained fees that follow a contribution have nine times the pool's
+    // cash of room before they could carry the mark out of it.
+    let cash_after =
+        vault.expiry_accounting.idle_balance()
+        + vault.expiry_accounting.deployed_expiry_cash()
+        + amount;
+    assert!(
+        cash_after.div_ceil(constants::contribution_price_ceiling_factor!()) <= total_supply,
+        EContributionExceedsPriceCeiling,
+    );
+    vault.expiry_accounting.receive_idle(payment.into_balance());
+    vault_events::emit_usdc_added_to_plp(vault.id(), ctx.sender(), amount);
+}
+
+/// Bootstrap the pool exactly once: permanently lock `payment` USDC of minimum
 /// liquidity. Mints matching PLP (1:1) into the book's locked balance — never
-/// withdrawable, so the caller receives no shares — and joins the DUSDC into idle.
+/// withdrawable, so the caller receives no shares — and joins the USDC into idle.
 /// This keeps `total_supply > 0` while the vault exists and gives rounding dust a
 /// non-withdrawable PLP holder.
 /// Requires root authority and zero existing supply. Supply, withdrawal, and flush
@@ -656,7 +770,7 @@ public fun lock_capital(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     _admin_cap: &AdminCap,
-    payment: Coin<DUSDC>,
+    payment: Coin<USDC>,
 ) {
     config.assert_version();
     assert!(vault.lp.total_supply() == 0, EAlreadyBootstrapped);
@@ -667,10 +781,10 @@ public fun lock_capital(
     vault_events::emit_capital_locked(vault.id(), amount);
 }
 
-/// Queue a supply request: pull `amount` DUSDC from account custody into queue
+/// Queue a supply request: pull `amount` USDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
-/// auto-settles any flush-delivered DUSDC first. The flush charges the protocol's
-/// supply fee — zero by default — on the DUSDC it takes in and prices shares on the
+/// auto-settles any flush-delivered USDC first. The flush charges the protocol's
+/// supply fee — zero by default — on the USDC it takes in and prices shares on the
 /// remainder, so `min_plp_out` is measured after that fee. The account receives minted PLP
 /// only at a mark that mints at least `min_plp_out` for the whole `amount` — a **price
 /// floor**, not a promise of that many shares: if the pool cap leaves room for only
@@ -692,9 +806,9 @@ public fun request_supply(
 ): u64 {
     config.assert_version();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let payment = account.withdraw<DUSDC>(amount, ctx);
+    let payment = account.withdraw<USDC>(amount, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
@@ -714,10 +828,10 @@ public fun request_supply(
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
 /// The pull auto-settles any flush-delivered PLP first. The flush withholds the
-/// protocol's withdraw fee from the marked payout, so `min_dusdc_out` is measured
+/// protocol's withdraw fee from the marked payout, so `min_usdc_out` is measured
 /// after the fee. The account is paid only at a
-/// mark that quotes at least `min_dusdc_out` for the whole `amount` — a **price
-/// floor**, not a promise of that much DUSDC: if idle liquidity covers only part of the
+/// mark that quotes at least `min_usdc_out` for the whole `amount` — a **price
+/// floor**, not a promise of that much USDC: if idle liquidity covers only part of the
 /// payout, only the shares idle affords are burned, the fill is proportionally smaller
 /// at the same price, and the remainder stays queued with its limit rescaled. At the
 /// shipped attempt count of one, a flush whose mark quotes less cancels and refunds the
@@ -729,7 +843,7 @@ public fun request_withdraw(
     auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
-    min_dusdc_out: u64,
+    min_usdc_out: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -742,20 +856,20 @@ public fun request_withdraw(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_withdraw(lp, account_id, recipient, min_dusdc_out);
+    let index = vault.lp.request_withdraw(lp, account_id, recipient, min_usdc_out);
     vault_events::emit_withdraw_requested(
         vault_id,
         account_id,
         recipient,
         index,
         amount,
-        min_dusdc_out,
+        min_usdc_out,
         vault.lp.withdraw_requests_pending(),
     );
     index
 }
 
-/// Cancel a still-pending supply request, refunding its escrowed DUSDC straight into
+/// Cancel a still-pending supply request, refunding its escrowed USDC straight into
 /// the requesting account. `account` must be the request's recorded recipient.
 public fun cancel_supply_request(
     vault: &mut PoolVault,
@@ -776,11 +890,11 @@ public fun cancel_supply_request(
     // next mark.
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
-    account.deposit<DUSDC>(refund.into_coin(ctx));
+    account.deposit<USDC>(refund.into_coin(ctx));
     vault_events::emit_request_cancelled(
         vault_id,
         account_id,
@@ -831,7 +945,15 @@ public fun cancel_withdraw_request(
     );
 }
 
-/// Register a freshly created expiry market with the pool as an accounting row.
+/// Construct the flush-start proof. Called only by
+/// `registry::generate_pool_valuation_proof` after it validates the
+/// `PoolValuationCap` against the registry allowlist.
+public(package) fun new_pool_valuation_proof(): PoolValuationProof {
+    PoolValuationProof {}
+}
+
+/// Register a freshly created expiry market with the pool as an accounting row,
+/// snapshotting its fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_and_share_expiry_market`.
 public(package) fun register_expiry(
@@ -840,6 +962,7 @@ public(package) fun register_expiry(
     expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
+    fee_incentive_lifetime_cap_rate: u64,
     clock: &Clock,
 ) {
     let now_ms = clock.timestamp_ms();
@@ -851,14 +974,25 @@ public(package) fun register_expiry(
             EMaxLiveExpiryMarketsExceeded,
         );
     };
-    vault
+    let fee_incentive_lifetime_cap = vault
         .expiry_accounting
-        .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
+        .register_expiry(
+            expiry_market_id,
+            expiry_ms,
+            max_expiry_allocation,
+            initial_expiry_cash,
+            fee_incentive_lifetime_cap_rate,
+        );
+    vault_events::emit_fee_incentive_lifetime_cap_snapshotted(
+        vault.id(),
+        expiry_market_id,
+        fee_incentive_lifetime_cap,
+    );
 }
 
 // === Private Functions ===
 
-/// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
+/// LP-attributable USDC pool value used to price PLP supply/withdraw.
 ///
 /// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
 /// not-yet-materialized profit share before terminal materialization and excludes
@@ -911,13 +1045,18 @@ fun sweep_or_rebalance_expiry(
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, expiry_market_id);
+        vault.rebalance_live_expiry(market, config, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
-    vault.sync_fee_incentives(market, expiry_market_id);
+fun rebalance_live_expiry(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
+    vault.sync_fee_incentives(market, config, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
     let (target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
@@ -982,11 +1121,19 @@ fun sweep_live_expiry_surplus(
     );
 }
 
-fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
+/// Top a live market's fee-incentive balance up to the configured live target share
+/// of its allocation cap, from the pool reserve and within its lifetime cap. Never
+/// takes a balance back: a market already above the target receives nothing.
+fun sync_fee_incentives(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
     let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
     let requested_allocation = math::mul_down(
         max_expiry_allocation,
-        constants::fee_incentive_live_target_rate!(),
+        config.fee_incentive_live_target_rate(),
     )
         .saturating_sub(market.fee_incentive_balance())
         .min(vault.fee_incentive_reserve.value());
@@ -1026,9 +1173,10 @@ fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64)
 }
 
 /// Settled-market sweep: deactivate the expiry, return its free cash to idle,
-/// materialize its terminal profit, and return unused fee incentives to the pool
-/// reserve. Idempotent — a settled market already swept returns zero cash and
-/// recognizes no further profit, so a second pass is a no-op.
+/// report the expiry's lifetime PnL, materialize its terminal profit, and return
+/// unused fee incentives to the pool reserve. Idempotent — a settled market already
+/// swept returns zero cash, emits nothing, and recognizes no further profit, so a
+/// second pass is a no-op.
 fun sweep_settled_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -1046,6 +1194,16 @@ fun sweep_settled_expiry(
             expiry_market_id,
             market.settlement_price(),
             returned_cash_amount,
+        );
+        vault_events::emit_expiry_pnl(
+            vault.id(),
+            expiry_market_id,
+            market.propbook_underlying_id(),
+            market.reference_tick_source_timestamp_ms(),
+            market.expiry(),
+            market.settlement_price(),
+            vault.expiry_accounting.sent_to_expiry(expiry_market_id),
+            vault.expiry_accounting.received_from_expiry(expiry_market_id),
         );
     };
     vault.materialize_expiry_profit(config, expiry_market_id);
@@ -1092,9 +1250,9 @@ fun materialize_expiry_profit(
 }
 
 /// Engage the valuation flag, mint this flush's ordinal, and record its frozen
-/// facts — the active expiry set, the starter, the start time, and each LP
-/// queue's eligibility cutoff — after requiring a bootstrapped pool with nonzero
-/// PLP supply.
+/// facts — the active expiry set, the start time, and each LP queue's
+/// eligibility cutoff — after requiring a bootstrapped pool with nonzero PLP
+/// supply.
 fun start_pool_valuation_internal(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,

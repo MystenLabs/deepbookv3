@@ -6,7 +6,7 @@
   "packageManager": "npm@10.9.4",
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "tsx --test harness/ts/harnessTest.ts devtools/ts/devtoolsTest.ts simulations/src/simTest.ts"
+    "test": "tsx --test harness/ts/harnessTest.ts devtools/ts/devtoolsTest.ts simulations/src/simTest.ts deployment/deploy.test.ts"
   },
   "dependencies": {
     "@mysten/sui": "^2.5.0",

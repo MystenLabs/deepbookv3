@@ -6,6 +6,11 @@ module deepbook_margin::margin_constants;
 // Bump ahead of EVERY on-chain package upgrade. After the upgrade the admin must
 // also call `enable_version(N)` on the live `MarginRegistry` (and later
 // `disable_version(N-1)`), or all entries abort `EPackageVersionDisabled`.
+//
+// v8 retires the legacy-Pyth entrypoints: they abort `EDeprecatedUseUpgradedPyth`
+// rather than pricing off legacy Core. `disable_version(7)` is what actually takes
+// them off chain — a dependent published against v7 keeps calling v7's bodies
+// through its own linkage table until that version stops being allowed.
 const MARGIN_VERSION: u64 = 8;
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000
 const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%

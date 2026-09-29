@@ -27,7 +27,9 @@ const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
 const INVALID_ADMISSION_TICK_SIZE: u64 = BTC_ADMISSION_TICK_SIZE + 1;
 const BELOW_TICK_SIZE_ADMISSION_TICK_SIZE: u64 = BTC_TICK_SIZE / 10;
 const NON_MULTIPLE_ADMISSION_TICK_SIZE: u64 = BTC_TICK_SIZE + BTC_TICK_SIZE / 2;
-const BELOW_EXPIRY_CASH_FLOOR: u64 = 9_999_999_999;
+const BELOW_EXPIRY_CASH_FLOOR: u64 = 999_999_999;
+const MINIMUM_EXPIRY_CASH: u64 = 1_000_000_000;
+const SMALL_EXPIRY_CASH: u64 = 2_000_000_000;
 const BELOW_INITIAL_EXPIRY_CASH: u64 = BTC_INITIAL_EXPIRY_CASH - 1;
 
 const EUnexpectedSuccess: u64 = 999;
@@ -44,6 +46,30 @@ fun register_underlying_duplicate_aborts() {
 }
 
 // === set_template_cadence_config ===
+
+#[test]
+fun set_cadence_config_accepts_1000_and_2000_usdc_targets() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    vector[MINIMUM_EXPIRY_CASH, SMALL_EXPIRY_CASH].do!(|target| {
+        reg.set_template_cadence_config(
+            &config,
+            &admin_cap,
+            UNDERLYING_BTC,
+            market_manager::cadence_one_minute!(),
+            BTC_TICK_SIZE,
+            BTC_ADMISSION_TICK_SIZE,
+            target,
+            target,
+            WINDOW_SIZE_TWO,
+        );
+        let cadence = reg.cadence_config(UNDERLYING_BTC, market_manager::cadence_one_minute!());
+        assert!(cadence.cadence_enabled());
+        assert_eq!(cadence.cadence_initial_expiry_cash(), target);
+        assert_eq!(cadence.cadence_max_expiry_allocation(), target);
+    });
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
 
 #[test, expected_failure(abort_code = market_manager::EInvalidCadence)]
 fun set_cadence_config_invalid_cadence_id_aborts() {

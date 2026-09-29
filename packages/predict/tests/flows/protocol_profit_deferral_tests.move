@@ -33,11 +33,13 @@ use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
+const FIXTURE_CASH_TARGET: u64 = 10_000_000_000;
+
 #[test]
 /// Permissionless settled sweep when idle < the protocol cut: the cut is realized up
 /// to idle, the remainder carried, and a later live sweep drains the carried cut.
 fun settled_sweep_defers_protocol_cut_then_drains_on_later_sweep() {
-    let f = constants::expiry_cash_floor!();
+    let f = FIXTURE_CASH_TARGET;
     let mut fx = helpers::setup_market_default();
     // 0.9 of profit to the protocol: high but sub-100%, so a small idle redeploy makes
     // the cut exceed available idle at materialization.
@@ -81,7 +83,7 @@ fun settled_sweep_defers_protocol_cut_then_drains_on_later_sweep() {
 /// pool genesis-locked, the carried protocol cut is excluded from LP value separately, so
 /// pricing nets idle (f) minus the pending cut (f-l) to exactly the locked liquidity (l).
 fun flush_completes_when_settled_cut_exceeds_idle() {
-    let f = constants::expiry_cash_floor!();
+    let f = FIXTURE_CASH_TARGET;
     let l = constants::min_bootstrap_liquidity!();
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(l); // genesis lock so the flush is reachable (total_supply > 0)

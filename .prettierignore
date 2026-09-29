@@ -3,3 +3,6 @@
 # out fresh; ignoring them keeps a local run honest against the same file set.
 build/
 **/build/
+
+# Preserve third-party source bytes for provenance verification.
+vendor/

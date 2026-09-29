@@ -4,20 +4,21 @@ Every Predict trade — a mint or a live redeem — carries a trading fee, and m
 
 Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
 
-All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
+All fees are denominated in USDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
 This page covers **per-trade** fees. The pool also charges an LP-side **exit** fee: PLP supply and withdraw are still priced at one exact pool-wide mark with no band or spread, and a flat rate is charged on top of that mark — on withdrawals only, as shipped. See [the LP fee](#the-lp-supplywithdraw-fee) below and [./liquidity-and-nav.md](./liquidity-and-nav.md).
 
 ## Where fees come from
 
-Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at live redeem is withheld from the payout. The fee is collected into the expiry's DUSDC cash custody (`ExpiryCash`), and the trader-paid portion is recorded in the trader's Predict account data.
+Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at live redeem is withheld from the payout. The fee is collected into the expiry's USDC cash custody (`ExpiryCash`), and the trader-paid portion is recorded in the trader's Predict account data.
 
 The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at creation so that later admin changes do not reprice contracts already trading. The composition, in the order the protocol applies it, is:
 
 ```text
-base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
-ramped_rate     = base_fee_rate * expiry_fee_multiplier(time_to_expiry)   (>= base_fee_rate)
-trading_fee     = ramped_rate * quantity
+leg_base_rate   = max( base_fee * sqrt(p_leg * (1 - p_leg)) , min_fee )
+leg_ramped_rate = leg_base_rate * expiry_fee_multiplier(time_to_expiry)
+leg_fee        = leg_ramped_rate * quantity
+trading_fee    = sum(leg_fee for each finite boundary)
 
 builder_fee     = min( trading_fee * builder_fee_multiplier , quantity * max_builder_fee_rate )
 congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
@@ -28,7 +29,7 @@ The base trading fee and the expiry ramp together set the **fee rate** a trader 
 
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
-A range contract settling inside or outside its range is a Bernoulli outcome with success probability `p`. The variance of that outcome is `p · (1 − p)`, and its standard deviation is `sqrt(p · (1 − p))`. The base fee is proportional to that standard deviation:
+Each finite boundary defines a Bernoulli leg with probability `p`. Its fee is proportional to `sqrt(p · (1 − p))`. A bounded range pays the sum of its two leg fees, each with its own minimum and rounding; above/below contracts pay one leg fee. Infinite boundaries contribute no fee, while finite strikes priced at zero or one still pay the minimum. The range probability continues to determine premium and live value.
 
 ```text
 raw_fee_rate = base_fee * sqrt(p * (1 - p))
@@ -44,7 +45,9 @@ base_fee_rate = max( raw_fee_rate , min_fee )
 
 As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
 
-Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
+Mint admission requires both the combined range probability and every finite leg's probability to lie in the configured `[min_entry_probability, max_entry_probability]` band. The lower leg uses ABOVE probability; the upper leg uses BELOW probability. Infinite boundaries are exempt. Minimum premium and the maximum-payout cost limit apply to the actual range purchase. These entry bounds do not restrict live closes: the summed leg fee is capped at the range's redemption value.
+
+After every fee component and inventory-impact charge is assembled, mint admission requires `all_in_cost <= quantity`. Because `quantity` is the position's maximum settlement payout, a trader cannot mint a position whose total debit exceeds what the position can ever pay at settlement; the check uses the trader-paid fee after any sponsor subsidy.
 
 ## 2. Expiry fee ramp
 
@@ -70,7 +73,7 @@ builder_fee = min( trading_fee * builder_fee_multiplier , quantity * max_builder
 
 The builder fee is a fixed multiple (`builder_fee_multiplier`) of the trader's trading fee. It is capped at `max_builder_fee_rate · quantity` so that a high variance fee cannot push the builder cut to an unbounded share of notional. An account with no builder code pays no builder fee.
 
-The builder fee is split off the trader's payment and routed to the builder code's own object address using Sui's accumulator-based fund custody on the `BuilderCode` object — the DUSDC accumulates against the code object's address balance, and the code's owner can later claim all settled builder fees in a single call. The owner is fixed at creation and is the only address that can claim. For the object model and custody mechanism, see [../design/architecture.md](../design/architecture.md).
+The builder fee is split off the trader's payment and routed to the builder code's own object address using Sui's accumulator-based fund custody on the `BuilderCode` object — the USDC accumulates against the code object's address balance, and the code's owner can later claim all settled builder fees in a single call. The owner is fixed at creation and is the only address that can claim. For the object model and custody mechanism, see [../design/architecture.md](../design/architecture.md).
 
 The builder fee never enters the pool's revenue — it belongs entirely to the builder.
 
@@ -87,7 +90,7 @@ Sponsor-funded subsidy is subtracted because it is not paid by the trader. Build
 
 The referral amount is split from the mint payment before the remaining protocol proceeds enter expiry cash. It therefore leaves `MintQuote.all_in_cost`, `max_cost`, and the trader's account debit unchanged. `MintQuote` describes what the trader pays, not how the protocol distributes those proceeds.
 
-Predict sends the DUSDC to the stored referrer receive address with `balance::send_funds`. That address is the referrer's outer `AccountWrapper`, so the ordinary Account balance and `settle` flows make the funds claimable; the canonical referrer Account ID remains the attribution identity. `OrderMinted` records both the calculated `referral_fee` and the immutable `referrer_account_id`, retaining the ID when the configured rate is zero or integer rounding produces a zero payment.
+Predict sends the USDC to the stored referrer receive address with `balance::send_funds`. That address is the referrer's outer `AccountWrapper`, so the ordinary Account balance and `settle` flows make the funds claimable; the canonical referrer Account ID remains the attribution identity. `OrderMinted` records both the calculated `referral_fee` and the immutable `referrer_account_id`, retaining the ID when the configured rate is zero or integer rounding produces a zero payment.
 
 The referral is direct and one level: Predict reads only the minting Account's stored referrer and never follows that referrer's own attribution. The referrer Account must exist before the referred Account is created, so a newly created Account cannot refer to itself; the registry does not otherwise infer or restrict common beneficial ownership across different owner addresses.
 
@@ -159,6 +162,21 @@ Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_r
 
 This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
 
+## Sponsor-funded fee incentives
+
+A sponsor can pay part of traders' mint fees. `plp::sponsor_fee_incentives` accepts USDC from anyone into a pool-level fee-incentive reserve that is excluded from PLP NAV, and `rebalance_expiry_cash` moves it into live markets. Each rebalance tops a market's incentive balance up to its live target, a share of the allocation cap the market took from its cadence (`fee_incentive_live_target_rate`, 2% by default), and a market can receive at most its lifetime cap over its whole life (`fee_incentive_lifetime_cap_rate`, 10% by default, fixed for each market when it is created and reported in `FeeIncentiveLifetimeCapSnapshotted`). Both are admin settings from 0% to 100% and are independent: a live target above a market's lifetime cap is allowed, and the cap still bounds what that market receives. A live target large enough to cover a market's fees between rebalances, with a lifetime cap that never binds, keeps the discount at the configured rate on every mint until the reserve itself runs out. Package versions before 4 compiled in the fixed 2% and 10% and ignore both settings: until the version watermark retires them, anyone can rebalance through one at 2%, and a market created through one gets a 10% cap. On each mint the market pays part of the trading fee from its own incentive balance:
+
+```text
+sponsor_subsidy = min( floor(trading_fee * fee_incentive_subsidy_rate) , market_incentive_balance )
+trader_paid_fee = trading_fee - sponsor_subsidy
+```
+
+The trading fee charged never changes; the subsidy changes only who pays it. Live redeems are never subsidized. On a referred mint the referral basis above uses the trader-paid fee, so a higher rate also shrinks the referral share.
+
+`fee_incentive_subsidy_rate` is an admin setting on `ProtocolConfig`, read at mint time rather than snapshotted, so a change applies to the next mint on every market, including markets already trading. It ships at 20% and can be set anywhere from 0% to 50%. At 0% nothing is spent and allocated balances stay where they are. The 50% ceiling means a trader always pays at least half of every trading fee, so no promotion makes volume free: at 100%, a trader with a self-owned builder code could mint both sides of a market paying no trading fee and farm the sponsor's balance, making volume and points metrics free to inflate. Package versions before 4 charge a fixed 20% and ignore the setting, so it binds every mint only once the version watermark has retired them.
+
+Sponsorship is not earmarked to its sponsor. The admin can withdraw any amount of the pool reserve with `plp::withdraw_fee_incentives`. The withdrawal reaches only the reserve: a live market's allocated balance returns to the reserve when the market settles and is swept, and can be withdrawn from there. Winding incentives down therefore takes two steps: a zero rate stops spending, and withdrawing the reserve stops rebalances allocating it into new markets. Once the watermark has retired versions before 4, a zero live target does the second step instead and leaves the reserve in the pool, where it can later be withdrawn or allocated again; until then a rebalance through an older version still tops markets up to 2%.
+
 ## How the components combine
 
 The full flow for a single trade:
@@ -191,11 +209,11 @@ Cash routing at trade time:
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
 | Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available USDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. The `mint_exact_cost` entrypoint fixes an all-in withdrawal budget: every component above is sized to fit inside `max_cost`, so the fee is taken out of the spend rather than added to it, and the budget search finds the largest lot-rounded quantity that fits. If that quantity breaches its maximum payout, a conservative fallback may select a smaller fill and is not guaranteed to find the largest admissible one. Insufficient expiry cash backing aborts execution; sizing does not shrink the fill to available backing. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
 
 ## The LP supply/withdraw fee
 
-Everything above is charged on a *trade*. The pool charges one further fee on *LP exit*: a flat rate applied to the DUSDC leg of every executed fill, admin-tunable within a hard `0..5%` envelope.
+Everything above is charged on a *trade*. The pool charges one further fee on *LP exit*: a flat rate applied to the USDC leg of every executed fill, admin-tunable within a hard `0..5%` envelope.
 
 The two legs carry **independent rates**, and they ship asymmetric:
 
@@ -206,9 +224,9 @@ The two legs carry **independent rates**, and they ship asymmetric:
 
 An exit concentrates the pool's outstanding risk on whoever stays: the liabilities the pool has written do not shrink when an LP leaves, so the same risk is carried on a smaller base and risk per dollar rises for the remaining holders. NAV pays the exiting LP the mark, which is the expected value; it does not charge them for the variance they hand to everyone else. That is what the exit fee prices. A deposit moves risk the other way — it dilutes risk per dollar and is a benefit to the pool's health — so the supply leg ships at zero, and the knob exists only to keep that reversible without a package upgrade.
 
-Each leg is charged on the DUSDC side at its own rate, frozen once per flush alongside the mark (never inside it):
+Each leg is charged on the USDC side at its own rate, frozen once per flush alongside the mark (never inside it):
 
-- **Supply** — the fee, if one is ever set, is deducted from the escrowed DUSDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply DUSDC that no new shares were issued against. At the shipped rate of zero a deposit mints its full pro-rata share.
+- **Supply** — the fee, if one is ever set, is deducted from the escrowed USDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply USDC that no new shares were issued against. At the shipped rate of zero a deposit mints its full pro-rata share.
 - **Withdraw** — the fee is withheld from the marked payout, so the requester receives the net. The full escrowed PLP is burned either way.
 
 Both legs leave the charge inside the pool, so it accrues to PLP holders pro-rata rather than to the protocol reserve.
@@ -217,7 +235,7 @@ That has a consequence worth stating for the leg that actually charges: a withdr
 
 Two consequences worth stating plainly:
 
-- **Request limits are net of the fee.** `min_plp_out` and `min_dusdc_out` are compared against the post-fee result, so a limit means "what I actually receive", not the pre-fee quote. A caller sizing a limit should read the relevant leg's rate off `ProtocolConfig` and price accordingly.
+- **Request limits are net of the fee.** `min_plp_out` and `min_usdc_out` are compared against the post-fee result, so a limit means "what I actually receive", not the pre-fee quote. A caller sizing a limit should read the relevant leg's rate off `ProtocolConfig` and price accordingly.
 - **Only executed fills are charged.** A request that is cancelled by its owner, refunded as non-executable at the mark, or still queued after a limit miss pays nothing.
 
 The fee is deliberately separate from the mark. The mark stays the exact pool-wide NAV used in both directions; the fee is applied after it. This is what distinguishes it from the superseded uncertainty-band withdrawal fee of the approximate-NAV design, which distorted the mark itself.

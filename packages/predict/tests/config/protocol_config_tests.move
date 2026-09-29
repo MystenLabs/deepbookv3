@@ -23,6 +23,8 @@ fun new_clock(scenario: &mut Scenario): Clock {
 }
 
 const DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE: u64 = 100_000_000;
+const DEFAULT_MAX_LP_POOL_VALUE: u64 = 500_000_000_000;
+const UPDATED_MAX_LP_POOL_VALUE: u64 = 5_000_000_000_000;
 
 #[test]
 fun new_config_seeds_protocol_reserve_profit_share() {
@@ -99,15 +101,15 @@ fun set_lp_request_limit_flush_attempts_during_valuation_aborts() {
     abort 999
 }
 
-/// A fresh config admits any pool size, so merging the cap changes no behaviour until
-/// an operator sets a figure. Asserted against the stored state the flush reads.
+/// A fresh config caps LP-attributable pool value at 500,000 USDC. Asserted against
+/// the stored state the flush reads, not against the default macro.
 #[test]
-fun new_config_ships_uncapped() {
+fun new_config_ships_with_500k_usdc_cap() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.max_lp_pool_value(), config_constants::max_max_lp_pool_value!());
+    assert_eq!(config.max_lp_pool_value(), DEFAULT_MAX_LP_POOL_VALUE);
 
-    config.set_max_lp_pool_value(&admin_cap, 5_000_000_000_000);
-    assert_eq!(config.max_lp_pool_value(), 5_000_000_000_000);
+    config.set_max_lp_pool_value(&admin_cap, UPDATED_MAX_LP_POOL_VALUE);
+    assert_eq!(config.max_lp_pool_value(), UPDATED_MAX_LP_POOL_VALUE);
 
     destroy(admin_cap);
     return_shared(reg);
@@ -170,6 +172,45 @@ fun frozen_blocks_version_gated_flow() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_fee_incentive_subsidy_rate_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_fee_incentive_live_target_rate_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_template_fee_incentive_lifetime_cap_rate_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = protocol_config::EVersionWatermarkNotAdvanced)]
 fun bump_version_watermark_at_current_version_aborts() {
     // At genesis the watermark already equals the running `current_version!()`, so
@@ -177,6 +218,90 @@ fun bump_version_watermark_at_current_version_aborts() {
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     config.bump_version_watermark(&admin_cap);
     abort 999
+}
+
+/// The deliberate mirror of the `*_during_valuation_aborts` tests around it.
+/// `set_no_trade_window_ms` is ungated on the valuation flag precisely so a
+/// stalled flush cannot trap it: the knobs that are gated become unreachable
+/// exactly when an operator most needs to widen a safety control (RP-29's
+/// recovery path). That property is invisible to a negative test, so it is
+/// pinned positively here — a refactor applying `assert_not_valuation_in_progress`
+/// uniformly across setters would trap the control while every other test in this
+/// file stayed green.
+#[test]
+fun set_no_trade_window_during_valuation_succeeds() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+
+    config.begin_valuation();
+    assert!(config.valuation_in_progress());
+
+    config.set_no_trade_window_ms(&admin_cap, config_constants::max_no_trade_window_ms!(), &clock);
+    assert_eq!(config.no_trade_window_ms(), config_constants::max_no_trade_window_ms!());
+
+    // Still widenable a second time, and still narrowable back, while the flush
+    // remains in flight — recovery is not a one-shot.
+    config.set_no_trade_window_ms(&admin_cap, config_constants::min_no_trade_window_ms!(), &clock);
+    assert_eq!(config.no_trade_window_ms(), 0);
+    assert!(config.valuation_in_progress());
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Not gated on the valuation flag, like the referral rate: nothing in the flush
+/// reads it, so an admin can stop or resume subsidies mid-flush.
+#[test]
+fun set_fee_incentive_subsidy_rate_during_valuation_succeeds() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+
+    config.begin_valuation();
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 0);
+    assert!(config.valuation_in_progress());
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Neither allocation rate is gated on the valuation flag: the flush reads neither,
+/// and the balances they move between are outside PLP NAV.
+#[test]
+fun set_fee_incentive_allocation_rates_during_valuation_succeeds() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+
+    config.begin_valuation();
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), 1_000_000_000);
+    assert_eq!(config.fee_incentive_live_target_rate(), 0);
+    assert!(config.valuation_in_progress());
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
@@ -290,4 +415,108 @@ fun set_max_valuation_window_during_valuation_aborts() {
         config_constants::min_max_valuation_window_ms!(),
     );
     abort 999
+}
+
+// === Settled-redeem keeper allowlist ===
+
+/// The allowlist ships empty: a fresh config has no dynamic field, and the query
+/// must read that as "nobody", including the deployer.
+#[test]
+fun settled_redeem_keeper_allowlist_starts_empty() {
+    let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    assert!(!config.is_settled_redeem_keeper(test_constants::admin()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::bob()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun add_settled_redeem_keeper_allows_only_that_address() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::bob()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::admin()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun remove_settled_redeem_keeper_revokes_only_that_address() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::bob());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(config.is_settled_redeem_keeper(test_constants::bob()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+/// Removing the last keeper leaves the (now empty) set in place; adding again
+/// must reuse it rather than abort on a second `dynamic_field::add`.
+#[test]
+fun removed_settled_redeem_keeper_can_be_added_again() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(config.is_settled_redeem_keeper(test_constants::alice()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = protocol_config::ESettledRedeemKeeperAlreadyAdded)]
+fun add_settled_redeem_keeper_twice_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    abort 999
+}
+
+/// No keeper was ever added, so the allowlist's dynamic field does not exist yet.
+#[test, expected_failure(abort_code = protocol_config::ESettledRedeemKeeperNotFound)]
+fun remove_settled_redeem_keeper_before_any_add_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    abort 999
+}
+
+/// The allowlist exists but does not contain the address being removed.
+#[test, expected_failure(abort_code = protocol_config::ESettledRedeemKeeperNotFound)]
+fun remove_unlisted_settled_redeem_keeper_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::bob());
+    abort 999
+}
+
+/// Granting keeper access is version-gated, so the freeze blocks it.
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun add_settled_redeem_keeper_while_frozen_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_frozen(&admin_cap, true);
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    abort 999
+}
+
+/// The mirror of the frozen add: revocation is deliberately ungated so admin can
+/// drop a compromised keeper during an incident. A refactor that routed removal
+/// through `assert_version` would pass every negative test and fail only here.
+#[test]
+fun remove_settled_redeem_keeper_while_frozen_succeeds() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.set_frozen(&admin_cap, true);
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }

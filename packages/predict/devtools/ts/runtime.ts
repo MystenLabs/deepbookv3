@@ -10,8 +10,8 @@ import {
     BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
     BS_ADMIN_CAP_ID,
     BS_SIGNER_REGISTRY_ID,
-    DUSDC_CURRENCY_ID,
-    DUSDC_PACKAGE_ID,
+    USDC_CURRENCY_ID,
+    USDC_PACKAGE_ID,
     LOCAL_BS_SIGNER_PRIVATE_KEY,
     LOCAL_BS_SIGNER_PUBLIC_KEY,
     LOCAL_PYTH_GOVERNANCE_CHAIN,
@@ -83,11 +83,11 @@ export interface ExecutionReceipt {
     effects: any;
 }
 
-export const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
+export const USDC_TYPE = `${USDC_PACKAGE_ID}::usdc::USDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
 // Sui's singleton balance-accumulator root lives at the reserved address 0xacc
-// (object::SUI_ACCUMULATOR_ROOT_OBJECT_ID). The async-LP flush delivers PLP/DUSDC
+// (object::SUI_ACCUMULATOR_ROOT_OBJECT_ID). The async-LP flush delivers PLP/USDC
 // fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
@@ -105,7 +105,7 @@ const U64_MAX = (1n << 64n) - 1n;
 const ONE_DAY_MS = 24n * 60n * 60n * 1000n;
 const ONE_MONTH_MS = 30n * ONE_DAY_MS;
 // Genesis minimum-liquidity lock (constants::min_bootstrap_liquidity). `lock_capital`
-// permanently locks this much DUSDC so `total_supply > 0` for the life of the pool,
+// permanently locks this much USDC so `total_supply > 0` for the life of the pool,
 // making the supply==0 re-bootstrap branch unreachable. request_supply/withdraw abort
 // `ENotBootstrapped` until it has run, so the harness locks it before any supply.
 export const MIN_BOOTSTRAP_LIQUIDITY = 10_000_000n;
@@ -801,7 +801,7 @@ export async function readPlpBalance(owner: string): Promise<bigint> {
 }
 
 export interface PredictEconomicState {
-    accountDusdcBalance: bigint;
+    accountUsdcBalance: bigint;
     accountPlpBalance: bigint;
     expiryCashBalance: bigint;
     inventoryImpactReserve: bigint;
@@ -852,7 +852,7 @@ export async function readPredictEconomicState(params: {
     });
     tx.moveCall({
         target: accountTarget("account", "balance"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
     });
     tx.moveCall({
@@ -884,7 +884,7 @@ export async function readPredictEconomicState(params: {
         feeIncentiveBalance: u64(12),
         isSettled: (commandReturnBytes(result, 13)[0] ?? 0) !== 0,
         activeMarketCount: BigInt(parseVectorId(commandReturnBytes(result, 14)).length),
-        accountDusdcBalance: u64(16),
+        accountUsdcBalance: u64(16),
         accountPlpBalance: u64(17),
     };
 }
@@ -939,9 +939,10 @@ interface MintParams extends OracleFeedIds {
     wrapperId: string;
     strike: bigint;
     isUp: boolean;
+    higherStrike?: bigint; // Optional finite upper boundary for an UP range.
     quantity: bigint;
     tickSize?: bigint; // cadence tick size; live harness default is $0.01
-    maxCost?: bigint; // all-in DUSDC withdrawal cap; U64_MAX (uncapped) if omitted
+    maxCost?: bigint; // all-in USDC withdrawal cap; U64_MAX (uncapped) if omitted
     maxProbability?: bigint; // per-contract probability cap (1e9); U64_MAX if omitted
 }
 
@@ -963,7 +964,7 @@ export interface FlushParams extends OracleFeedIds {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    lifecycleCapId: string;
+    poolValuationCapId: string;
 }
 
 // Convert a raw binary-range strike to the `(lower_tick, higher_tick)` pair the
@@ -989,6 +990,20 @@ export function binaryRangeTicks(
     };
 }
 
+export function mintRangeTicks(
+    strike: bigint,
+    isUp: boolean,
+    tickSize = ORACLE_TICK_SIZE,
+    higherStrike?: bigint,
+): { lowerTick: bigint; higherTick: bigint } {
+    const range = binaryRangeTicks(strike, isUp, tickSize);
+    if (higherStrike === undefined) return range;
+    if (!isUp) throw new Error("higher_strike requires is_up=true");
+    const higherTick = binaryRangeTicks(higherStrike, true, tickSize).lowerTick;
+    if (range.lowerTick >= higherTick) throw new Error("higher_strike must exceed strike");
+    return { lowerTick: range.lowerTick, higherTick };
+}
+
 async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
     const sourceTimestampMs = await nextSourceTimestampMs();
     addPythFeedUpdate(tx, params.pythFeedId, params.spot, sourceTimestampMs);
@@ -1010,16 +1025,15 @@ async function refreshThen(
     return [refreshTx, pricedOperationTx];
 }
 
-// Live-data updater: clamp a provider's real publish timestamp to a valid on-chain
-// source timestamp — `<= Clock - 1` and strictly monotonic — so the oracle history
-// mirrors real wall-clock without ever tripping the freshness gate. Returns null
-// when the timestamp is not fresh (the loop should skip this tick, not wait).
-export async function clampedSourceTimestampMs(realMs: bigint): Promise<bigint | null> {
+// Live-data updater: stamp the transport batch from the relayer's observed Sui Clock and make it
+// strictly monotonic. Observation timestamps remain the provider's per-update source times and
+// never participate in batch admission.
+let lastBatchTimestampMs = 0n;
+export async function clampedBatchTimestampMs(): Promise<bigint | null> {
     const clockMax = (await clockTimestampMs()) - 1n;
-    const ts = realMs < clockMax ? realMs : clockMax;
-    if (ts <= lastSourceTimestampMs) return null;
-    lastSourceTimestampMs = ts;
-    return ts;
+    if (clockMax <= lastBatchTimestampMs) return null;
+    lastBatchTimestampMs = clockMax;
+    return clockMax;
 }
 
 // The same clamp for the Pyth leg, on its own monotonic cursor. The Pyth spot must be
@@ -1039,39 +1053,38 @@ export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | n
 
 // Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then
 // separate BS spot, forward, and SVI batches. Pre-warms the whole boundary grid
-// in a single transaction under one (clamped) envelope timestamp — the clock the
-// on-chain stores age series by and the SVI roll-down anchors on — while each
-// series keeps its own provider model time, the clock the stores order by.
+// in a single transaction under one clamped batch timestamp for transport observability.
+// Each observation keeps its provider source timestamp, which owns on-chain ordering,
+// freshness, and SVI roll-down.
 export interface GridExpiry {
     expiry: bigint;
     forward: bigint;
-    /// Provider model time of the forward ("as of"); 0 = unknown, use the envelope.
-    forwardTsMs: bigint;
+    /// Provider source time of the forward (`value_timestamp`).
+    forwardSourceTimestampMs: bigint;
     svi: OracleRefreshParams["svi"];
-    /// Provider model time of the SVI tuple; 0 = unknown, use the envelope.
-    sviTsMs: bigint;
+    /// Provider source time of the SVI tuple (`svi_timestamp`).
+    sviSourceTimestampMs: bigint;
 }
 
 export function buildOracleRefreshGridTx(
     feeds: OracleFeedIds,
     pythSpot1e9: bigint,
     pythTsMs: bigint | null,
-    bsSpot: { value1e9: bigint; tsMs: bigint },
+    bsSpot: { value1e9: bigint; sourceTimestampMs: bigint },
     grid: GridExpiry[],
-    sourceTimestampMs: bigint,
+    batchTimestampMs: bigint,
 ): Transaction {
     const tx = new Transaction();
-    addOracleRefreshGrid(tx, feeds, pythSpot1e9, pythTsMs, bsSpot, grid, sourceTimestampMs);
+    addOracleRefreshGrid(tx, feeds, pythSpot1e9, pythTsMs, bsSpot, grid, batchTimestampMs);
     return tx;
 }
 
 // Add a grid refresh (spot, forward, and SVI batches) to an existing PTB. This
 // must remain a refresh-only PTB: a priced operation appended after it would abort
 // `EOracleWrittenInThisTransaction`. Each
-// series carries its own provider model time; a series whose model time is
-// unknown gets the envelope, and one that momentarily postdates the envelope
-// (cross-stream clock skew) is skipped this push rather than clamped — the store
-// would refuse it as malformed, and the next push lands it honestly.
+// series carries its own provider source time; a series whose source time is
+// missing is skipped. The store validates each source time against Sui Clock,
+// independently of the transport-only batch timestamp.
 // The Pyth spot is stamped with Pyth's own stream clock (`pythTsMs`), never the
 // envelope: the envelope is the max over every input clock, so reusing it would let
 // Block Scholes activity keep a stalled Pyth stream artificially fresh on-chain. A
@@ -1082,20 +1095,19 @@ function addOracleRefreshGrid(
     feeds: OracleFeedIds,
     pythSpot1e9: bigint,
     pythTsMs: bigint | null,
-    bsSpot: { value1e9: bigint; tsMs: bigint },
+    bsSpot: { value1e9: bigint; sourceTimestampMs: bigint },
     grid: GridExpiry[],
-    sourceTimestampMs: bigint,
+    batchTimestampMs: bigint,
 ): void {
     const seriesTs = (tsMs: bigint): bigint | null => {
-        if (tsMs <= 0n) return sourceTimestampMs;
-        if (tsMs > sourceTimestampMs) return null;
+        if (tsMs <= 0n) return null;
         return tsMs;
     };
     if (pythTsMs !== null) addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, pythTsMs);
-    // The BS spot slot carries Block Scholes' own signed spot series at its own model
+    // The BS spot slot carries Block Scholes' own signed spot series at its own source
     // time — a separate observation from the Pyth spot above.
     let spotUpdate: BsValueUpdate | null = null;
-    const spotTs = seriesTs(bsSpot.tsMs);
+    const spotTs = seriesTs(bsSpot.sourceTimestampMs);
     if (spotTs !== null) {
         spotUpdate = {
             sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
@@ -1105,7 +1117,7 @@ function addOracleRefreshGrid(
     }
     const forwardUpdates: ExpiringValueUpdate[] = [];
     for (const g of grid) {
-        const ts = seriesTs(g.forwardTsMs);
+        const ts = seriesTs(g.forwardSourceTimestampMs);
         if (ts !== null) {
             forwardUpdates.push({
                 expiryMs: g.expiry,
@@ -1123,7 +1135,7 @@ function addOracleRefreshGrid(
     }
     const sviUpdates: ExpiringSviUpdate[] = [];
     for (const g of grid) {
-        const ts = seriesTs(g.sviTsMs);
+        const ts = seriesTs(g.sviSourceTimestampMs);
         if (ts !== null) {
             sviUpdates.push({
                 expiryMs: g.expiry,
@@ -1132,7 +1144,7 @@ function addOracleRefreshGrid(
         }
     }
     if (spotUpdate !== null || forwardUpdates.length > 0 || sviUpdates.length > 0) {
-        addBsBatches(tx, feeds, sourceTimestampMs, spotUpdate, forwardUpdates, sviUpdates);
+        addBsBatches(tx, feeds, batchTimestampMs, spotUpdate, forwardUpdates, sviUpdates);
     }
 }
 
@@ -1200,14 +1212,14 @@ function addTrySettle(
 // verifier, and ingest them through the production
 // `block_scholes_store::apply_*_batch` path. Spot, forwards, and SVI each carry
 // their typed descriptor witnesses, matching the production writer. Each update's
-// own timestamp is the model "as of" time; the envelope is the publish time.
+// own timestamp is its provider source time; the envelope carries batch time only.
 type ExpiringValueUpdate = { expiryMs: bigint; update: BsValueUpdate };
 type ExpiringSviUpdate = { expiryMs: bigint; update: BsSviUpdate };
 
 function addBsBatches(
     tx: Transaction,
     stores: { bsValueStoreId: string; bsSviStoreId: string },
-    publishedAtMs: bigint,
+    batchTimestampMs: bigint,
     spotUpdate: BsValueUpdate | null,
     forwardUpdates: ExpiringValueUpdate[],
     sviUpdates: ExpiringSviUpdate[],
@@ -1217,7 +1229,7 @@ function addBsBatches(
         const spotMessage = signedValueBatchBytes({
             signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
             verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-            batchTimestampMs: publishedAtMs,
+            batchTimestampMs,
             updates: [spotUpdate],
         });
         const spotBatch = tx.moveCall({
@@ -1237,7 +1249,7 @@ function addBsBatches(
         const forwardMessage = signedValueBatchBytes({
             signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
             verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-            batchTimestampMs: publishedAtMs,
+            batchTimestampMs,
             updates: forwardUpdates.map(({ update }) => update),
         });
         const forwardBatch = tx.moveCall({
@@ -1265,7 +1277,7 @@ function addBsBatches(
     const sviMessage = signedSviBatchBytes({
         signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
         verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-        batchTimestampMs: publishedAtMs,
+        batchTimestampMs,
         updates: sviUpdates.map(({ update }) => update),
     });
     const sviBatch = tx.moveCall({
@@ -1308,15 +1320,15 @@ function sviBatchUpdate(
 function addBlockScholesUpdates(
     tx: Transaction,
     params: OracleRefreshParams,
-    publishedAtMs: bigint,
+    timestampMs: bigint,
 ): void {
     addBsBatches(
         tx,
         params,
-        publishedAtMs,
+        timestampMs,
         {
             sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
-            timestampMs: publishedAtMs,
+            timestampMs,
             value: params.spot,
         },
         [
@@ -1328,7 +1340,7 @@ function addBlockScholesUpdates(
                         PREDICT_BLOCK_SCHOLES_BASE_ASSET,
                         params.expiry,
                     ),
-                    timestampMs: publishedAtMs,
+                    timestampMs,
                     value: params.forward,
                 },
             },
@@ -1336,16 +1348,16 @@ function addBlockScholesUpdates(
         [
             {
                 expiryMs: params.expiry,
-                update: sviBatchUpdate(params.expiry, params.svi, publishedAtMs),
+                update: sviBatchUpdate(params.expiry, params.svi, timestampMs),
             },
         ],
     );
 }
 
-function mintDusdc(tx: Transaction, amount: bigint) {
+function mintUsdc(tx: Transaction, amount: bigint) {
     const [coin] = tx.moveCall({
         target: "0x2::coin::mint",
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
     });
     return coin;
@@ -1367,7 +1379,7 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
 }
 
 // Add the ATOMIC snapshot stage: the privileged `start_pool_valuation` (via a
-// market-deployer `MarketLifecycleCap` proof — the sole flush authority) -> one
+// `PoolValuationCap` proof — the sole flush authority) -> one
 // `snapshot_expiry_pricer` per active market -> `seal_valuation_snapshot`, which
 // consumes the `SnapshotStage` potato. These commands MUST stay in one PTB and the
 // potato enforces it: every market's `Pricer` is frozen at the instant this
@@ -1377,8 +1389,8 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
 // `resolve_live_pricer` refuses a same-transaction write (RP-24).
 function addSnapshotStage(tx: Transaction, params: FlushParams): void {
     const proof = tx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+        target: target("registry", "generate_pool_valuation_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.poolValuationCapId)],
     });
     const stage = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
@@ -1452,10 +1464,11 @@ function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }
 }
 
 function addMint(tx: Transaction, params: MintParams): void {
-    const { lowerTick, higherTick } = binaryRangeTicks(
+    const { lowerTick, higherTick } = mintRangeTicks(
         params.strike,
         params.isUp,
         params.tickSize,
+        params.higherStrike,
     );
     const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);
@@ -1473,7 +1486,7 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.pure.u64(params.maxCost ?? U64_MAX),
             tx.pure.u64(params.maxProbability ?? U64_MAX),
             // `mint_exact_quantity` loads the account and ambient-settles it
-            // (`settle<DUSDC>`) before charging the premium, so it reads the
+            // (`settle<USDC>`) before charging the premium, so it reads the
             // singleton AccumulatorRoot at 0xacc. `root` follows the slippage
             // guards.
             tx.object(ACCUMULATOR_ROOT_ID),
@@ -1503,7 +1516,7 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             // U64_MAX caps).
             tx.pure.u64(0),
             tx.pure.u64(0),
-            // `redeem_live` loads the account and ambient-settles it (`settle<DUSDC>`)
+            // `redeem_live` loads the account and ambient-settles it (`settle<USDC>`)
             // before crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
@@ -1515,9 +1528,10 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
 // One PTB that redeems every settled position on `wrapper` (permissionless full-close). This is
 // the maximally-incentivized keeper/MEV cleanout: it deletes the N position dynamic-field
 // entries, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
-// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoint derives
+// the cleaner is paid). Requires the market SETTLED. The keeper entrypoint derives
 // PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
-// account's wrapper — the actual on-chain keeper surface, priced as-is.
+// account's wrapper — the actual on-chain keeper surface, priced as-is. The sender must be
+// on the settled-redeem keeper allowlist (`addSettledRedeemKeeperTx`).
 export interface CleanoutPosition {
     orderId: string;
 }
@@ -1589,27 +1603,53 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
     return tx;
 }
 
-export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
+export function finalizeUsdcCurrencyRegistrationTx(): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: "0x2::coin_registry::finalize_registration",
-        typeArguments: [DUSDC_TYPE],
-        arguments: [tx.object(COIN_REGISTRY_ID), tx.object(DUSDC_CURRENCY_ID)],
+        typeArguments: [USDC_TYPE],
+        arguments: [tx.object(COIN_REGISTRY_ID), tx.object(USDC_CURRENCY_ID)],
     });
     return tx;
 }
 
+// Admin mints a `MarketLifecycleCap` into the Registry allowlist that gates
+// `create_and_share_expiry_market`. `mint_lifecycle_cap(registry, config, admin_cap,
+// ctx)` is version-gated, so it reads the protocol config.
 export function mintLifecycleCapTx(recipient: string): Transaction {
     const tx = new Transaction();
-    // MarketLifecycleCap mint moved from `plp` to `registry` (the allowlist now
-    // lives on Registry, its sole gating call site being create_and_share_expiry_market).
     const cap = tx.moveCall({
         target: target("registry", "mint_lifecycle_cap"),
-        // `mint_lifecycle_cap(registry, config, admin_cap, ctx)` — the mint is version-
-        // gated, so it reads the protocol config.
         arguments: [tx.object(REGISTRY_ID), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
+// Admin mints a `PoolValuationCap` into the Registry allowlist that gates
+// `start_pool_valuation` (through `generate_pool_valuation_proof`). Same version
+// gate as the lifecycle mint; `mint_pool_valuation_cap(registry, admin_cap, config,
+// ctx)` puts the authority before the config, per the role order for new entries.
+export function mintPoolValuationCapTx(recipient: string): Transaction {
+    const tx = new Transaction();
+    const cap = tx.moveCall({
+        target: target("registry", "mint_pool_valuation_cap"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.object(PROTOCOL_CONFIG_ID)],
+    });
+    tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
+// Admin adds `keeper` to the ProtocolConfig allowlist that gates
+// `expiry_market::redeem_settled_permissionless`. `add_settled_redeem_keeper(config,
+// admin_cap, keeper)` is version-gated and aborts if `keeper` is already listed, so
+// run it once per fresh deployment, not on every restart.
+export function addSettledRedeemKeeperTx(keeper: string): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "add_settled_redeem_keeper"),
+        arguments: [tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID), tx.pure.address(keeper)],
+    });
     return tx;
 }
 
@@ -1870,10 +1910,10 @@ export function rebalanceExpiryCashTx(params: {
     return tx;
 }
 
-// Queue a supply request: `request_supply` pulls `amount` DUSDC from the account's
+// Queue a supply request: `request_supply` pulls `amount` USDC from the account's
 // custody into queue escrow, recording the account as the fill recipient. To keep
 // supply a fresh external-capital injection (matching the old escrow-a-fresh-coin
-// model), deposit `amount` fresh DUSDC into the account first (separate owner auth),
+// model), deposit `amount` fresh USDC into the account first (separate owner auth),
 // then request_supply pulls exactly that. The minted PLP is delivered to the account
 // (via the balance accumulator) at the next flush, NOT returned here.
 export function requestSupplyTx(params: {
@@ -1884,15 +1924,15 @@ export function requestSupplyTx(params: {
     minPlpOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
-    const dusdc = mintDusdc(tx, params.amount);
+    const usdc = mintUsdc(tx, params.amount);
     const depositAuth = generateAuth(tx);
     tx.moveCall({
         target: accountTarget("account", "deposit_funds"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [
             tx.object(params.wrapperId),
             depositAuth,
-            dusdc,
+            usdc,
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1914,10 +1954,10 @@ export function requestSupplyTx(params: {
     return tx;
 }
 
-// Queue a supply request pulling `amount` from the account's EXISTING custody DUSDC (no fresh
-// mint). For actors WITHOUT the DUSDC TreasuryCap (traders): the keeper funds the account,
+// Queue a supply request pulling `amount` from the account's EXISTING custody USDC (no fresh
+// mint). For actors WITHOUT the USDC TreasuryCap (traders): the keeper funds the account,
 // then this supplies from that balance — `request_supply` auto-settles + `account.withdraw`
-// pulls the custody DUSDC. (requestSupplyTx mints fresh DUSDC and is keeper-only.)
+// pulls the custody USDC. (requestSupplyTx mints fresh USDC and is keeper-only.)
 export function requestSupplyFromCustodyTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
@@ -1946,14 +1986,14 @@ export function requestSupplyFromCustodyTx(params: {
 // Queue a withdraw request: `request_withdraw` pulls `shares` PLP from the account's
 // custody into queue escrow. The pull auto-settles any flush-delivered PLP first (the
 // async flush delivers PLP fills to the account's accumulator), so no separate
-// materialization step exists — there is no `withdraw_settled` entrypoint. The DUSDC
+// materialization step exists — there is no `withdraw_settled` entrypoint. The USDC
 // fill is delivered to the account at the next flush, NOT returned here.
 export function requestWithdrawTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     wrapperId: string;
     shares: bigint;
-    minDusdcOut?: bigint;
+    minUsdcOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const auth = generateAuth(tx);
@@ -1965,7 +2005,7 @@ export function requestWithdrawTx(params: {
             auth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.shares),
-            tx.pure.u64(params.minDusdcOut ?? 0n),
+            tx.pure.u64(params.minUsdcOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1997,12 +2037,12 @@ export async function refreshOracleAndFlushTxs(
 export function bareFlushTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
-    lifecycleCapId: string;
+    poolValuationCapId: string;
 }): Transaction {
     const tx = new Transaction();
     const proof = tx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+        target: target("registry", "generate_pool_valuation_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.poolValuationCapId)],
     });
     const stage = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
@@ -2049,7 +2089,7 @@ export function keeperFlushTxs(params: {
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
-    lifecycleCapId: string;
+    poolValuationCapId: string;
     settlements: { marketId: string; expiryMs: bigint; price: bigint }[];
 }): Transaction[] {
     // 1. Stragglers settle, then the atomic snapshot stage. Everything from
@@ -2066,8 +2106,8 @@ export function keeperFlushTxs(params: {
         });
     }
     const proof = snapshotTx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.lifecycleCapId)],
+        target: target("registry", "generate_pool_valuation_proof"),
+        arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.poolValuationCapId)],
     });
     const stage = snapshotTx.moveCall({
         target: target("plp", "start_pool_valuation"),
@@ -2175,16 +2215,16 @@ export function createAccountTx(): Transaction {
     return tx;
 }
 
-// Deposit `amount` fresh DUSDC into the account's stored balance via the PTB-callable
+// Deposit `amount` fresh USDC into the account's stored balance via the PTB-callable
 // `deposit_funds` (folds owner authorize -> load -> deposit). Ambient-settles delivered
-// DUSDC (reads the AccumulatorRoot) before crediting.
+// USDC (reads the AccumulatorRoot) before crediting.
 export function depositToAccountTx(wrapperId: string, amount: bigint): Transaction {
     const tx = new Transaction();
-    const coin = mintDusdc(tx, amount);
+    const coin = mintUsdc(tx, amount);
     const auth = generateAuth(tx);
     tx.moveCall({
         target: accountTarget("account", "deposit_funds"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [
             tx.object(wrapperId),
             auth,
@@ -2214,13 +2254,13 @@ export function deriveAccountWrapperId(owner: string): string {
     );
 }
 
-// Genesis bootstrap: permanently lock `MIN_BOOTSTRAP_LIQUIDITY` DUSDC so the pool's
+// Genesis bootstrap: permanently lock `MIN_BOOTSTRAP_LIQUIDITY` USDC so the pool's
 // `total_supply > 0` and the supply==0 re-bootstrap branch is unreachable. Locked
 // liquidity mints PLP into the book's locked balance (no shares to the caller) and
-// joins the DUSDC into idle. Must run once, before any request_supply.
+// joins the USDC into idle. Must run once, before any request_supply.
 export function lockCapitalTx(poolVaultId: string): Transaction {
     const tx = new Transaction();
-    const coin = mintDusdc(tx, MIN_BOOTSTRAP_LIQUIDITY);
+    const coin = mintUsdc(tx, MIN_BOOTSTRAP_LIQUIDITY);
     tx.moveCall({
         target: target("plp", "lock_capital"),
         // `lock_capital(vault, config, admin_cap, payment)`.
@@ -2241,24 +2281,24 @@ export async function refreshOracleAndRedeemTxs(
     return refreshThen(params, (tx) => addRedeem(tx, params));
 }
 
-// Mint test DUSDC and transfer it to `toAddress`. The TreasuryCap is owned by the
+// Mint test USDC and transfer it to `toAddress`. The TreasuryCap is owned by the
 // publisher, so this is how the keeper (publisher) funds trader addresses, which cannot
 // self-mint.
-export function fundAddressDusdcTx(toAddress: string, amount: bigint): Transaction {
+export function fundAddressUsdcTx(toAddress: string, amount: bigint): Transaction {
     const tx = new Transaction();
-    const coin = mintDusdc(tx, amount);
+    const coin = mintUsdc(tx, amount);
     tx.transferObjects([coin], tx.pure.address(toAddress));
     return tx;
 }
 
 // Deposit a coin the account owner already holds (e.g. one the keeper transferred) into
-// the account's stored balance, rather than minting fresh DUSDC.
+// the account's stored balance, rather than minting fresh USDC.
 export function depositOwnedCoinTx(wrapperId: string, coinId: string): Transaction {
     const tx = new Transaction();
     const auth = generateAuth(tx);
     tx.moveCall({
         target: accountTarget("account", "deposit_funds"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [tx.object(wrapperId), auth, tx.object(coinId), tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
     });
     return tx;

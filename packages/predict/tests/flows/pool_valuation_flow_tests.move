@@ -27,6 +27,7 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     pricing,
+    pricing_ssvi_reference_data as ssvi,
     protocol_config::{Self, ProtocolConfig},
     test_constants,
     vault_events
@@ -40,6 +41,7 @@ use sui::{event, test_scenario::return_shared};
 const STANDARD_QUANTITY: u64 = 2_000_000_000;
 /// Idle seed large enough to fund several markets to the cash floor.
 const IDLE_SEED: u64 = 1_200_000_000_000;
+const SPOT_BUFFER_SIZE: u64 = 10;
 /// Expiry inside the finish window: the clock starts at 120_000 and the window ships
 /// at 5 minutes, so a member with this expiry can cross it, settle, and be swept while
 /// the flush is still open.
@@ -51,6 +53,8 @@ const MID_FLUSH_EXPIRY_MS: u64 = 360_000;
 /// pinned against the ledger fields — none of it restates the digital, which is
 /// checked independently at each mint.
 const MARKET_CASH_TARGET: u64 = 10_000_000_000;
+const MINIMUM_CASH_TARGET: u64 = 1_000_000_000;
+const SMALL_CASH_TARGET: u64 = 2_000_000_000;
 const MINT_MIN_FEE: u64 = 10_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
 /// that mark is a very low but executable fair PLP price.
@@ -82,6 +86,38 @@ const ABOVE_MAX_PRICE_POOL_NAV: u64 = 9_910_000_000;
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
 // === Happy path: aggregation ===
+
+#[test]
+fun minimum_cash_target_rebalances_without_changing_pool_capital() {
+    assert_small_cash_target_rebalance(MINIMUM_CASH_TARGET);
+}
+
+#[test]
+fun above_minimum_cash_target_rebalances_without_changing_pool_capital() {
+    assert_small_cash_target_rebalance(SMALL_CASH_TARGET);
+}
+
+fun assert_small_cash_target_rebalance(target: u64) {
+    let mut fx = helpers::setup_market_default();
+    fx.set_default_cadence_allocation(target, target);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let expiry = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut bundle = fx.take_market_bundle(expiry);
+    assert_eq!(helpers::market(&bundle).cash_balance(), 0);
+    fx.rebalance_expiry_cash_bundle(&mut bundle);
+    assert_eq!(helpers::market(&bundle).cash_balance(), target);
+    assert_eq!(helpers::market(&bundle).payout_liability(), 0);
+    assert_eq!(helpers::vault(&bundle).idle_balance(), IDLE_SEED - target);
+    assert_eq!(helpers::vault(&bundle).profit_basis_debits(), target);
+    // A repeated rebalance must not fund the same target twice.
+    fx.rebalance_expiry_cash_bundle(&mut bundle);
+    assert_eq!(helpers::market(&bundle).cash_balance(), target);
+    assert_eq!(helpers::vault(&bundle).idle_balance(), IDLE_SEED - target);
+    assert_eq!(helpers::vault(&bundle).profit_basis_debits(), target);
+    helpers::return_market_bundle(bundle);
+    fx.finish();
+}
 
 #[test]
 fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
@@ -267,15 +303,9 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
-    assert_eq!(
-        fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs),
-        constants::expiry_cash_floor!(),
-    );
-    assert_eq!(
-        fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs),
-        constants::expiry_cash_floor!(),
-    );
-    assert_eq!(vault.profit_basis_debits(), 2 * constants::expiry_cash_floor!());
+    assert_eq!(fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs), MARKET_CASH_TARGET);
+    assert_eq!(fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs), MARKET_CASH_TARGET);
+    assert_eq!(vault.profit_basis_debits(), 2 * MARKET_CASH_TARGET);
     assert_eq!(vault.profit_basis_credits(), 0);
     assert_eq!(pool_nav, IDLE_SEED);
 
@@ -331,6 +361,11 @@ fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
         test_constants::live_source_timestamp_ms() + 1,
         FIRST_UNREPRESENTABLE_U64,
     );
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::live_source_timestamp_ms() + 1,
+    );
 
     fx.start_flush_bundle(&mut market);
     abort 999
@@ -355,6 +390,11 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
     fx.prepare_live_oracle_bundle_at(
         &mut market,
         test_constants::default_live_price(),
+        overwide_timestamp_ms,
+    );
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
         overwide_timestamp_ms + 1,
     );
 
@@ -367,7 +407,113 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
     fx.finish();
 }
 
+// === SVI sigma floor on the mandatory valuation path ===
+
+/// The flush freezes every active market's pricer in its atomic snapshot stage, so
+/// a surface the pricing-safe envelope rejects stops the pool-wide flush from
+/// starting. A `sigma` one raw unit under the 1e-5 floor still does.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun svi_sigma_below_the_floor_aborts_pool_valuation_flush() {
+    let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
+        test_constants::pricing_min_svi_sigma() - 1,
+    );
+    fx.start_flush_bundle(&mut market);
+    abort 999
+}
+
+/// The backfill's smallest one-minute `sigma` (4.7e-5), which the former 1e-3 floor
+/// rejected, now values: the flush completes and, with no orders on the market,
+/// marks the pool at its idle seed.
+#[test]
+fun short_dated_ssvi_surface_completes_pool_valuation_flush() {
+    let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
+        ssvi::svi_sigma(ssvi::smallest_sigma_slice()),
+    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A funded empty market whose latest SVI tuple is the SSVI reference's
+/// smallest-sigma one-minute slice with `sigma` replaced.
+fun market_with_short_dated_ssvi_shape(svi_sigma: u64): (helpers::Fixture, helpers::MarketBundle) {
+    let s = ssvi::smallest_sigma_slice();
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.seed_bs_surface_with_svi_bundle(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ssvi::svi_a_magnitude(s),
+        ssvi::svi_a_is_negative(s),
+        ssvi::svi_b(s),
+        svi_sigma,
+        ssvi::svi_rho_magnitude(s),
+        ssvi::svi_rho_is_negative(s),
+        ssvi::svi_m_magnitude(s),
+        ssvi::svi_m_is_negative(s),
+        test_constants::live_source_timestamp_ms() + 1,
+    );
+    (fx, market)
+}
+
 // === Completeness proof ===
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
+fun evicted_spot_pair_blocks_pool_snapshot() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut i = 1;
+    while (i <= SPOT_BUFFER_SIZE) {
+        fx.set_bs_spot_raw_for_testing_bundle(
+            &mut market,
+            test_constants::live_source_timestamp_ms() + i,
+            (test_constants::default_live_price() as u128),
+        );
+        i = i + 1;
+    };
+    fx.start_flush_bundle(&mut market);
+    abort 999
+}
+
+#[test]
+fun newer_matched_pair_restores_pool_snapshot_after_eviction() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut i = 1;
+    while (i <= SPOT_BUFFER_SIZE) {
+        fx.set_bs_spot_raw_for_testing_bundle(
+            &mut market,
+            test_constants::live_source_timestamp_ms() + i,
+            (test_constants::default_live_price() as u128),
+        );
+        i = i + 1;
+    };
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::live_source_timestamp_ms() + SPOT_BUFFER_SIZE,
+    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    assert_eq!(fx.finish_flush_bundle(&mut market), IDLE_SEED);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
 
 #[test, expected_failure(abort_code = plp::EMissingExpiryValuation)]
 fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
@@ -825,10 +971,7 @@ fun finish_flush_releases_the_valuation_flag_and_a_mint_succeeds() {
     assert!(helpers::valuation_in_progress_bundle(&market));
     fx.value_expiry_bundle(&mut market);
     let pool_nav = fx.finish_flush_bundle(&mut market);
-    assert_eq!(
-        pool_nav,
-        constants::expiry_cash_floor!() + (IDLE_SEED - constants::expiry_cash_floor!()),
-    );
+    assert_eq!(pool_nav, IDLE_SEED);
 
     // Finish releases the flag — asserted on the flag itself, because trading is
     // not blocked by a flush and cannot witness the release. The flag is what
@@ -1303,7 +1446,7 @@ fun superseding_after_a_partial_valuation_leaves_no_residue_and_re_values() {
     // fresh `start_pool_valuation` below discards this partial valuation (bumping the
     // flush ordinal, which staleness-invalidates m1's earlier snapshot stamp) and
     // begins clean. A fresh transaction is needed only so the shared `Registry` is
-    // takeable again for the new lifecycle proof — the realistic shape, where a
+    // takeable again for the new pool-valuation proof — the realistic shape, where a
     // superseding flush runs in a later transaction than the one that stalled.
     fx.scenario_mut().next_tx(test_constants::admin());
     let stage = fx.start_flush(&mut config, &mut vault);

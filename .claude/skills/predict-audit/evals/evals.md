@@ -18,7 +18,7 @@ The prior-awareness step must tag these with their D-id and downrank, never repo
 - D026 — u64 `strike_quantity` overflow accepted + documented.
 - D030 — backing reserve = settlement floor + λ-buffer.
 - D033 — protocol-reserve realization deferred-and-carried (`pending_protocol_profit`).
-- Exact `current_nav`, single mark, **no conservative band**; privileged cron flush via `MarketLifecycleCap`.
+- Exact `current_nav`, single mark, **no conservative band**; privileged cron flush via `PoolValuationCap`.
 - `account` whole-account app-auth custody + no version gate (intended non-custodial property).
 - A single unsettled past-expiry market blocking the flush (documented flush-liveness precondition).
 

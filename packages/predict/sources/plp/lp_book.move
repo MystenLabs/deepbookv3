@@ -9,9 +9,9 @@
 module deepbook_predict::lp_book;
 
 use deepbook_predict::{constants, pool_accounting::Ledger, vault_events};
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use sui::{balance::{Self, Balance}, coin::{Coin, TreasuryCap}, table::{Self, Table}};
+use usdc::usdc::USDC;
 
 const ERequestNotFound: u64 = 0;
 const EBelowMinSupplyRequest: u64 = 1;
@@ -23,7 +23,7 @@ const PAGE_CAPACITY: u64 = 64;
 /// Pool LP state: share issuance plus queued supply/withdraw escrow.
 public struct LpBook<phantom LP> has store {
     treasury_cap: TreasuryCap<LP>,
-    supply_queue: RequestQueue<DUSDC>,
+    supply_queue: RequestQueue<USDC>,
     withdraw_queue: RequestQueue<LP>,
     /// Permanent minimum-liquidity shares minted once at genesis
     /// (`plp::lock_capital`). Held here with no withdraw path, so `total_supply`
@@ -33,8 +33,8 @@ public struct LpBook<phantom LP> has store {
 }
 
 /// One queued supply/withdraw request. `amount` is the escrowed value in the
-/// queue's asset — DUSDC for the supply queue, LP shares for the withdraw queue.
-/// `min_output` is PLP shares for supply requests and DUSDC for withdrawals, and is
+/// queue's asset — USDC for the supply queue, LP shares for the withdraw queue.
+/// `min_output` is PLP shares for supply requests and USDC for withdrawals, and is
 /// measured net of the supply/withdraw fee: it bounds what the requester actually
 /// receives, not the pre-fee amount.
 public struct RequestEntry has copy, drop, store {
@@ -95,8 +95,8 @@ public struct FeeRates has copy, drop {
 
 /// Executable fill amounts for one queued request (or one partial slice of it) at
 /// the frozen mark: `output` in the request's output asset — PLP shares for a
-/// supply, DUSDC for a withdrawal — already net of `fee`, and the
-/// DUSDC-denominated `fee` the pool retains. Both travel together because a fill
+/// supply, USDC for a withdrawal — already net of `fee`, and the
+/// USDC-denominated `fee` the pool retains. Both travel together because a fill
 /// cannot be booked without charging its fee.
 public struct FillQuote has copy, drop {
     output: u64,
@@ -154,7 +154,7 @@ public(package) fun next_withdraw_request_index<LP>(book: &LpBook<LP>): u64 {
 
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
-    payment: Coin<DUSDC>,
+    payment: Coin<USDC>,
     account_id: ID,
     recipient: address,
     min_plp_out: u64,
@@ -168,17 +168,17 @@ public(package) fun request_withdraw<LP>(
     lp: Coin<LP>,
     account_id: ID,
     recipient: address,
-    min_dusdc_out: u64,
+    min_usdc_out: u64,
 ): u64 {
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
-    book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance(), min_dusdc_out)
+    book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance(), min_usdc_out)
 }
 
 public(package) fun cancel_supply_request<LP>(
     book: &mut LpBook<LP>,
     recipient: address,
     index: u64,
-): (ID, u64, Balance<DUSDC>) {
+): (ID, u64, Balance<USDC>) {
     let (request, refund) = book.supply_queue.remove_for_recipient(index, recipient);
     (request.account_id, request.amount, refund)
 }
@@ -254,7 +254,7 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 ///
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
-/// Every fill is charged its leg's frozen fee rate on the DUSDC it actually fills —
+/// Every fill is charged its leg's frozen fee rate on the USDC it actually fills —
 /// the slice, not the whole request, when the fill is partial. The two legs carry
 /// independent rates and the supply leg ships at zero. Refunded and still-queued
 /// requests are never charged.
@@ -464,7 +464,7 @@ fun drain_withdraw_queue<LP>(
         // Same eligibility cutoff as the supply pass: fills only pre-snapshot
         // requests at this flush's mark.
         if (request.index >= cutoff) break;
-        let quote = mark.quote_withdraw_dusdc(fees, request.amount);
+        let quote = mark.quote_withdraw_usdc(fees, request.amount);
         if (quote.is_none()) {
             quote.destroy_none();
             let (request, escrowed_lp) = book.withdraw_queue.pop_front();
@@ -539,7 +539,7 @@ fun drain_withdraw_queue<LP>(
                         affordable,
                         request.amount,
                     );
-                    let partial_quote = mark.quote_withdraw_dusdc(fees, affordable);
+                    let partial_quote = mark.quote_withdraw_usdc(fees, affordable);
                     if (partial_quote.is_none() || partial_quote.borrow().output < min_for_prefix) {
                         // Idle buys no whole share, or those shares price to nothing.
                         // Carry the head and stop, as the dry queue always has.
@@ -593,7 +593,7 @@ fun under_budget(budget: &Option<u64>, processed: u64): bool {
 fun refund_supply_request(
     pool_vault_id: ID,
     request: RequestEntry,
-    escrowed: Balance<DUSDC>,
+    escrowed: Balance<USDC>,
     reason: u8,
     requests_pending_after: u64,
 ) {
@@ -824,10 +824,10 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 
 // === Pricing Helpers ===
 
-/// LP shares minted for `amount` DUSDC at the frozen flush mark, and the fee
-/// withheld from that DUSDC. The fee is charged on the input before conversion, so
+/// LP shares minted for `amount` USDC at the frozen flush mark, and the fee
+/// withheld from that USDC. The fee is charged on the input before conversion, so
 /// only the net buys shares; the fee itself joins idle with the rest of the escrow
-/// as DUSDC no shares were issued against, which is how it accrues to existing
+/// as USDC no shares were issued against, which is how it accrues to existing
 /// holders. `None` means the mark/request pair is not executable and the queued
 /// request must be refunded.
 fun quote_supply_shares(mark: &FlushMark, fees: &FeeRates, amount: u64): Option<FillQuote> {
@@ -840,12 +840,12 @@ fun quote_supply_shares(mark: &FlushMark, fees: &FeeRates, amount: u64): Option<
     })
 }
 
-/// DUSDC owed for `shares` LP at the frozen flush mark, and the fee withheld from
+/// USDC owed for `shares` LP at the frozen flush mark, and the fee withheld from
 /// that payout. The requester receives the net; the fee stays in idle while the
 /// full `shares` are burned, which is how it accrues to remaining holders. `None`
 /// means the mark/request pair is not executable and the queued request must be
 /// refunded.
-fun quote_withdraw_dusdc(mark: &FlushMark, fees: &FeeRates, shares: u64): Option<FillQuote> {
+fun quote_withdraw_usdc(mark: &FlushMark, fees: &FeeRates, shares: u64): Option<FillQuote> {
     if (!mark.executable) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
@@ -856,7 +856,7 @@ fun quote_withdraw_dusdc(mark: &FlushMark, fees: &FeeRates, shares: u64): Option
     })
 }
 
-/// Fee withheld from a DUSDC amount at one of the mark's frozen rates, rounded up
+/// Fee withheld from a USDC amount at one of the mark's frozen rates, rounded up
 /// so the dust biases to the pool (rounding policy R2). The result never exceeds
 /// `amount`: `max_plp_fee_rate` is well below `float_scaling`, so `amount - fee`
 /// cannot underflow at either call site.
@@ -868,7 +868,7 @@ fun fee_on(amount: u64, rate: u64): u64 {
 fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
     if (total_supply == 0) return false;
     // Executable iff the mark price is within band× of unit parity in both
-    // directions (dUSDC and PLP share 6 decimals, so unit price is raw-unit
+    // directions (USDC and PLP share 6 decimals, so unit price is raw-unit
     // parity and no price unit enters the test):
     //   price <= band    <=>  pool_value <= band·supply  <=>  ceil(pv/band) <= supply
     //   price >= 1/band  <=>  supply <= band·pool_value  <=>  ceil(supply/band) <= pv

@@ -5,6 +5,8 @@
 /// Writes are permissionless because possession of `LazerUpdate` carries the upstream verification result; the registry separately owns source uniqueness and canonical binding.
 /// A Lazer update carries two distinct clocks: the envelope `timestamp()` is when the signed update was published, and the per-feed `feed_update_timestamp()` is when the price it carries was generated. They are equal only when the update carries a freshly generated aggregate; when Pyth has no new aggregate it carries the previous price forward under a newer envelope. `latest` keys on the generation time so a carried price ages by its true age, while the exact-history key stays on the envelope so a settlement tick resolves to the canonical price as of that tick.
 /// This module normalizes positive prices to 1e9 scale but leaves freshness and market-use policy to consumers.
+/// Both deployed Pyth lineages support this Update type. The legacy Testnet package has no update_v2, so retain the common ABI when linking Mainnet v2.
+#[allow(deprecated_usage)]
 module propbook::pyth_feed;
 
 use fixed_math::math;

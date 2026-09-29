@@ -5,7 +5,8 @@
 ///
 /// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
 /// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
-/// Scholes spot, forward, and SVI observations. The live forward comes from one of
+/// Scholes spot, forward, and SVI observations. The latest forward is paired with an exact
+/// source-timestamp spot from Propbook's bounded recent history. The live forward comes from one of
 /// two admin-selected sources (`PricingConfig.use_pyth_spot_for_forward`): a fresh
 /// positive Pyth spot carrying the Block Scholes basis, or the Block Scholes forward
 /// directly. Exact-history reads do not apply live freshness policy.
@@ -40,14 +41,20 @@ public struct Pricer has copy, drop {
     svi: PricingSVI,
     /// Timestamps of the oracle observations this snapshot validated, as trade events report
     /// them — each observation's own economic clock. Pyth carries its source timestamp (`0` only
-    /// when no usable normalized observation exists); the Block Scholes reads carry their batch
-    /// envelope time (`source_timestamp_ms`), the clock freshness gated and the SVI roll-down
-    /// anchored on. The provider's calibration (model) times stay on the stored observations and
-    /// their ingestion events.
+    /// when no usable normalized observation exists); Block Scholes spot and forward carry the
+    /// provider `value_timestamp`, and SVI carries the provider `svi_timestamp`. Those timestamps
+    /// are the clocks freshness gates and SVI roll-down use.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// Boundary probabilities from one pricing snapshot. Absent boundaries are the
+/// negative/positive infinity sentinels, not finite strikes priced at zero or one.
+public struct RangePrice has copy, drop {
+    lower_up: Option<u64>,
+    higher_up: Option<u64>,
 }
 
 /// The flush's storable form of a `Pricer`. `seal_valuation_snapshot` freezes one
@@ -73,8 +80,9 @@ public struct FrozenPricer has copy, drop, store {
 /// The provider carries every parameter at 128 bits; Predict prices `rho`, `m`, and `sigma` at 64,
 /// so the narrowing happens once where the `Pricer` is built and every bound below reads these
 /// widths. A provider value too large for them aborts with `EBlockScholesInputTooWide` before the
-/// cast, and everything representable is then bounded semantically by `assert_inputs_pricing_safe`,
-/// whose limits are far tighter than the widths.
+/// cast, and everything representable is then checked by `assert_inputs_pricing_safe`: `b`, `rho`,
+/// `m`, and `sigma` against limits far tighter than the widths, and `a` only through the minimum
+/// total variance it leaves.
 public struct RawSVI has copy, drop {
     a: I64,
     b: u64,
@@ -134,7 +142,11 @@ macro fun max_pricing_basis_factor(): u64 { 100 }
 // bs_spot <= factor * spot can't overflow u64.
 macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
 
-macro fun min_svi_sigma(): u64 { 1_000_000 }
+// 1e-5, the floor Block Scholes recommends: SSVI surfaces narrow `sigma` toward
+// expiry, so one-minute slices commonly sit below 1e-3. Any positive floor keeps
+// the smile root `sqrt((k - m)^2 + sigma^2)` nonzero, so the skew slope's
+// `(k - m) / root` division is safe at the smile vertex.
+macro fun min_svi_sigma(): u64 { 10_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
@@ -146,10 +158,32 @@ public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
-/// Return the current probability for `(lower, higher]`, floored at zero if the
-/// two approximated boundary probabilities invert.
-public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+/// Return both boundary probabilities for `(lower, higher]`. Use `probability()`
+/// for the combined range probability; absent boundaries are infinite sentinels.
+public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): RangePrice {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+    RangePrice {
+        lower_up: if (lower.is_neg_inf()) option::none() else option::some(pricer.up_price(lower)),
+        higher_up: if (higher.is_pos_inf()) option::none()
+        else option::some(pricer.up_price(higher)),
+    }
+}
+
+// === Getters ===
+
+public fun lower_up(price: &RangePrice): Option<u64> {
+    price.lower_up
+}
+
+public fun higher_up(price: &RangePrice): Option<u64> {
+    price.higher_up
+}
+
+/// Return the combined probability, floored at zero if approximated boundary prices invert.
+public fun probability(price: &RangePrice): u64 {
+    let lower = price.lower_up.get_with_default(math::float_scaling!());
+    let higher = price.higher_up.get_with_default(0);
+    lower.saturating_sub(higher)
 }
 
 // === Public-Package Functions ===
@@ -223,7 +257,7 @@ public(package) fun thaw(frozen: &FrozenPricer): Pricer {
 ///
 /// The `u256` intermediate keeps the product exact for any `expiry_ms` rather than
 /// relying on a bound on the anchored horizon. The result is at most
-/// `value * 1e9 <= max_svi_input * 1e9`, so narrowing to `u128` never truncates.
+/// `value * 1e9 < 2^64 * 1e9`, so narrowing to `u128` never truncates.
 public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
     let scaled =
         (value as u256) * (math::float_scaling!() as u256) * (remaining_ms as u256)
@@ -237,8 +271,8 @@ public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_
 /// The supplied feeds must be the current Propbook bindings for the underlying,
 /// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
 /// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
-/// pricing-safe envelope. SVI `a` and `b` are then rolled down from the tuple's
-/// batch publish timestamp to the current remaining time. Under
+/// pricing-safe envelope. SVI `a` and `b` are then rolled down from the tuple's provider source
+/// timestamp to the current remaining time. Under
 /// `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot reanchors the
 /// Block Scholes forward basis, and a missing, non-normalizable, or stale Pyth spot
 /// is ignored; with it off the Block Scholes forward is always used directly.
@@ -384,18 +418,18 @@ fun resolve_live_pricer(
     clock: &Clock,
     ctx: &TxContext,
 ): Pricer {
-    let bs_spot_read = bs_values.spot();
+    let bs_forward_read = bs_values.forward(expiry);
+    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
+    let bs_forward_read = bs_forward_read.destroy_some();
+    assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
+    let bs_spot_read = bs_values.recent_spot_at(bs_forward_read.read_source_timestamp_ms());
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
     assert_oracle_not_written_this_tx(&bs_spot_read.read_writer_digest(), ctx);
-    // Freshness reads each observation's batch envelope time, not its model time: per the
-    // provider contract, every publish carries values valid as-of that publish (an unchanged
-    // model time means the same calibration republished, for SVI already rolled down to the new
-    // publish — never duplicate data). Pricing therefore halts only when envelopes stop arriving
-    // within the window (transport stopped), never merely because the calibration clock is quiet.
-    // The store admits an observation only when `model <= source <= onchain`. The same
-    // envelope time is snapshotted below, so trade events report the clock pricing validated;
-    // calibration times stay on the stored observations and their ingestion events.
+    // Freshness reads the provider's per-update source timestamp: `value_timestamp` for spot and
+    // forward, and `svi_timestamp` for SVI. A newer batch carrying an unchanged update cannot
+    // refresh pricing. The same source timestamp is snapshotted below, so trade events report the
+    // clock pricing validated.
     let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
@@ -407,10 +441,6 @@ fun resolve_live_pricer(
     );
     let bs_spot = narrow_price(bs_spot_read.read_value());
 
-    let bs_forward_read = bs_values.forward(expiry);
-    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
-    let bs_forward_read = bs_forward_read.destroy_some();
-    assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
@@ -426,7 +456,7 @@ fun resolve_live_pricer(
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
     assert_oracle_not_written_this_tx(&svi_read.read_writer_digest(), ctx);
-    // One clock serves every job: the envelope time the freshness gate accepts is also the
+    // One clock serves every job: the SVI source timestamp the freshness gate accepts is also the
     // roll-down anchor and the snapshot trade events emit, so the parameters, their anchor, and
     // the reported clock always come from the same read. The gate's `source_timestamp <= now` bound
     // plus the pre-expiry check keep the anchor strictly before expiry, so the roll-down's
@@ -565,7 +595,9 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
     // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
-    assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    // `a` carries no bound of its own: only total variance has to be positive,
+    // which the minimum-variance check below owns, and every downstream use of
+    // `a` fits its provider width (`roll_down_to_1e18`, `variance_sqrt_and_d2`).
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -579,8 +611,14 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
 fun assert_min_total_variance_positive(svi: &RawSVI) {
     let min_variance_increment = min_svi_variance_increment(svi);
     let a = svi.a();
-    let min_total_var = i64::from_u64(min_variance_increment).add(&a);
-    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+    // `a + min_variance_increment > 0`, compared rather than summed: `a` reaches
+    // `u64::MAX`, where the sum would leave `u64`.
+    let min_total_var_positive = if (a.is_negative()) {
+        min_variance_increment > a.magnitude()
+    } else {
+        a.magnitude() > 0 || min_variance_increment > 0
+    };
+    assert!(min_total_var_positive, EBlockScholesMinVarianceInvalid);
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -593,17 +631,6 @@ fun min_svi_variance_increment(svi: &RawSVI): u64 {
     let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
     let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
     math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
-}
-
-/// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &PricingSVI, forward: u64, lower: Strike, higher: Strike): u64 {
-    assert!(lower.value() < higher.value(), EInvalidRange);
-
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
-    // Fixed-point approximation or a non-monotone SVI surface can invert the
-    // boundary prices; the range probability is floored at zero.
-    lower_up_price.saturating_sub(higher_up_price)
 }
 
 /// Compute the adjusted UP digital probability for `strike`.
@@ -645,18 +672,24 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     let k = math::ln(strike).sub(&math::ln(forward));
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
-    let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = svi_params.sigma;
-    let sigma_squared = math::mul_down(sigma, sigma);
-    let sqrt_input = k_minus_m_squared + sigma_squared;
-    let sq = math::sqrt_down(sqrt_input);
+    // The smile root `sqrt((k - m)^2 + sigma^2)` is taken from a 1e18 input: both
+    // squares are exact `u128` products of 1e9 values, and `sqrt_u128_down` returns
+    // the 1e9-scaled root. Squaring at 1e9 instead floors each square to a whole raw
+    // unit, which erases `sigma^2` once `sigma` is below ~3.2e-5 and leaves a
+    // short-dated smile's vertex with percent-scale error in `w` and `w'`.
+    // `|k - m| <= 44.4 + 100` and `sigma <= 100`, so the input stays under 3.1e22
+    // and the root fits `u64`.
+    let k_minus_m_magnitude = k_minus_m.magnitude() as u128;
+    let sigma = svi_params.sigma as u128;
+    let sq = math::sqrt_u128_down(k_minus_m_magnitude * k_minus_m_magnitude + sigma * sigma) as u64;
     let sq_i64 = i64::from_u64(sq);
 
     let rho = svi_params.rho;
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
-    // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
-    // violates that invariant at the envelope boundary.
+    // Non-negative for |rho| <= 1, and exactly so in fixed point: the floored root
+    // is at least `|k - m|`, and the floored `rho * (k - m)` is at most that in
+    // magnitude. The assert is a backstop.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b;
@@ -739,10 +772,6 @@ fun variance_sqrt_and_d2(
     let d2_magnitude = if (d2_magnitude > saturation) saturation else d2_magnitude;
 
     (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
-}
-
-fun is_positive(value: &I64): bool {
-    !value.is_negative() && !value.is_zero()
 }
 
 /// Scalar-input view of `variance_sqrt_and_d2` for the unit tests. The d2

@@ -10,9 +10,9 @@
 // need raw control (e.g. the adversarial probe sending a deliberately-over-cap order).
 import { readFileSync } from "node:fs";
 
-import { rollDownSvi } from "./pricer.js";
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
+import { pricingEnvFromSnapshot, type Snap } from "./strategyPricing.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
   type CleanoutPosition,
@@ -35,16 +35,7 @@ export interface Mkt {
   id: string;
   expiryMs: number;
 }
-export interface Snap {
-  spot1e9: string;
-  bsSpot1e9: string;
-  publishedAtMs: string;
-  expiries: Record<string, {
-    forward: number;
-    sviTsMs: number;
-    svi: { alpha: number; beta: number; rho: number; m: number; sigma: number };
-  }>;
-}
+export type { Snap } from "./strategyPricing.js";
 export interface Held {
   orderId: string;
   marketId: string;
@@ -81,7 +72,7 @@ export interface StrategyCtx {
   // high-level actions: resolve/submit + bookkeeping + trace; return the OpKind or null (no-op).
   mint(market: Mkt, inst: Instruction): Promise<"mint" | null>;
   redeem(h: Held, closeQuantity: bigint): Promise<"redeem" | null>;
-  supply(amountDusdc: bigint): Promise<"supply" | null>;
+  supply(amountUsdc: bigint): Promise<"supply" | null>;
   withdraw(shares: bigint): Promise<"withdraw" | null>;
 
   // low-level: build + submit a mint with explicit params (no bookkeeping/trace) — for probes.
@@ -116,7 +107,7 @@ export interface Strategy {
   name: string;
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
-  fund: bigint; // DUSDC the keeper should fund this strategy's trader
+  fund: bigint; // USDC the keeper should fund this strategy's trader
   gasBudget?: number; // MIST; raise only for measurements whose PTB must reach a protocol wall
   // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
   // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
@@ -169,32 +160,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
 
   const envFor = (market: Mkt): { pythSpot: number; bsSpot: number; bsForward: number; svi: any } | null => {
     const snap = snapshot();
-    const exp = snap?.expiries?.[String(market.expiryMs)];
-    if (!snap || !exp) return null;
-    const spot = Number(snap.spot1e9) / 1e9;
-    const rawSvi = {
-      a: exp.svi.alpha,
-      b: exp.svi.beta,
-      rho: exp.svi.rho,
-      m: exp.svi.m,
-      sigma: exp.svi.sigma,
-    };
-    // Match load_live_pricer: use Block Scholes' own signed spot for the
-    // basis re-anchor, then roll a/b from the ON-CHAIN batch envelope to this
-    // quote's wall-clock time. The updater re-signs every push under its own
-    // clamped envelope and writes it back as the snapshot's `publishedAtMs`, so
-    // that — not the upstream provider's batch timestamp, which never reaches
-    // the chain — is the anchor the contract will use. Using Pyth as both spots
-    // and leaving SVI at its anchor made near-expiry max-probability guards
-    // reject otherwise valid strategy quotes.
-    const svi = rollDownSvi(rawSvi, Number(snap.publishedAtMs), market.expiryMs, Date.now());
-    if (!svi) return null;
-    return {
-      pythSpot: spot,
-      bsSpot: Number(snap.bsSpot1e9) / 1e9,
-      bsForward: Number(exp.forward),
-      svi,
-    };
+    return snap ? pricingEnvFromSnapshot(snap, market.expiryMs, Date.now()) : null;
   };
 
   const resolve = (inst: Instruction, market: Mkt): Resolved | null => {
@@ -298,12 +264,12 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       return "redeem";
     },
 
-    async supply(amountDusdc) {
+    async supply(amountUsdc) {
       const res = await deps.submit(
-        requestSupplyFromCustodyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: deps.wrapperId, amount: amountDusdc }),
+        requestSupplyFromCustodyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: deps.wrapperId, amount: amountUsdc }),
         "supply",
       );
-      ctx.trace({ type: "supply", amount: Number(amountDusdc) / 1e6, gas: gasOf(res) });
+      ctx.trace({ type: "supply", amount: Number(amountUsdc) / 1e6, gas: gasOf(res) });
       return "supply";
     },
 

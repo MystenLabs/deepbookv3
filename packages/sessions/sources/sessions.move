@@ -286,6 +286,39 @@ public fun mint_exact_amount(
     )
 }
 
+/// Mint a Predict position sized to an all-in cost for an Account with an active
+/// session.
+public fun mint_exact_cost(
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    market.mint_exact_cost(
+        wrapper,
+        auth,
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        root,
+        clock,
+        ctx,
+    )
+}
+
 /// Redeem a live Predict order for an Account with an active session.
 public fun redeem_live(
     market: &mut ExpiryMarket,

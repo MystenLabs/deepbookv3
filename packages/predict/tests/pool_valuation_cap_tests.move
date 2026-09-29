@@ -1,0 +1,61 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// Pool-valuation-cap allowlist coverage: the version gate on
+/// `registry::mint_pool_valuation_cap`, `registry::revoke_pool_valuation_cap`, the
+/// `EPoolValuationCapNotValid` gate on `registry::generate_pool_valuation_proof`, and
+/// that destroying a cap leaves the allowlist untouched. Flush starts through a valid
+/// cap are exercised by every flow test that calls `flow_test_helpers::start_flush`.
+#[test_only]
+module deepbook_predict::pool_valuation_cap_tests;
+
+use deepbook_predict::{protocol_config, registry, test_helpers};
+
+const EUnexpectedSuccess: u64 = 999;
+
+// === Pool-valuation-cap allowlist gates ===
+
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun mint_pool_valuation_cap_while_protocol_frozen_aborts() {
+    let (mut scenario, mut registry, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_frozen(&admin_cap, true);
+    let _cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = registry::EPoolValuationCapNotValid)]
+fun generate_proof_with_revoked_pool_valuation_cap_aborts() {
+    let (mut scenario, mut registry, config, admin_cap) = test_helpers::begin_registry_test();
+    let revoked_cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
+    registry.revoke_pool_valuation_cap(&admin_cap, revoked_cap.id());
+    // The proof has no abilities, so it can only be consumed by a flush start; the
+    // gate aborts before one exists, and the abort discards the unreachable tail.
+    let _proof = registry.generate_pool_valuation_proof(&revoked_cap);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = registry::EPoolValuationCapNotFound)]
+fun revoke_unknown_pool_valuation_cap_aborts() {
+    let (_scenario, mut registry, _config, admin_cap) = test_helpers::begin_registry_test();
+    // An id that was never minted into the allowlist.
+    registry.revoke_pool_valuation_cap(&admin_cap, object::id_from_address(@0xCAFE));
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = registry::EPoolValuationCapNotValid)]
+fun destroy_pool_valuation_cap_does_not_revoke() {
+    let (mut scenario, mut registry, config, admin_cap) = test_helpers::begin_registry_test();
+    let cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
+    let other_cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
+    let destroyed_id = cap.id();
+    cap.destroy();
+    // Destroying the cap object must not touch the registry allowlist: the id is
+    // still allow-listed, so revoking it by the copied id succeeds (revoke aborts
+    // EPoolValuationCapNotFound for ids not in the set).
+    registry.revoke_pool_valuation_cap(&admin_cap, destroyed_id);
+    // Post-state: revoking the destroyed cap's id leaves other allowlisted caps
+    // valid, and revoking the other cap removes its authority.
+    registry.revoke_pool_valuation_cap(&admin_cap, other_cap.id());
+    let _proof = registry.generate_pool_valuation_proof(&other_cap);
+    abort EUnexpectedSuccess
+}

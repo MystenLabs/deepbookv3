@@ -54,7 +54,7 @@ const TWO_OPEN_ORDERS: u64 = 2;
 const ZERO_BALANCE: u64 = 0;
 const ZERO_ORDER_ID: u128 = 0;
 const EUnexpectedSuccess: u64 = 999;
-const FUTURE_VERSION: u64 = 2;
+const FUTURE_VERSION: u64 = 3;
 
 public struct BASE has store {}
 public struct QUOTE has store {}

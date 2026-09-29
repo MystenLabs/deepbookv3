@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync } from "child_process";
 import { writeFileSync } from "fs";
 import { upgradeCapID } from "../config/constants.js";
+import { serializeUnsignedUpgrade } from "./serializeUnsignedUpgrade.js";
 
 const network = "mainnet";
 
@@ -11,24 +11,15 @@ const network = "mainnet";
 // if upgradeCap & gasObject is on mainnet, it has to be on mainnet.
 // Github actions are always on mainnet.
 const mainPackageUpgrade = async () => {
-  const gasObjectId = process.env.GAS_OBJECT;
-
-  // Enabling the gas Object check only on mainnet, to allow testnet multisig tests.
-  if (!gasObjectId)
-    throw new Error("No gas object supplied for a mainnet transaction");
-
   const currentDir = process.cwd();
   const deepbookDir = `${currentDir}/../packages/deepbook`;
   const txFilePath = `${currentDir}/tx/tx-data.txt`;
-  // Use gas-price of 1000 to avoid RGP increases between tx generation and execution
-  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 2000000000 --gas ${gasObjectId} --gas-price 1000 --serialize-unsigned-transaction`;
 
   try {
-    // Execute the command with the specified working directory and capture the output
-    const output = execSync(upgradeCall, {
+    const output = serializeUnsignedUpgrade({
       cwd: deepbookDir,
-      stdio: "pipe",
-    }).toString();
+      extraArgs: ["--upgrade-capability", upgradeCapID[network]],
+    });
 
     writeFileSync(txFilePath, output);
     console.log(

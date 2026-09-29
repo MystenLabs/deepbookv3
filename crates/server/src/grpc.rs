@@ -8,7 +8,8 @@ use crate::error::DeepBookError;
 use sui_rpc::field::{FieldMask, FieldMaskUtil};
 use sui_rpc::proto::sui::rpc::v2::simulate_transaction_request::TransactionChecks;
 use sui_rpc::proto::sui::rpc::v2::{
-    owner::OwnerKind, GetObjectRequest, GetServiceInfoRequest, SimulateTransactionRequest,
+    execution_error::ErrorDetails, owner::OwnerKind, GetObjectRequest, GetServiceInfoRequest,
+    SimulateTransactionRequest, SimulateTransactionResponse,
 };
 use sui_rpc::Client;
 use sui_sdk_types::{Address, Digest, Transaction, TypeTag};
@@ -145,7 +146,12 @@ pub async fn simulate_returns(
             SimulateTransactionRequest::default()
                 .with_transaction(transaction)
                 // Without this mask `command_outputs` comes back empty rather than erroring.
-                .with_read_mask(FieldMask::from_paths(["command_outputs"]))
+                // `status` costs one extra field and is the only thing that distinguishes a
+                // Move abort from a genuinely empty response — see `simulation_failure`.
+                .with_read_mask(FieldMask::from_paths([
+                    "command_outputs",
+                    "transaction.effects.status",
+                ]))
                 // Disabled checks let us call non-entry public view functions with no gas and no
                 // real sender, exactly as dev_inspect did.
                 .with_checks(TransactionChecks::Disabled),
@@ -154,7 +160,10 @@ pub async fn simulate_returns(
         .into_inner();
 
     if response.command_outputs.is_empty() {
-        return Err(DeepBookError::rpc("No results from simulate_transaction"));
+        return Err(DeepBookError::rpc(format!(
+            "No results from simulate_transaction: {}",
+            simulation_failure(&response)
+        )));
     }
 
     Ok(response
@@ -168,4 +177,55 @@ pub async fn simulate_returns(
                 .collect()
         })
         .collect())
+}
+
+/// Explains an empty `command_outputs`.
+///
+/// A command that aborts produces no outputs at all, so on its own an empty result cannot be
+/// told apart from a successful simulation that returned nothing. The execution status is the
+/// only place the abort code, the failing command index and the aborting module survive, and
+/// without them a retired package version and a malformed PTB report identically.
+fn simulation_failure(response: &SimulateTransactionResponse) -> String {
+    let Some(status) = response
+        .transaction
+        .as_ref()
+        .and_then(|executed| executed.effects.as_ref())
+        .and_then(|effects| effects.status.as_ref())
+    else {
+        return "node returned no execution status".to_string();
+    };
+
+    let Some(error) = status.error.as_ref() else {
+        return "execution reported no error".to_string();
+    };
+
+    // The node renders the abort code, the command index and the aborting function into
+    // `description`, so reassembling those below would only repeat it. The structured fields
+    // are the fallback for a node that leaves the description unset.
+    if let Some(description) = error.description.as_ref() {
+        return description.clone();
+    }
+
+    let mut parts = Vec::new();
+    if let Some(command) = error.command {
+        parts.push(format!("command {command}"));
+    }
+    if let Some(ErrorDetails::Abort(abort)) = error.error_details.as_ref() {
+        if let Some(code) = abort.abort_code {
+            parts.push(format!("abort code {code}"));
+        }
+        if let Some(location) = abort.location.as_ref() {
+            if let (Some(package), Some(module)) =
+                (location.package.as_ref(), location.module.as_ref())
+            {
+                parts.push(format!("in {package}::{module}"));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        "execution failed with no further detail".to_string()
+    } else {
+        parts.join(", ")
+    }
 }

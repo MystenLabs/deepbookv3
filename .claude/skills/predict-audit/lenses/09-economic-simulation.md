@@ -20,7 +20,7 @@ new adversarial scenarios and property/fuzz tests.**
 **Required campaigns (write new scenarios; assert invariants after every step):**
 1. **Solvency / conservation fuzz.** Randomized sequences of mint / redeem / liquidate / supply / withdraw over
    the python mirrors. After each op assert: cash-backing (`balance >= payout_liability + inventory_impact_reserve`),
-   no negative balances, DUSDC conserved across the trader/LP/protocol/builder split, rounding favors the
+   no negative balances, USDC conserved across the trader/LP/protocol/builder split, rounding favors the
    protocol (never the user). Report any breaking seed + the minimal reproducing sequence.
 2. **NAV mark symmetry / timing.** Drive supply and withdraw across a flush at a moving mark; confirm
    `supply_NAV == withdraw_NAV == TRUE` at the valuation boundary and that no deposit-before / withdraw-after

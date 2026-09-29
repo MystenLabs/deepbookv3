@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Fails if a legacy Pyth entrypoint and its upgraded twin drift apart.
 
-The legacy and upgraded surfaces have to be edited together, forever: the legacy
-one takes `pyth::price_info::PriceInfoObject`, the upgraded one Pyth's upgraded
-Core type, and both delegate to the same shared logic. Nothing in the compiler
-ties them together, so adding a parameter to one and not the other compiles clean
-and ships a surface that silently disagrees with itself.
+The legacy surface is retired — every legacy entry's body is now
+`abort EDeprecatedUseUpgradedPyth` — but its *signatures* are frozen forever by Sui's
+`compatible` upgrade policy, and each one still has to match the upgraded entry that
+replaced it. The legacy one takes `pyth::price_info::PriceInfoObject`, the upgraded one
+Pyth's upgraded Core type. Nothing in the compiler ties them together, so adding a
+parameter to one and not the other compiles clean and ships a surface that silently
+disagrees with itself: an integrator reading the retired entry's abort message is sent
+to a twin whose arguments no longer line up.
 
 The check is driven from the LEGACY side on purpose. An earlier version walked
 the `*_upgraded.move` glob, which meant renaming or deleting an upgraded file
@@ -63,6 +66,10 @@ def params(src: str, name: str) -> str | None:
                 break
         j += 1
     text = src[i + 1:j].replace('PriceInfoObjectUpgraded', 'PriceInfoObject')
+    # A leading `_` marks a parameter the body does not read — which is every parameter
+    # of a retired entry — and is not part of the frozen signature. Strip it so the
+    # comparison stays on types and order.
+    text = re.sub(r'(^\s*|[(,]\s*)_(\w+\s*:)', r'\1\2', text)
     return re.sub(r'\s+', ' ', text).strip()
 
 

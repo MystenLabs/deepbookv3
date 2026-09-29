@@ -7,18 +7,24 @@ Slack.
 
 ## Behavior
 
-- The workflow only handles open, non-draft pull requests targeting the
-  repository's default branch.
+- The workflow only handles open, non-draft pull requests targeting `main`,
+  the repository's default branch. The trigger is limited to that base so
+  `pull_request_target` cannot load this workflow from a retargeted branch.
 - Authorization is based on the pull request author's live membership in
   `MystenLabs/defi-eng`.
-- Approval is bound to the head commit that was current when the label was
-  applied.
+- Authorization pins both the head commit and the base branch tip. Codex
+  reviews the immutable `base_sha...head_sha` compare, not the live pull
+  request diff.
+- Approval is bound to that same head commit, the authorized base branch, and
+  a base tip that is still the pinned commit or a fast-forward of it.
 - The `auto-approve` label is removed after the workflow attempt, whether or
   not approval is submitted. A later attempt requires the label to be applied
   again.
-- A push after auto-approval invalidates the bot review. The workflow first
-  tries to dismiss the old approval and falls back to `REQUEST_CHANGES` if the
-  repository does not let the App dismiss protected-branch reviews.
+- A push after auto-approval invalidates the bot review. Changing the pull
+  request base also dismisses the bot review and cancels an in-progress
+  auto-approve run. The workflow first tries to dismiss the old approval and
+  falls back to `REQUEST_CHANGES` if the repository does not let the App
+  dismiss protected-branch reviews.
 - Significant Codex findings, a missing or failed Codex review, and invalid
   Codex output prevent the bot from approving the pull request.
 - Codex output is validated against the complete expected schema before it can
@@ -91,9 +97,9 @@ The Codex GitHub Action uses API billing; a personal Codex or ChatGPT
 subscription is not used by this workflow.
 
 Codex is deliberately isolated from GitHub write access. The workflow checks
-out only the trusted base commit, downloads the pull request diff as untrusted
-review input, and runs Codex with the `:read-only` permission profile and the
-`drop-sudo` safety strategy.
+out only the trusted base commit, downloads the immutable compare of the
+pinned base and head commits as untrusted review input, and runs Codex with
+the `:read-only` permission profile and the `drop-sudo` safety strategy.
 
 The official Codex Action initializes the authenticated runtime with a harmless
 prompt. The actual review runs in a separate silenced `codex exec` process that
@@ -170,7 +176,15 @@ Use a small test pull request authored by a `defi-eng` member:
 11. Push another commit and confirm it is not automatically re-approved.
    Confirm the old approval is dismissed or replaced with `REQUEST_CHANGES`.
 12. Apply the label to a PR from a non-member and confirm authorization fails.
+13. After a clean approval, retarget the pull request away from `main` and
+   back. Confirm the bot review is dismissed or replaced and is not reused
+   for the restored `main` diff.
+14. Apply `auto-approve`, then retarget the base before Codex finishes.
+   Confirm the in-progress run is cancelled or the approval step refuses to
+   submit, and that Codex did not review a live pull-request diff against
+   the new base.
 
 The GitHub Actions workflow uses `pull_request_target` so it can access secrets.
-It must continue checking out only the trusted base commit and must never run
-code from the pull request branch.
+It must continue checking out only the trusted base commit, reviewing only the
+pinned `base_sha...head_sha` compare, and must never run code from the pull
+request branch.

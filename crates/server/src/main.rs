@@ -28,15 +28,19 @@ struct Args {
         default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
     )]
     database_url: Url,
+    /// Network to serve. Supplies the defaults for `--rpc-url` and `--deepbook-package-id`.
+    // The variable is `DEEPBOOK_ENV` rather than the `ENV` clap would derive from the field
+    // name, which the shell already defines.
+    #[clap(env = "DEEPBOOK_ENV", long = "env", default_value = "mainnet")]
+    env: DeepbookEnv,
     /// Full node gRPC endpoint (`sui.rpc.v2`). Same host/port as the old JSON-RPC URL.
-    #[clap(env, long, default_value = "https://fullnode.mainnet.sui.io:443")]
-    rpc_url: Url,
-    #[clap(
-        env,
-        long,
-        default_value = "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809"
-    )]
-    deepbook_package_id: String,
+    /// Defaults to the public full node for `--env`.
+    #[clap(env, long)]
+    rpc_url: Option<Url>,
+    /// DeepBook core package that `/orderbook` and `/fees` simulate against.
+    /// Defaults to the latest published package for `--env`.
+    #[clap(env, long)]
+    deepbook_package_id: Option<String>,
     #[clap(
         env,
         long,
@@ -95,6 +99,42 @@ struct Args {
     pyth_pro_chart_history_max_range_secs: u64,
 }
 
+/// Network the server reads from, mirroring the indexer's `--env`.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum DeepbookEnv {
+    Mainnet,
+    Testnet,
+}
+
+impl DeepbookEnv {
+    fn rpc_url(&self) -> Url {
+        let url = match self {
+            DeepbookEnv::Mainnet => "https://fullnode.mainnet.sui.io:443",
+            DeepbookEnv::Testnet => "https://fullnode.testnet.sui.io:443",
+        };
+        Url::parse(url).unwrap()
+    }
+
+    /// Latest published DeepBook core package, matching `packages/deepbook/Published.toml`.
+    ///
+    /// This tracks the newest package address, never the original one. A pool caches an
+    /// `allowed_versions` set and `pool::load_inner` asserts the calling package's
+    /// `CURRENT_VERSION` belongs to it, so calls through a package whose version has been
+    /// retired by `registry::disable_version` abort. An aborted command produces no outputs,
+    /// which surfaces as an empty simulation result rather than as a version error — see
+    /// `grpc::simulate_returns`.
+    fn deepbook_package_id(&self) -> &'static str {
+        match self {
+            DeepbookEnv::Mainnet => {
+                "0x0e735f8c93a95722efd73521aca7a7652c0bb71ed1daf41b26dfd7d1ff71f748"
+            }
+            DeepbookEnv::Testnet => {
+                "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24"
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let _guard = telemetry_subscribers::TelemetryConfig::new()
@@ -106,6 +146,7 @@ async fn main() -> Result<(), anyhow::Error> {
         server_port,
         metrics_address,
         database_url,
+        env,
         rpc_url,
         deepbook_package_id,
         deep_token_package_id,
@@ -126,6 +167,9 @@ async fn main() -> Result<(), anyhow::Error> {
         pyth_pro_chart_history_cache_max_entries,
         pyth_pro_chart_history_max_range_secs,
     } = Args::parse();
+    let rpc_url = rpc_url.unwrap_or_else(|| env.rpc_url());
+    let deepbook_package_id =
+        deepbook_package_id.unwrap_or_else(|| env.deepbook_package_id().to_string());
     // Read the secret from the environment only so it never needs to appear in
     // process arguments or clap's help output.
     let pyth_pro_api_key = std::env::var("PYTH_PRO_API_KEY").ok();

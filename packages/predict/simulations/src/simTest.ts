@@ -34,6 +34,17 @@ function csvRow(tx: number, action: string, values: Record<string, string> = {})
     return SCENARIO_COLUMNS.map((column) => row[column]).join(",");
 }
 
+test("scenario parser retains both finite boundaries", () => {
+    const rows = parseScenarioText([
+        SCENARIO_COLUMNS.join(","),
+        csvRow(1, "mint", { ...oracle, strike: "75000000000000", is_up: "true", higher_strike: "76000000000000", quantity: "20000", order_ref: "range" }),
+    ].join("\n"));
+    assert.equal(rows[0].action, "mint");
+    if (rows[0].action !== "mint") throw new Error("expected mint");
+    assert.equal(rows[0].strike, 75000000000000n);
+    assert.equal(rows[0].higherStrike, 76000000000000n);
+});
+
 test("scenario parser accepts every current explicit action", () => {
     const text = [
         SCENARIO_COLUMNS.join(","),

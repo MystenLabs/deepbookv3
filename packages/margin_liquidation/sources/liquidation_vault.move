@@ -5,7 +5,7 @@ module margin_liquidation::liquidation_vault;
 
 use deepbook::pool::Pool;
 use deepbook_margin::{
-    margin_manager::{MarginManager, liquidate},
+    margin_manager::MarginManager,
     margin_manager_upgraded,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
@@ -31,6 +31,9 @@ use fun df::exists_ as UID.exists_;
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
 const ETraderNotAuthorized: u64 = 2;
+/// A retired legacy-Pyth entry was called. Use the `_upgraded` twin, which takes
+/// an upgraded-Core `PriceInfoObject`.
+const EDeprecatedUseUpgradedPyth: u64 = 3;
 
 public struct LIQUIDATION_VAULT has drop {}
 
@@ -174,104 +177,44 @@ public fun swap_quote_to_base<BaseAsset, QuoteAsset>(
 }
 
 // === Public Functions * LIQUIDATION * ===
-/// Twin: `liquidate_base_upgraded`. Edit both.
+/// RETIRED. Use `liquidate_base_upgraded`.
+///
+/// Legacy-Pyth entry. The vault entries are permissionless and fund their own
+/// repay, so this was the capital-free liquidation leg of the dual-feed window.
 public fun liquidate_base<BaseAsset, QuoteAsset>(
-    self: &mut LiquidationVault,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_amount: Option<u64>,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut LiquidationVault,
+    _margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _base_margin_pool: &mut MarginPool<BaseAsset>,
+    _quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _repay_amount: Option<u64>,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    let risk_ratio = margin_manager.risk_ratio(
-        registry,
-        base_oracle,
-        quote_oracle,
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
-    if (!self.should_liquidate<BaseAsset>(registry, pool.id(), risk_ratio)) return;
-    let amount = repay_amount.destroy_with_default(self.balance<BaseAsset>());
-    let balance = self.withdraw_int<BaseAsset>(amount);
-    let (base_coin, quote_coin, base_repay_coin) = margin_manager.liquidate<
-        BaseAsset,
-        QuoteAsset,
-        BaseAsset,
-    >(
-        registry,
-        base_oracle,
-        quote_oracle,
-        base_margin_pool,
-        pool,
-        balance.into_coin(ctx),
-        clock,
-        ctx,
-    );
-    self.settle_base_liquidation(
-        margin_manager.id(),
-        base_margin_pool.id(),
-        amount,
-        base_coin,
-        quote_coin,
-        base_repay_coin,
-    );
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Twin: `liquidate_quote_upgraded`. Edit both.
+/// RETIRED. Use `liquidate_quote_upgraded`.
+///
+/// Legacy-Pyth entry. The vault entries are permissionless and fund their own
+/// repay, so this was the capital-free liquidation leg of the dual-feed window.
 public fun liquidate_quote<BaseAsset, QuoteAsset>(
-    self: &mut LiquidationVault,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_amount: Option<u64>,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut LiquidationVault,
+    _margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _base_margin_pool: &mut MarginPool<BaseAsset>,
+    _quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _repay_amount: Option<u64>,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    let risk_ratio = margin_manager.risk_ratio(
-        registry,
-        base_oracle,
-        quote_oracle,
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
-    if (!self.should_liquidate<QuoteAsset>(registry, pool.id(), risk_ratio)) return;
-    let amount = repay_amount.destroy_with_default(self.balance<QuoteAsset>());
-    let balance = self.withdraw_int<QuoteAsset>(amount);
-    let (base_coin, quote_coin, quote_repay_coin) = margin_manager.liquidate<
-        BaseAsset,
-        QuoteAsset,
-        QuoteAsset,
-    >(
-        registry,
-        base_oracle,
-        quote_oracle,
-        quote_margin_pool,
-        pool,
-        balance.into_coin(ctx),
-        clock,
-        ctx,
-    );
-    self.settle_quote_liquidation(
-        margin_manager.id(),
-        quote_margin_pool.id(),
-        amount,
-        base_coin,
-        quote_coin,
-        quote_repay_coin,
-    );
+    abort EDeprecatedUseUpgradedPyth
 }
 
 public fun balance<T>(self: &LiquidationVault): u64 {
@@ -286,16 +229,11 @@ public fun balance<T>(self: &LiquidationVault): u64 {
     }
 }
 
-/// `liquidate_base` against Pyth's upgraded Core.
+/// Liquidates a base-debt margin manager from the vault's own balance.
 ///
-/// Pyth is replacing Core with a separately published package, so its `PriceInfoObject`
-/// is a distinct Move type and `liquidate_base`'s frozen signature can never accept it.
-/// Once Pyth stops publishing legacy Core the legacy entry aborts on staleness by
-/// itself, and this becomes the only way the vault can liquidate. The gate
-/// (`should_liquidate`) and the settlement (`settle_base_liquidation`) are shared with
-/// the legacy entry; the body between them is duplicated, because the two
-/// `PriceInfoObject` types cannot be unified.
-/// Twin: `liquidate_base`. Edit both.
+/// Pyth replaced Core with a separately published package, so its `PriceInfoObject` is a
+/// distinct Move type and `liquidate_base`'s frozen signature can never accept it. That
+/// entry is now retired, making this the only way the vault can liquidate a base debt.
 public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -347,8 +285,8 @@ public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
     );
 }
 
-/// `liquidate_quote` against Pyth's upgraded Core. See `liquidate_base_upgraded`.
-/// Twin: `liquidate_quote`. Edit both.
+/// Liquidates a quote-debt margin manager from the vault's own balance.
+/// See `liquidate_base_upgraded`.
 public fun liquidate_quote_upgraded<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,

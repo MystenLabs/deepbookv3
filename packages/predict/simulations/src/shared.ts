@@ -83,6 +83,7 @@ export type ScenarioRow =
               action: "mint";
               strike: bigint;
               isUp: boolean;
+              higherStrike?: bigint;
               quantity: bigint;
               orderRef: string;
           })
@@ -169,6 +170,7 @@ export interface SimState extends OracleFeedIds {
     expiryMs: string;
     accountWrapperId: string;
     lifecycleCapId: string;
+    poolValuationCapId: string;
     initialExpiryCash: string;
     tickSize: string;
 }
@@ -191,6 +193,7 @@ export const SCENARIO_COLUMNS = [
     "risk_free_rate",
     "strike",
     "is_up",
+    "higher_strike",
     "quantity",
     "order_ref",
     "close_quantity",
@@ -319,6 +322,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             ...parseOracleRefresh(row, lineNumber),
             strike: parseUnsignedInteger(row, "strike", lineNumber),
             isUp: parseBoolean(row, "is_up", lineNumber),
+            higherStrike: row.higher_strike ? parseUnsignedInteger(row, "higher_strike", lineNumber) : undefined,
             quantity: parseQuantity(row, "quantity", lineNumber),
             orderRef: parseRef(row, "order_ref", lineNumber),
         };
@@ -383,7 +387,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
 }
 
-export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v4";
+export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v5";
 export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5";
 export const STATE_PATH = path.join(INSTANCE_DIR, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(INSTANCE_DIR, "artifacts", "local_trace.json");

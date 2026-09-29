@@ -1,22 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Expiry-local DUSDC custody and isolated reserve accounting.
+/// Expiry-local USDC custody and isolated reserve accounting.
 ///
 /// This leaf owns cash balance arithmetic and the inventory-impact escrow used
 /// only for live-close rebates. It does not decide payment eligibility, pool
 /// allocation, or market phase sequencing; `ExpiryMarket` owns those policies.
 module deepbook_predict::expiry_cash;
 
-use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
+use usdc::usdc::USDC;
 
 const EInsufficientCash: u64 = 0;
 const EInventoryImpactRebateExceedsReserve: u64 = 1;
 
 /// Cash custody for one expiry market.
 public struct ExpiryCash has store {
-    cash_balance: Balance<DUSDC>,
+    cash_balance: Balance<USDC>,
     /// Collected inventory-impact charges still reserved for live-close rebates.
     inventory_impact_reserve: u64,
 }
@@ -54,7 +54,7 @@ public(package) fun assert_backing(cash: &ExpiryCash, payout_liability: u64) {
 }
 
 /// Join incoming expiry cash without interpreting why the caller is sending it.
-public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<DUSDC>) {
+public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<USDC>) {
     cash.cash_balance.join(funds);
 }
 
@@ -63,7 +63,7 @@ public(package) fun release_surplus(
     cash: &mut ExpiryCash,
     amount: u64,
     payout_liability: u64,
-): Balance<DUSDC> {
+): Balance<USDC> {
     if (amount == 0) return balance::zero();
     assert!(cash.balance() >= cash.required_cash(payout_liability) + amount, EInsufficientCash);
     cash.cash_balance.split(amount)
@@ -73,7 +73,7 @@ public(package) fun release_surplus(
 ///
 /// The caller owns the surrounding liability transition and the post-payment
 /// backing check.
-public(package) fun pay_authorized(cash: &mut ExpiryCash, amount: u64): Balance<DUSDC> {
+public(package) fun pay_authorized(cash: &mut ExpiryCash, amount: u64): Balance<USDC> {
     assert!(cash.balance() >= amount, EInsufficientCash);
     cash.cash_balance.split(amount)
 }
@@ -85,10 +85,7 @@ public(package) fun credit_inventory_impact_reserve(cash: &mut ExpiryCash, amoun
 }
 
 /// Pay an inventory-impact rebate exclusively from its isolated escrow.
-public(package) fun pay_inventory_impact_rebate(
-    cash: &mut ExpiryCash,
-    amount: u64,
-): Balance<DUSDC> {
+public(package) fun pay_inventory_impact_rebate(cash: &mut ExpiryCash, amount: u64): Balance<USDC> {
     assert!(amount <= cash.inventory_impact_reserve, EInventoryImpactRebateExceedsReserve);
     cash.inventory_impact_reserve = cash.inventory_impact_reserve - amount;
     cash.pay_authorized(amount)

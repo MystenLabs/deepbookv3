@@ -11,6 +11,16 @@ Due to our production setup being on a different database than the one the cron 
    - Note: If pg_cron is installed on the same database as your application, you can use `schedule()` instead
 3. Run the SQL commands below to schedule the OHCLV update jobs
 
+OHLCV writer and reader sessions must use UTC because the `bucket_time` columns do not store a timezone.
+
+The procedure arguments select the buckets to revisit. Each procedure expands that range to complete UTC bucket boundaries before reading `order_fills`, so repeated or overlapping ranges can safely replace an aggregate; the newest bucket is partial only because future fills do not exist yet.
+
+If executions overlap, an older aggregate cannot replace a row whose latest fill timestamp is newer or whose fill count at the same latest timestamp is greater.
+
+Opening and closing prices order fills by checkpoint timestamp and then by the fill's stable unique event digest. The tie-breaker makes every complete snapshot deterministic and lets a refresh repair legacy rows whose opening price does not match the canonical earliest fill.
+
+The migration refreshes each procedure's default range. An execution that started before the migration can finish afterward with the previous definition, so allow one subsequent scheduled execution to finish before treating its recent scheduled range as converged; calling each procedure once after the migration commits also establishes that boundary immediately.
+
 -- Enable pg_cron 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 

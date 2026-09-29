@@ -35,6 +35,7 @@ use deepbook_predict::{
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, SnapshotStage},
+    pool_valuation_cap::PoolValuationCap,
     predict_account::{Self, PredictApp},
     pricing,
     pricing_reference_data as ref_data,
@@ -43,7 +44,6 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -54,10 +54,11 @@ use std::unit_test::{assert_eq, destroy};
 use sui::{
     accumulator::AccumulatorRoot,
     clock::{Self, Clock},
-    coin,
+    coin::{Self, Coin},
     test_scenario::{Self as test, Scenario, return_shared},
     tx_context::{Self, TxContext}
 };
+use usdc::usdc::USDC;
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 /// Stable fee floor for broad flow fixtures whose accounting assertions are not
@@ -120,6 +121,7 @@ public struct Fixture {
     admin_cap: AdminCap,
     propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
+    pool_valuation_cap: PoolValuationCap,
     clock: Clock,
     /// Captured so helpers retrieve the shared config by id rather than relying on
     /// there being exactly one `ProtocolConfig` in scope (unit-tests Rule 13).
@@ -191,6 +193,10 @@ public fun setup_market(tick: u64): Fixture {
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
     config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
+    // Allowlist the default trader as a settled-redeem keeper so flow tests can
+    // compose `redeem_settled_permissionless` inside the trader's own transaction.
+    // The allowlist's own gating is covered with unlisted senders elsewhere.
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -213,8 +219,8 @@ public fun setup_market(tick: u64): Fixture {
         scenario.ctx(),
     );
     return_shared(oracle_registry);
-    // tx2: bind all pricing feeds to the canonical underlying, mint the lifecycle cap,
-    // and capture the vault id.
+    // tx2: bind all pricing feeds to the canonical underlying, mint the lifecycle and
+    // pool-valuation caps, and capture the vault id.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let (bs_values_id, bs_svi_id) = test_helpers::bind_feeds_to_underlying(
@@ -227,6 +233,11 @@ public fun setup_market(tick: u64): Fixture {
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
+        scenario.ctx(),
+    );
+    let pool_valuation_cap = registry.mint_pool_valuation_cap(
+        &admin_cap,
+        &config,
         scenario.ctx(),
     );
     return_shared(config);
@@ -243,6 +254,7 @@ public fun setup_market(tick: u64): Fixture {
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
+        pool_valuation_cap,
         clock,
         config_id,
         vault_id,
@@ -383,6 +395,35 @@ public fun set_referral_fee_rate_bundle(self: &Fixture, market: &mut MarketBundl
     market.config.set_referral_fee_rate(&self.admin_cap, rate);
 }
 
+/// Set the live fee-incentive subsidy rate through the real admin path.
+public fun set_fee_incentive_subsidy_rate_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    rate: u64,
+) {
+    market.config.set_fee_incentive_subsidy_rate(&self.admin_cap, rate, &self.clock);
+}
+
+/// Set the live fee-incentive target rate through the real admin path, in its own
+/// transaction so no market bundle needs to be held.
+public fun set_fee_incentive_live_target_rate(self: &mut Fixture, rate: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_fee_incentive_live_target_rate(&self.admin_cap, rate, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the fee-incentive lifetime cap rate that later markets snapshot, through the
+/// real admin path.
+public fun set_template_fee_incentive_lifetime_cap_rate(self: &mut Fixture, rate: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_fee_incentive_lifetime_cap_rate(&self.admin_cap, rate, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(
@@ -421,6 +462,20 @@ public fun request_supply_direct(
         &self.clock,
         self.scenario.ctx(),
     )
+}
+
+/// Contribute freshly-minted USDC to pool idle liquidity without minting PLP, through
+/// the production entrypoint. Takes the vault and config directly, so it works on a
+/// pool with no live markets — where the mark is just idle over supply and the effect
+/// of the contribution on the mark is unambiguous.
+public fun add_usdc_to_plp_direct(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+) {
+    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
+    vault.add_usdc_to_plp(config, payment, self.scenario.ctx());
 }
 
 /// Queue an LP supply request against a bundle's vault through the production
@@ -469,6 +524,24 @@ public fun cancel_supply_request_bundle(
         );
 }
 
+/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
+public fun add_settled_redeem_keeper_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    keeper: address,
+) {
+    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
+}
+
+/// Revoke `keeper`'s access to `redeem_settled_permissionless`, through the real admin path.
+public fun remove_settled_redeem_keeper_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    keeper: address,
+) {
+    market.config.remove_settled_redeem_keeper(&self.admin_cap, keeper);
+}
+
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);
@@ -477,6 +550,11 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 /// Pause / unpause global trading through a market bundle.
 public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
     self.set_trading_paused(&mut market.config, paused);
+}
+
+/// Engage or lift the protocol-wide emergency freeze through the real admin path.
+public fun set_frozen_bundle(self: &Fixture, market: &mut MarketBundle, frozen: bool) {
+    market.config.set_frozen(&self.admin_cap, frozen);
 }
 
 /// Toggle whether live pricing re-anchors the forward onto a fresh Pyth spot.
@@ -495,6 +573,11 @@ public fun set_pyth_spot_freshness_bundle(
     freshness_ms: u64,
 ) {
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms, &self.clock);
+}
+
+/// Set the pre-expiry no-trade window through the real admin path.
+public fun set_no_trade_window_bundle(self: &Fixture, market: &mut MarketBundle, window_ms: u64) {
+    market.config.set_no_trade_window_ms(&self.admin_cap, window_ms, &self.clock);
 }
 
 /// Enable the EWMA congestion penalty with explicit parameters through the
@@ -560,12 +643,24 @@ public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBund
     self.set_expiry_mint_paused(&mut market.market, &market.config, paused);
 }
 
-public fun set_template_zero_min_fee(self: &mut Fixture) {
+public fun set_template_base_fee(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_min_fee(&self.admin_cap, 0, &self.clock);
+    config.set_template_base_fee(&self.admin_cap, value, &self.clock);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
+}
+
+public fun set_template_min_fee(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_min_fee(&self.admin_cap, value, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+public fun set_template_zero_min_fee(self: &mut Fixture) {
+    self.set_template_min_fee(0);
 }
 
 public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
@@ -630,14 +725,44 @@ public fun deauthorize_predict_app(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
 }
 
-/// Sponsor fee incentives for a market bundle with freshly-minted DUSDC.
+/// Sponsor fee incentives with freshly-minted USDC against loose objects, so a test
+/// can fund the reserve of a pool with no markets.
+public fun sponsor_fee_incentives(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+) {
+    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
+    vault.sponsor_fee_incentives(config, payment, self.scenario.ctx());
+}
+
+/// Sponsor fee incentives for a market bundle with freshly-minted USDC.
 public fun sponsor_fee_incentives_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
     amount: u64,
 ) {
-    let payment = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
-    market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
+    self.sponsor_fee_incentives(&mut market.vault, &market.config, amount);
+}
+
+/// Withdraw fee incentives from the pool reserve through the real admin path.
+public fun withdraw_fee_incentives(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+): Coin<USDC> {
+    vault.withdraw_fee_incentives(&self.admin_cap, config, amount, self.scenario.ctx())
+}
+
+/// Withdraw fee incentives from the pool reserve through a market bundle.
+public fun withdraw_fee_incentives_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    amount: u64,
+): Coin<USDC> {
+    self.withdraw_fee_incentives(&mut market.vault, &market.config, amount)
 }
 
 /// Take the market transaction objects as a named bundle to avoid wide positional
@@ -725,7 +850,7 @@ public fun create_and_rebind_pyth(self: &mut Fixture, source_id: u32): ID {
     pyth_id
 }
 
-/// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
+/// Create a fresh account (owned by alice) and fund its USDC stored balance. The
 /// scenario sender is left as alice so the caller's next mint/redeem generates a
 /// valid owner auth.
 public fun create_funded_manager(self: &mut Fixture, deposit: u64): Trader {
@@ -734,7 +859,7 @@ public fun create_funded_manager(self: &mut Fixture, deposit: u64): Trader {
 
 /// `create_funded_manager` for an arbitrary owner, for multi-trader flows. Creates the
 /// owner's canonical account through the account registry, shares the wrapper, and
-/// deposits `deposit` DUSDC into the account's stored balance.
+/// deposits `deposit` USDC into the account's stored balance.
 public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit: u64): Trader {
     self.scenario.next_tx(owner);
     let mut account_registry = self.scenario.take_shared<AccountRegistry>();
@@ -745,7 +870,7 @@ public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit:
     let acct = wrapper.load_account_mut(auth);
     // Pure stored-balance deposit (no accumulator settle), so test funding needs no
     // `AccumulatorRoot` — the barrier-delivered settle path is exercised by the localnet sim.
-    acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
+    acct.deposit<USDC>(coin::mint_for_testing<USDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
     // caller's bundle takes. Sender stays `owner`, so a subsequent
@@ -771,7 +896,7 @@ public fun create_funded_manager_with_referrer_as(
     let auth = account::generate_auth(self.scenario.ctx());
     wrapper
         .load_account_mut(auth)
-        .deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
+        .deposit<USDC>(coin::mint_for_testing<USDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     self.scenario.next_tx(owner);
     Trader { wrapper_id, owner }
@@ -812,7 +937,7 @@ public fun account_balance<T>(
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
-    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+    market.receive_pool_cash(coin::mint_for_testing<USDC>(
         amount,
         self.scenario.ctx(),
     ).into_balance());
@@ -1015,7 +1140,7 @@ public fun write_bs_forward_in_current_tx_bundle(
     let expiry = market.market.expiry();
     let latest = market.bs.values().forward(expiry);
     let ts = if (latest.is_some()) {
-        source_timestamp_ms.max(latest.borrow().read_model_timestamp_ms() + 1)
+        source_timestamp_ms.max(latest.borrow().read_source_timestamp_ms() + 1)
     } else {
         source_timestamp_ms
     };
@@ -1054,7 +1179,7 @@ public fun write_bs_svi_in_current_tx_bundle(
     let expiry = market.market.expiry();
     let latest = market.bs.svi().svi(expiry);
     let ts = if (latest.is_some()) {
-        source_timestamp_ms.max(latest.borrow().read_model_timestamp_ms() + 1)
+        source_timestamp_ms.max(latest.borrow().read_source_timestamp_ms() + 1)
     } else {
         source_timestamp_ms
     };
@@ -1578,6 +1703,45 @@ public fun quote_mint_for_account_amount_bundle(
         )
 }
 
+/// Account-aware read-only all-in-budget mint quote: the largest lot-rounded
+/// quantity whose all-in cost fits `max_cost`, capped to the account's balance
+/// exactly as `mint_exact_cost` caps it.
+public fun quote_mint_exact_cost_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.values(),
+            market.bs.svi(),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
@@ -1688,6 +1852,152 @@ public fun mint_exact_amount(
         &self.clock,
         self.scenario.ctx(),
     )
+}
+
+/// Mint the largest lot-rounded order whose all-in cost fits `max_cost` through
+/// bundles.
+public fun mint_exact_cost_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): u256 {
+    self.mint_exact_cost(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+    )
+}
+
+/// Mint the largest lot-rounded order that fits inside a fixed all-in budget.
+public fun mint_exact_cost(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    let pricer = market.load_live_pricer(
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &self.clock,
+        self.scenario.ctx(),
+    );
+    market.mint_exact_cost(
+        wrapper,
+        auth,
+        config,
+        &pricer,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// Load a live pricer deliberately bound to `expiry_market_id` instead of the
+/// bundle's own market, for pricer-binding tests. Everything else about it is the
+/// bundle's real oracle state.
+public fun load_pricer_bound_to_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    expiry_market_id: ID,
+): pricing::Pricer {
+    pricing::load_live_pricer(
+        market.config.pricing_config(),
+        &market.oracle_registry,
+        &market.pyth,
+        market.bs.values(),
+        market.bs.svi(),
+        expiry_market_id,
+        test_constants::propbook_underlying_id(),
+        market.market.expiry(),
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// `mint_exact_cost_bundle` with a caller-supplied pricer, for pricer-binding
+/// tests.
+public fun mint_exact_cost_with_pricer_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    pricer: &pricing::Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .market
+        .mint_exact_cost(
+            &mut account.wrapper,
+            auth,
+            &market.config,
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// `quote_mint_exact_cost_for_account_bundle` with a caller-supplied pricer, for
+/// pricer-binding tests.
+public fun quote_mint_exact_cost_for_account_with_pricer_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    pricer: &pricing::Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
 }
 
 /// Close (or partially close) a live order with owner auth. Returns a
@@ -1805,9 +2115,10 @@ public fun redeem_live_bundle_with_limits(
     )
 }
 
-/// Permissionless settled redeem (no owner auth): clears a settled order using app
-/// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
-/// Block Scholes feed.
+/// Keeper-path settled redeem (no owner auth): clears a settled order using app
+/// auth generated through the whitelisted `PredictApp`. The current scenario sender
+/// must be an allowlisted settled-redeem keeper. Does not price, so takes no Block
+/// Scholes feed.
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -2095,8 +2406,8 @@ public fun load_pricer_bundle(self: &mut Fixture, market: &MarketBundle): pricin
 }
 
 /// Genesis-bootstrap the pool via `plp::lock_capital`: permanently lock `amount`
-/// DUSDC of minimum liquidity. Mints `amount` PLP into the book's locked balance
-/// (delivered to no one) and joins the DUSDC into idle, so `total_supply == idle ==
+/// USDC of minimum liquidity. Mints `amount` PLP into the book's locked balance
+/// (delivered to no one) and joins the USDC into idle, so `total_supply == idle ==
 /// amount` at a 1.0 mark — identical pool state to the old async bootstrap supply of
 /// `amount`. Must run before any supply/withdraw/flush (those abort `ENotBootstrapped`
 /// until the pool is locked).
@@ -2104,15 +2415,16 @@ public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let coin = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
+    let coin = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
     vault.lock_capital(&config, &self.admin_cap, coin);
     return_shared(vault);
     return_shared(config);
 }
 
-/// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`), the
-/// sole flush-start authority. Acquires the shared `Registry` to mint the lifecycle
-/// proof internally, so callers need not thread it. The flush state lives on the
+/// Start a privileged pool-NAV flush as the pool-valuation operator
+/// (`PoolValuationCap`), the sole flush-start authority. Acquires the shared
+/// `Registry` to mint the pool-valuation proof internally, so callers need not
+/// thread it. The flush state lives on the
 /// vault, but the snapshot stage is still one transaction: `start_flush` hands back
 /// the `SnapshotStage` potato that every `snapshot_expiry_pricer` borrows and
 /// `seal_snapshot` consumes, so callers drive start → snapshot × N → seal →
@@ -2136,7 +2448,7 @@ public fun start_flush_with_budgets(
     withdraw_budget: Option<u64>,
 ): SnapshotStage {
     let registry = self.scenario.take_shared<Registry>();
-    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     return_shared(registry);
     plp::start_pool_valuation(config, vault, proof, supply_budget, withdraw_budget, &self.clock)
 }
@@ -2154,7 +2466,7 @@ public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle) {
 /// stage open — `start_flush_bundle` seals it.
 public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundle): SnapshotStage {
     let registry = self.scenario.take_shared<Registry>();
-    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     return_shared(registry);
     let stage = plp::start_pool_valuation(
         &mut market.config,
@@ -2174,7 +2486,7 @@ public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundl
 /// tail is unreachable at runtime and exists only so the happy path type-checks.
 public fun start_twice_in_one_stage(self: &mut Fixture, market: &mut MarketBundle) {
     let registry = self.scenario.take_shared<Registry>();
-    let proof_a = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof_a = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     let stage_a = plp::start_pool_valuation(
         &mut market.config,
         &mut market.vault,
@@ -2183,7 +2495,7 @@ public fun start_twice_in_one_stage(self: &mut Fixture, market: &mut MarketBundl
         option::none(),
         &self.clock,
     );
-    let proof_b = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof_b = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     let stage_b = plp::start_pool_valuation(
         &mut market.config,
         &mut market.vault,
@@ -2228,7 +2540,7 @@ public fun finish_flush(
 
 // === Invariant assertions (rule 17 one-call checks) ===
 
-/// S1 — expiry cash backing: the market's DUSDC custody covers its payout
+/// S1 — expiry cash backing: the market's USDC custody covers its payout
 /// liability plus its isolated inventory-impact escrow, mirroring the contract's
 /// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
@@ -2245,7 +2557,7 @@ public fun assert_market_backed_bundle(market: &MarketBundle) {
 /// one call by `check_market_cash`. The isolated inventory-impact escrow is not a
 /// field here — it ships at a zero rate, and `assert_market_backed` covers it.
 public struct ExpectedMarketCash has copy, drop {
-    /// DUSDC held by the expiry (`market.cash_balance()`).
+    /// USDC held by the expiry (`market.cash_balance()`).
     cash_balance: u64,
     /// Conservative payout backing owed to open + settled orders.
     payout_liability: u64,
@@ -2273,7 +2585,7 @@ public fun check_market_cash_bundle(market: &MarketBundle, expected: ExpectedMar
 /// A full expected snapshot of one account's scalar state, asserted in one call
 /// by `check_manager`.
 public struct ExpectedManagerState has copy, drop {
-    /// Free DUSDC balance (`account.balance<DUSDC>`).
+    /// Free USDC balance (`account.balance<USDC>`).
     balance: u64,
 }
 
@@ -2281,7 +2593,7 @@ public fun expected_manager_state(balance: u64): ExpectedManagerState {
     ExpectedManagerState { balance }
 }
 
-/// Assert an account's state sheet against `expected`. The DUSDC balance read
+/// Assert an account's state sheet against `expected`. The USDC balance read
 /// includes unsettled accumulator funds (zero with the empty test root, so it
 /// equals stored free balance).
 public fun check_manager(
@@ -2291,7 +2603,7 @@ public fun check_manager(
     expected: ExpectedManagerState,
 ) {
     let account = wrapper.load_account();
-    assert_eq!(account.balance<DUSDC>(root, &self.clock), expected.balance);
+    assert_eq!(account.balance<USDC>(root, &self.clock), expected.balance);
 }
 
 /// Assert a bundled account's state sheet.
@@ -2358,14 +2670,16 @@ public fun advance_live_oracle(
     self.prepare_live_oracle_at(market, pyth, bs, live_price, timestamp_ms);
 }
 
-/// Advance the fixture clock by one millisecond and reseed a market bundle's live
-/// oracle.
-public fun advance_live_oracle_bundle(
+/// Move the fixture clock to `timestamp_ms` and reseed a market bundle's live
+/// oracle there, so the surface is fresh at the new time. A test that jumps the
+/// clock without reseeding hits the Block Scholes freshness bound instead of
+/// whatever it meant to exercise.
+public fun advance_live_oracle_bundle_to(
     self: &mut Fixture,
     market: &mut MarketBundle,
     live_price: u64,
+    timestamp_ms: u64,
 ) {
-    let timestamp_ms = self.clock.timestamp_ms() + 1;
     self.clock.set_for_testing(timestamp_ms);
     self.prepare_live_oracle_at(
         &market.market,
@@ -2374,6 +2688,17 @@ public fun advance_live_oracle_bundle(
         live_price,
         timestamp_ms,
     );
+}
+
+/// Advance the fixture clock by one millisecond and reseed a market bundle's live
+/// oracle.
+public fun advance_live_oracle_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+) {
+    let timestamp_ms = self.clock.timestamp_ms() + 1;
+    self.advance_live_oracle_bundle_to(market, live_price, timestamp_ms);
 }
 
 public fun insert_exact_settlement_spot(
@@ -2463,6 +2788,7 @@ public fun finish(self: Fixture) {
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
+        pool_valuation_cap,
         clock,
         config_id: _,
         vault_id: _,
@@ -2471,6 +2797,7 @@ public fun finish(self: Fixture) {
         bs_svi_id: _,
     } = self;
     lifecycle_cap.destroy();
+    pool_valuation_cap.destroy();
     destroy(propbook_admin_cap);
     destroy(admin_cap);
     destroy(account_admin_cap);

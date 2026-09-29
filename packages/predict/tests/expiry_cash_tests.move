@@ -5,9 +5,9 @@
 module deepbook_predict::expiry_cash_tests;
 
 use deepbook_predict::expiry_cash;
-use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 use sui::coin;
+use usdc::usdc::USDC;
 
 const CASH_AMOUNT: u64 = 100;
 const REQUIRED_PAYOUT_LIABILITY: u64 = 101;
@@ -21,7 +21,7 @@ const CASH_BELOW_ESCROW: u64 = 5;
 fun assert_backing_underfunded_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
-    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.receive(coin::mint_for_testing<USDC>(CASH_AMOUNT, ctx).into_balance());
 
     cash.assert_backing(REQUIRED_PAYOUT_LIABILITY);
     abort 999
@@ -40,7 +40,7 @@ fun pay_authorized_underfunded_aborts() {
 fun receive_and_pay_authorized_updates_balance() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
-    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.receive(coin::mint_for_testing<USDC>(CASH_AMOUNT, ctx).into_balance());
 
     let payout = cash.pay_authorized(FEE_AMOUNT);
 
@@ -56,7 +56,7 @@ fun free_cash_nets_out_the_impact_escrow_and_floors_at_zero() {
     let mut cash = expiry_cash::new();
 
     // Cash 40 with 30 earmarked leaves 10 free.
-    cash.receive(coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance());
+    cash.receive(coin::mint_for_testing<USDC>(FEE_AMOUNT, ctx).into_balance());
     cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
     assert_eq!(cash.free_cash(), FEE_AMOUNT - INVENTORY_IMPACT_CHARGE);
 
@@ -76,7 +76,7 @@ fun inventory_impact_reserve_isolated_from_free_cash() {
     let mut cash = expiry_cash::new();
 
     // The charge has already arrived in custody when the market earmarks it.
-    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.receive(coin::mint_for_testing<USDC>(CASH_AMOUNT, ctx).into_balance());
     cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
 
     assert_eq!(cash.inventory_impact_reserve(), INVENTORY_IMPACT_CHARGE);
@@ -99,7 +99,7 @@ fun inventory_impact_reserve_isolated_from_free_cash() {
 fun inventory_impact_rebate_cannot_spend_ordinary_cash() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
-    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.receive(coin::mint_for_testing<USDC>(CASH_AMOUNT, ctx).into_balance());
     cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
 
     let unexpected = cash.pay_inventory_impact_rebate(INVENTORY_IMPACT_CHARGE + 1);
@@ -111,7 +111,7 @@ fun inventory_impact_rebate_cannot_spend_ordinary_cash() {
 fun settlement_release_turns_residual_escrow_into_surplus() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
-    cash.receive(coin::mint_for_testing<DUSDC>(INVENTORY_IMPACT_CHARGE, ctx).into_balance());
+    cash.receive(coin::mint_for_testing<USDC>(INVENTORY_IMPACT_CHARGE, ctx).into_balance());
     cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
 
     cash.release_inventory_impact_reserve();

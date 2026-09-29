@@ -15,14 +15,20 @@ use deepbook_predict::{
     order_events,
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use std::{bcs, unit_test::assert_eq};
 use sui::event;
+use usdc::usdc::USDC;
 
 const MIN_TRADING_FEE: u64 = 5_000_000;
 const DEFAULT_REFERRAL_FEE: u64 = 500_000;
 const SUBSIDY_AT_RATE_CAP: u64 = 1_000_000;
 const SUBSIDIZED_REFERRAL_FEE: u64 = 400_000;
+/// An admin-set 50% subsidy rate: the sponsor pays 0.5 * 5e6 = 2.5e6, so the
+/// referral basis is the 2.5e6 the trader still pays and the referral is
+/// 0.1 * 2.5e6 = 250_000.
+const HALF_SUBSIDY_RATE: u64 = 500_000_000;
+const SUBSIDY_AT_HALF_RATE: u64 = 2_500_000;
+const HALF_SUBSIDIZED_REFERRAL_FEE: u64 = 250_000;
 const BUILDER_FEE_ATM: u64 = 500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
 const ROUNDING_TO_ZERO_RATE: u64 = 1;
@@ -88,7 +94,7 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.all_in_cost(), quote.premium() + MIN_TRADING_FEE);
 
-    let trader_balance_before = fx.account_balance_bundle<DUSDC>(&account);
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
     let market_cash_before = helpers::market(&market).cash_balance();
     let order_id = fx.mint_exact_quantity_bundle(
         &mut market,
@@ -102,7 +108,7 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         trader_balance_before - quote.all_in_cost(),
     );
     assert_eq!(
@@ -127,6 +133,99 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
         builder_fee: 0,
         penalty_fee: 0,
         referral_fee: DEFAULT_REFERRAL_FEE,
+        inventory_impact_charge: 0,
+        builder_code_id: option::none(),
+        referrer_account_id: option::some(referrer_account_id),
+        onchain_timestamp_ms: test_constants::now_ms(),
+        pyth_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun cost_sized_mint_routes_the_referral_and_emits_the_sized_fill() {
+    // The all-in-budget mint shares the quantity mint's charge-and-record tail, so
+    // a fill it sizes must route the referral split and report itself exactly as
+    // an exact-quantity mint of that fill would: the event carries the SIZED
+    // quantity and that fill's own decomposition, not the budget.
+    let (mut fx, expiry_id, trader, referrer) = helpers::setup_referred_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    let referrer_account_id = trader_account_id(&mut fx, &referrer);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let account_id = helpers::account_id_bundle(&account);
+
+    // One raw unit below the next lot's all-in cost sizes exactly this fill.
+    let next_lot = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        VARIANCE_SEED_QUANTITY + constants::position_lot_size!(),
+    );
+    let fill = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        VARIANCE_SEED_QUANTITY,
+    );
+    helpers::assert_atm_entry_probability(fill.entry_probability());
+    assert_eq!(fill.trading_fee(), VARIANCE_SEED_TRADING_FEE);
+
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
+    let market_cash_before = helpers::market(&market).cash_balance();
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        next_lot.all_in_cost() - 1,
+        VARIANCE_SEED_QUANTITY,
+    );
+
+    // The trader pays the fill's all-in cost; the referral comes out of protocol
+    // proceeds, so expiry cash keeps premium + fee less the referrer's share.
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        trader_balance_before - fill.all_in_cost(),
+    );
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        market_cash_before
+            + fill.premium()
+            + VARIANCE_SEED_TRADING_FEE
+            - VARIANCE_SEED_REFERRAL_FEE,
+    );
+    let events = event::events_by_type<order_events::OrderMinted>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedOrderMinted {
+        expiry_market_id: expiry_id,
+        account_id,
+        order_id,
+        position_root_id: order_id,
+        owner: helpers::owner(&trader),
+        lower_tick: helpers::strike_tick(),
+        higher_tick: constants::pos_inf_tick!(),
+        entry_probability: fill.entry_probability(),
+        quantity: VARIANCE_SEED_QUANTITY,
+        premium: fill.premium(),
+        trading_fee: VARIANCE_SEED_TRADING_FEE,
+        fee_incentive_subsidy: 0,
+        builder_fee: 0,
+        penalty_fee: 0,
+        referral_fee: VARIANCE_SEED_REFERRAL_FEE,
         inventory_impact_charge: 0,
         builder_code_id: option::none(),
         referrer_account_id: option::some(referrer_account_id),
@@ -213,6 +312,60 @@ fun rounded_zero_fee_keeps_referrer_event_attribution() {
     fx.finish();
 }
 
+/// The referral basis nets out the subsidy at the rate the admin set, not at the
+/// shipped 20%.
+#[test]
+fun configured_subsidy_rate_sets_the_subsidy_netted_from_the_referral_basis() {
+    let (mut fx, expiry_id, trader, _referrer) = helpers::setup_referred_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.set_fee_incentive_subsidy_rate_bundle(&mut market, HALF_SUBSIDY_RATE);
+
+    let quote = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
+    assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_HALF_RATE);
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
+    let market_cash_before = helpers::market(&market).cash_balance();
+
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+
+    // The referral leaves the trader's debit unchanged and comes out of what the
+    // market keeps.
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        trader_balance_before - quote.all_in_cost(),
+    );
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        market_cash_before + quote.premium() + MIN_TRADING_FEE - HALF_SUBSIDIZED_REFERRAL_FEE,
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 #[test]
 fun sponsor_and_builder_are_excluded_from_referral_basis() {
     let (mut fx, expiry_id, trader, _referrer) = helpers::setup_referred_live_market(
@@ -236,7 +389,7 @@ fun sponsor_and_builder_are_excluded_from_referral_basis() {
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_RATE_CAP);
     assert_eq!(quote.builder_fee(), BUILDER_FEE_ATM);
-    let trader_balance_before = fx.account_balance_bundle<DUSDC>(&account);
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
     let market_cash_before = helpers::market(&market).cash_balance();
 
     fx.mint_exact_quantity_bundle(
@@ -250,7 +403,7 @@ fun sponsor_and_builder_are_excluded_from_referral_basis() {
     );
 
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         trader_balance_before - quote.all_in_cost(),
     );
     assert_eq!(
