@@ -103,6 +103,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - Raw `entry_probability` and every finite leg's probability (lower ABOVE, upper BELOW) must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in these mint-only bounds, and infinite sentinels are exempt.
 - `premium = entry_probability × quantity ≥ min_premium`; the holder pays this in full — there is no financed remainder.
 - `all_in_cost ≤ quantity`; the complete trader debit cannot exceed the position's maximum settlement payout.
+- While `use_pyth_spot_for_forward` is set, a mint or mint quote requires a pricer that loaded a usable Pyth spot no older than `pyth_spot_freshness_ms`. Live redeems and valuation accept a pricer that fell back to the Block Scholes forward; mints do not.
 
 ## Order encoding
 
