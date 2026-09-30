@@ -353,6 +353,10 @@ fun pyth_write_same_tx_succeeds_when_reanchor_disabled() {
     fx.finish();
 }
 
+/// A stale Pyth read is provenance-only, so writing it in this transaction must
+/// not trip the guard. Pinned on a live redeem: a mint refuses a stale Pyth spot
+/// on its own (`pricing::EPythSpotStale`), so it cannot show the guard staying
+/// quiet.
 #[test]
 fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
@@ -360,28 +364,38 @@ fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
         test_constants::default_live_price(),
     );
     fx.scenario_mut().next_tx(test_constants::alice());
+    let order = {
+        let mut market = fx.take_market_bundle(expiry_id);
+        let mut account = fx.take_account_bundle(&trader);
+        let order = fx.mint_bundle(
+            &mut market,
+            &mut account,
+            helpers::strike_tick(),
+            constants::pos_inf_tick!(),
+            QUANTITY,
+        );
+        helpers::return_account_bundle(account);
+        helpers::return_market_bundle(market);
+        order
+    };
+
+    fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-
     fx.set_use_pyth_spot_for_forward_bundle(&mut market, true);
     fx.set_pyth_spot_freshness_bundle(&mut market, TIGHT_PYTH_FRESHNESS_MS);
     // Clock past the tightened Pyth window; Pyth source still advances past the
     // prior row, so the write lands but stays provenance-only. BS at 119_000 is
-    // exactly on its freshness bound here, so the mint still prices.
+    // exactly on its freshness bound here, so the redeem still prices.
     fx.set_clock_for_testing(STALE_PYTH_CLOCK_MS);
     fx.write_pyth_in_current_tx_bundle(
         &mut market,
         FRESHER_PRICE,
         STALE_PYTH_SOURCE_MS,
     );
-    let order = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        QUANTITY,
-    );
-    assert!(helpers::has_position_bundle(&account, expiry_id, order));
+    let remainder = fx.redeem_live_bundle(&mut market, &mut account, order, QUANTITY);
+    assert!(remainder.is_none());
+    assert!(!helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
         fx.load_pricer_bundle(&market).pyth_spot_source_timestamp_ms(),
         STALE_PYTH_SOURCE_MS,

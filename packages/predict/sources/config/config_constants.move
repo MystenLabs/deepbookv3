@@ -419,11 +419,14 @@ public(package) fun assert_max_entry_probability(value: u64) {
 public(package) macro fun default_use_pyth_spot_for_forward(): bool { true }
 
 /// Pyth Lazer publishes on a 200ms channel, so 2s is ten refresh opportunities
-/// per window. A stale Pyth spot skips the forward re-anchor silently rather
-/// than aborting, so this bound only decides how stale an anchored forward may
-/// be, never whether trading proceeds. It does not order the two spots against
-/// each other: an in-window Pyth spot may still be older than the Block Scholes
-/// spot it re-anchors, which is RP-5's accepted residual, not a bound this fixes.
+/// per window. A stale Pyth spot skips the forward re-anchor at load rather than
+/// aborting, so for live redeems and valuation this bound only decides how stale
+/// an anchored forward may be. Mints refuse that fallback
+/// (`pricing::assert_pyth_spot_fresh`), so while `use_pyth_spot_for_forward` is
+/// set this is also the oldest Pyth spot a mint may execute against. It does not
+/// order the two spots against each other: an in-window Pyth spot may still be
+/// older than the Block Scholes spot it re-anchors, which is RP-5's accepted
+/// residual, not a bound this fixes.
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }

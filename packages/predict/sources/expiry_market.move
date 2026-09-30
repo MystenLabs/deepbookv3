@@ -478,8 +478,11 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 /// Requires the running package version to be at or above the protocol version
 /// watermark, per-market mint pause to be off, trading globally enabled, valid
 /// owner or authorized-app account auth, a market-bound live `Pricer`, and enough
-/// expiry cash to back the post-mint max payout. Mint fees are paid by routing a
-/// withdraw through the loaded account.
+/// expiry cash to back the post-mint max payout. While
+/// `use_pyth_spot_for_forward` is set, the `Pricer` must also have loaded a fresh
+/// Pyth spot: a mint aborts `pricing::EPythSpotStale` rather than execute on the
+/// Block Scholes-forward fallback, and the same holds for every mint and mint-quote
+/// entrypoint. Mint fees are paid by routing a withdraw through the loaded account.
 /// The position's strike range is the tick pair `(lower_tick, higher_tick]`
 /// (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
@@ -1009,6 +1012,10 @@ fun assert_live_mint_allowed(
     market.assert_live_flow_allowed(config, pricer, clock);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
+    // Mint-only. A mint opens new risk, so it refuses the Block Scholes-forward
+    // fallback that a stale or unusable Pyth spot selects. Live redeems keep the
+    // fallback, so a gap in Pyth updates delays no exit.
+    pricer.assert_pyth_spot_fresh(config.pricing_config(), clock);
 }
 
 // Trade flows are deliberately NOT gated on the whole-flush valuation lock: a

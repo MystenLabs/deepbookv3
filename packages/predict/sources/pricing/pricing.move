@@ -9,7 +9,9 @@
 /// source-timestamp spot from Propbook's bounded recent history. The live forward comes from one of
 /// two admin-selected sources (`PricingConfig.use_pyth_spot_for_forward`): a fresh
 /// positive Pyth spot carrying the Block Scholes basis, or the Block Scholes forward
-/// directly. Exact-history reads do not apply live freshness policy.
+/// directly. A load falls back to the Block Scholes forward when the selected Pyth
+/// spot is stale or unusable; mints refuse that fallback through
+/// `assert_pyth_spot_fresh`. Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{pricing_config::PricingConfig, range_codec::Strike};
@@ -130,6 +132,11 @@ const EBlockScholesMinVarianceInvalid: u64 = 14;
 /// write is prohibited (Pyth is checked only on the re-anchor branch).
 const EOracleWrittenInThisTransaction: u64 = 15;
 const EBlockScholesInputTooWide: u64 = 16;
+/// The config selects Pyth for the live forward, but this pricer fell back to the
+/// Block Scholes forward because the Pyth spot was missing, non-normalizable, or
+/// older than `pyth_spot_freshness_ms`. Raised only for flows that refuse the
+/// fallback (mints and mint quotes); the load itself never aborts on it.
+const EPythSpotStale: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -276,6 +283,7 @@ public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_
 /// `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot reanchors the
 /// Block Scholes forward basis, and a missing, non-normalizable, or stale Pyth spot
 /// is ignored; with it off the Block Scholes forward is always used directly.
+/// Mints do not accept a pricer that ignored Pyth that way: `assert_pyth_spot_fresh`.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -306,6 +314,29 @@ public(package) fun load_live_pricer(
         clock,
         ctx,
     )
+}
+
+/// Abort unless the selected Pyth spot was fresh when this pricer was loaded.
+///
+/// `load_live_pricer` treats a missing, non-normalizable, or stale Pyth spot as a
+/// fallback to the Block Scholes forward, which keeps live redeems and pool
+/// valuation priced through a gap in Pyth updates. A flow that opens new risk
+/// calls this to refuse the fallback instead. It re-evaluates the load's own
+/// selection predicate: the pricer's snapshotted Pyth source timestamp (`0` when
+/// no usable observation exists) against the same window and the same
+/// transaction clock, so it passes exactly when the load re-anchored the forward
+/// on Pyth. With `use_pyth_spot_for_forward` off no Pyth spot feeds the forward,
+/// so there is nothing to reject.
+public(package) fun assert_pyth_spot_fresh(pricer: &Pricer, config: &PricingConfig, clock: &Clock) {
+    if (!config.use_pyth_spot_for_forward()) return;
+    assert!(
+        timestamp_is_fresh(
+            pricer.pyth_spot_source_timestamp_ms,
+            config.pyth_spot_freshness_ms(),
+            clock,
+        ),
+        EPythSpotStale,
+    );
 }
 
 /// Validate the canonical Pyth binding and read its normalized spot at exactly
