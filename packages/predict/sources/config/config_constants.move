@@ -429,6 +429,10 @@ public(package) macro fun default_use_pyth_spot_for_forward(): bool { true }
 /// residual, not a bound this fixes.
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
+/// The floor is a validity bound, not an operating value. While
+/// `use_pyth_spot_for_forward` is set, a window shorter than the time a Pyth
+/// update takes to land makes every mint abort, which stops minting without a
+/// pause event.
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
 
 public(package) macro fun max_pyth_spot_freshness_ms(): u64 {

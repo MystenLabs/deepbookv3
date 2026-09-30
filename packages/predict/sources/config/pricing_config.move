@@ -18,7 +18,8 @@ public struct PricingConfig has store {
     /// not, moves a quote.
     use_pyth_spot_for_forward: bool,
     /// Fixed wall-clock maximum age for Pyth spot; it does not vary with time to expiry.
-    /// Past it a live load falls back to the Block Scholes forward, and a mint aborts.
+    /// Past it, while `use_pyth_spot_for_forward` is set, a live load falls back to the Block
+    /// Scholes forward and a mint aborts.
     pyth_spot_freshness_ms: u64,
     /// Fixed wall-clock maximum age for Block Scholes spot and forward; it does not vary with time to expiry.
     block_scholes_price_freshness_ms: u64,
