@@ -23,8 +23,9 @@ machine and each public entry as a transition.
    trading-enabled-and-not-paused, which require NOT valuation-in-progress, which require valuation-in-progress.
    Find any op reachable in a wrong phase, or any pair runnable in an order the code assumes impossible (settle
    a paused market? compact an unsettled one? mint into a settling one? create a market mid-valuation?).
-   Per move.md, exits/settlement/valuation should be blocked only by the valuation lock, not trading-pause —
-   verify that holds.
+   Per predict-contracts.md, trading-pause must not block exits/settlement/valuation; those keep their own gates
+   (version, snapshot stage; for `redeem_live` also the trade window and live-pricing freshness, incl. RP-37
+   Pyth) — verify that holds, and that any other exit gate has a register entry.
 
 3. **VALUATION-LOCK ATOMICITY** — the full-pool valuation (`PoolValuation` hot potato) must open and close
    within ONE tx, snapshot the active-expiry set, value each expiry exactly once, and price PLP shares only

@@ -103,7 +103,6 @@ and contributors. For *how* each mechanism works, follow the links into
 - Raw `entry_probability` and every finite leg's probability (lower ABOVE, upper BELOW) must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in these mint-only bounds, and infinite sentinels are exempt.
 - `premium = entry_probability × quantity ≥ min_premium`; the holder pays this in full — there is no financed remainder.
 - `all_in_cost ≤ quantity`; the complete trader debit cannot exceed the position's maximum settlement payout.
-- While `use_pyth_spot_for_forward` is set, a mint or mint quote requires a pricer that loaded a usable Pyth spot no older than `pyth_spot_freshness_ms`. Live redeems and valuation accept a pricer that fell back to the Block Scholes forward; mints do not.
 
 ## Order encoding
 
@@ -143,6 +142,7 @@ and contributors. For *how* each mechanism works, follow the links into
   registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
+- While `use_pyth_spot_for_forward` is set, every live trade — mint, mint quote, and live redeem — requires a pricer that loaded a usable Pyth spot no older than `pyth_spot_freshness_ms`. Valuation (`current_nav`, `live_order_value`, the flush snapshot) accepts a pricer that fell back to the Block Scholes forward, and settlement and settled redemption read no live price, so a Pyth gap blocks early exits but never the flush or settlement.
 - Trading pause blocks new risk creation. Trade flows (mint, live redeem, settled redeem) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
