@@ -19,7 +19,8 @@ public struct PricingConfig has store {
     use_pyth_spot_for_forward: bool,
     /// Fixed wall-clock maximum age for Pyth spot; it does not vary with time to expiry.
     /// Past it, while `use_pyth_spot_for_forward` is set, a live load falls back to the Block
-    /// Scholes forward and a mint aborts.
+    /// Scholes forward, which valuation prices on and every live trade (mint, mint quote, live
+    /// redeem) refuses.
     pyth_spot_freshness_ms: u64,
     /// Fixed wall-clock maximum age for Block Scholes spot and forward; it does not vary with time to expiry.
     block_scholes_price_freshness_ms: u64,

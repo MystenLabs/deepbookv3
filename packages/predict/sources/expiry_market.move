@@ -482,8 +482,8 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 /// `use_pyth_spot_for_forward` is set, the `Pricer` must also have loaded a usable,
 /// fresh Pyth spot: a mint aborts `pricing::EPythSpotUnavailable` or
 /// `pricing::EPythSpotStale` rather than execute on the Block Scholes-forward
-/// fallback, and the same holds for every mint and mint-quote entrypoint. Mint fees
-/// are paid by routing a withdraw through the loaded account.
+/// fallback, and the same holds for every mint, mint quote, and `redeem_live`. Mint
+/// fees are paid by routing a withdraw through the loaded account.
 /// The position's strike range is the tick pair `(lower_tick, higher_tick]`
 /// (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
@@ -645,6 +645,15 @@ public fun mint_exact_cost(
 /// A live order is priced and closed (partial or full). Settled orders must use
 /// `redeem_settled`.
 /// Returns a replacement order ID only when a partial close leaves quantity open.
+///
+/// Requires a market-bound live `Pricer` and, while `use_pyth_spot_for_forward` is
+/// set, a usable, fresh Pyth spot in it, the same Pyth requirement every mint
+/// carries: the close aborts `pricing::EPythSpotUnavailable` or
+/// `pricing::EPythSpotStale` rather than execute on the Block Scholes-forward
+/// fallback. Trading and mint pauses do not apply. Through a gap in Pyth
+/// updates the position stays open until Pyth recovers, an admin deselects Pyth
+/// or widens `pyth_spot_freshness_ms` past the gap, or the market settles and
+/// `redeem_settled` pays it.
 ///
 /// Two close-side slippage floors, the mirror of mint's `max_probability` /
 /// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
@@ -1013,10 +1022,6 @@ fun assert_live_mint_allowed(
     market.assert_live_flow_allowed(config, pricer, clock);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
-    // Mint-only. A mint opens new risk, so it refuses the Block Scholes-forward
-    // fallback that a stale or unavailable Pyth spot selects. Live redeems keep
-    // the fallback, so a gap in Pyth updates delays no exit.
-    pricer.assert_pyth_spot_fresh(config.pricing_config(), clock);
 }
 
 // Trade flows are deliberately NOT gated on the whole-flush valuation lock: a
@@ -1039,6 +1044,18 @@ fun assert_live_flow_allowed(
     // lands once here. Settlement and settled redemption take other paths and stay
     // open, so the window delays a close rather than stranding the position.
     config.assert_trade_window_open(market.expiry, clock);
+    // A live trade, open or close, moves pool cash at the pricer's mark, so every
+    // live flow (quotes included, so they refuse what their mint would) refuses the
+    // Block Scholes-forward fallback a stale or unavailable Pyth spot selects: the
+    // fallback would price the trade on the lower-frequency Block Scholes forward
+    // and let it land on either side of the source switch. A gap in Pyth updates
+    // therefore delays a live close as well as a mint; the position still exits
+    // through settlement and `redeem_settled`. Valuation reads (`current_nav`,
+    // `live_order_value`, the flush snapshot) do not pass through here and keep the
+    // fallback, so the flush does not stall on a stale or unavailable Pyth spot,
+    // and a client previewing a close through `live_order_value` gets a value
+    // while the close itself aborts.
+    pricer.assert_pyth_spot_fresh(config.pricing_config(), clock);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
