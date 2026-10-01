@@ -255,7 +255,7 @@ Math fixtures come from a committed generator (e.g. `tests/helper/reference/gene
 
 ### 17. Hot flows assert invariants, not just happy-path returns
 
-Public trade / allocation / settlement / sync / liquidation flows must assert protocol invariants after operations — solvency (cash backing ≥ liabilities; settled-liability reserve never underflows), liveness (orders always closable; no double-pay), and accounting (shares↔value↔reserves conservation; manager summary conservation). A flow that lands with only a happy-path return assertion is incomplete (see also "Predict public flow coverage").
+Public trade / allocation / settlement / sync / liquidation flows must assert protocol invariants after operations — solvency (cash backing ≥ liabilities; settled-liability reserve never underflows), liveness (every order stays redeemable: closable live while its live-trade gates pass, always through settlement; no double-pay), and accounting (shares↔value↔reserves conservation; manager summary conservation). A flow that lands with only a happy-path return assertion is incomplete (see also "Predict public flow coverage").
 
 ### 18. Minimize test-only seams in source
 

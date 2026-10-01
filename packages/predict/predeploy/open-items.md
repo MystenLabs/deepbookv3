@@ -306,15 +306,17 @@ on-chain compute and should not be cited as the answer.
 **Action:** fold a re-measurement into the C-2 localnet campaign rather than
 running one for this alone.
 
-### P-31: A provider source timestamp ahead of the Sui clock silently empties the feed
+### P-31: A source timestamp ahead of the Sui clock silently stalls a Propbook feed
 
 **Severity:** Medium; liveness, misattributed failure.
 
 `block_scholes_store::apply` returns `false` rather than aborting when `source_timestamp_ms > onchain_timestamp_ms` — the update's `value_timestamp` or `svi_timestamp` is ahead of the Sui `Clock` at execution. The transaction still succeeds, so the relayer sees success, and the on-chain signal is `applied` reading below `update_count` in `BlockScholesBatchIngested`. Skipping is the right response for one unusable entry, but the provider source clock and Sui checkpoint clock are independent, so a consistently positive skew can reject every observation. The feed then looks like it is ingesting while nothing advances, and pricing halts a freshness window later on `EBlockScholesPriceStale` — an error naming provider staleness for what is actually clock skew at the boundary.
 
-The comparison has a real duty and is not simply removable: accepting a future-dated source timestamp would let that observation win strict source ordering and pin the series until an even later honest source timestamp arrives.
+Propbook's Pyth lane does the same. `oracle_lane::update` skips an observation whose generation timestamp (`feedUpdateTimestamp`, rounded up to the millisecond) is ahead of the Sui `Clock`, and `pyth_feed::update` then emits nothing, so the transaction succeeds and the only on-chain signal is a missing `ObservationRecorded`. Pyth's generation clock is independent of Sui's too. While `use_pyth_spot_for_forward` is set, a consistently positive skew lets the stored spot age out: valuation falls back to the Block Scholes forward, and every live trade on that underlying — mints, mint quotes, and live redeems — aborts `EPythSpotStale`, or `EPythSpotUnavailable` if the feed never stored a spot (RP-37), again an error naming staleness or absence for what is clock skew.
 
-**Action:** Measure each provider `value_timestamp`/`svi_timestamp` minus the Sui clock before a value-bearing deployment and alert explicitly on positive source skew. `update_count > applied` remains a supporting on-chain symptom, but `applied == 0` alone is not diagnostic because unchanged-source retransmissions are legitimate no-ops. If the observed margin is thin, decide the response deliberately — a bounded tolerance on the comparison is a `response-policies.md` decision, not a silent widening.
+The comparison has a real duty in both lanes and is not simply removable: accepting a future-dated source timestamp would let that observation win strict source ordering and pin the series until an even later honest source timestamp arrives.
+
+**Action:** Measure each provider `value_timestamp`/`svi_timestamp`, and the Pyth `feedUpdateTimestamp` of every payload the relayer lands, minus the Sui clock before a value-bearing deployment and alert explicitly on positive source skew. For Block Scholes, `update_count > applied` remains a supporting on-chain symptom, but `applied == 0` alone is not diagnostic because unchanged-source retransmissions are legitimate no-ops; for Pyth, a successful update that records no observation is the equivalent symptom, and equally non-diagnostic alone because a carried-forward price is a legitimate no-op. If the observed margin is thin, decide the response deliberately — a bounded tolerance on either comparison is a `response-policies.md` decision, not a silent widening.
 
 ### P-32: A filled payout tree denies new strike ranges in its own market
 
