@@ -75,7 +75,9 @@ grid, no boundary indices).
   range probability is differenced off. The admin setting
   `use_pyth_spot_for_forward` picks its source: on (the default) Predict builds
   it as `spot × basis` when the Pyth spot is fresh and falls back to the Block
-  Scholes forward otherwise; off, it is always the Block Scholes forward.
+  Scholes forward otherwise; off, it is always the Block Scholes forward. Live
+  trades (mints and live redeems) abort rather than price on that fallback;
+  only valuation uses it.
   Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
 - **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
   the spot to the forward when live spot is applied. Code: derived in `pricing`

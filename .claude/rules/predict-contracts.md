@@ -118,7 +118,7 @@ Predict-specific Move rules: package architecture, config and capability shapes,
 - `ExpiryMarket` owns per-expiry market state and stores the Propbook underlying ID plus tick size. It does not snapshot Propbook oracle object IDs; priced flows pass feed objects through to `pricing::load_live_pricer`.
 - `Pricing` owns the live pricing boundary: current Propbook canonical binding for the market's underlying, the pre-expiry live-pricing check, feed freshness, Predict's pricing-safe surface envelope, and SVI price construction.
 - `ExpiryMarket` owns trade-flow validation and expiry-local invariants for mint, live redeem, settled redeem, valuation, and allocation.
-- Trading pause blocks new risk creation, but exits, settlement cleanup, and valuation should only be blocked by the valuation lock unless the protocol intentionally changes pause semantics.
+- Trading pause blocks new risk creation only. It must not gate exits, settlement cleanup, or valuation unless pause semantics intentionally change; those keep their own gates (version, snapshot stage, and for live redeems the trade window and live-pricing freshness, including the RP-37 Pyth check), and any new exit gate needs a register entry that keeps settlement as the backstop.
 
 ## Predict Economics
 
