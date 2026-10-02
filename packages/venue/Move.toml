@@ -1,0 +1,15 @@
+[package]
+name = "venue"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+account = { local = "../account" }
+fixed_math = { local = "../fixed_math" }
+enclave = { git = "https://github.com/MystenLabs/nautilus.git", subdir = "move/enclave", rev = "0104d627c66cd2d27a46f3c17af537e3c4576d74" }
+
+[environments]
+devnet = "04502214"
+
+[dep-replacements.devnet]
+enclave = { git = "https://github.com/MystenLabs/nautilus.git", subdir = "move/enclave", rev = "0104d627c66cd2d27a46f3c17af537e3c4576d74", use-environment = "mainnet" }

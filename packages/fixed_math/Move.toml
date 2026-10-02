@@ -4,3 +4,6 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
+
+[environments]
+devnet = "04502214"
