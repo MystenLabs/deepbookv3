@@ -46,9 +46,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   floors at zero rather than aborting live mint, redeem, or liquidation reads;
   Block Scholes guarantees its published SVI surfaces are monotone and
   butterfly-arbitrage-free (response policy RP-15).
-  NAV valuation additionally rejects an active-book surface whose cached finite
-  boundary UP prices are non-monotone, because the aggregate payout-tree walk
-  nets signed boundary contributions across orders.
+  NAV valuation additionally rejects an active-book surface whose finite
+  boundary UP prices rise above the walk's running minimum by more than
+  `pricing::price_monotonicity_tolerance`, headroom over the one-raw-unit
+  fixed-point dust measured on real and healthy surfaces, because the aggregate
+  payout-tree walk nets signed boundary contributions across orders; a rise
+  within it is dust and prices through, charged on the quantity ending at that
+  boundary so the mark never understates liability beyond boundary rounding.
 - **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
   and utilization-based financing rates are excluded from v1 — exact strike-level
   liquidation indexing requires monotonic single-sided payoffs and history-independent
@@ -407,9 +411,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the pending-protocol-profit exclusion). *Rationale (audit L10):* one mark used in
   both directions must equal true recoverable value, so it must be exact — a
   conservative band would over-mint on one side or over-pay on the other. The
-  supply-mark-≥-true directional invariant is satisfied with equality. *Superseded:*
-  the optimistic supply mark + uncertainty-band withdraw fee of the approximate-NAV
-  world.
+  supply-mark-≥-true directional invariant is satisfied with equality, up to
+  fixed-point dust; RP-15's rise charge is its one recorded, bounded exception.
+  *Superseded:* the optimistic supply mark + uncertainty-band withdraw fee of the
+  approximate-NAV world.
 - **The flush is privileged (cron-driven), not permissionless (audit L8).** Only a
   market-deployer `MarketLifecycleCap` (`start_pool_valuation`) may start a flush; the
   root-`AdminCap` flush path was removed (the flush is routine maintenance and should
@@ -702,7 +707,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Leverage, the static floor, and knock-out liquidation are removed entirely.** Every position is 1x: live value is `quantity × range_probability`, and a winning position settles for its full `quantity`. There is no floor, no financed amount, no liquidation book, no knock-out threshold, and no near-expiry leverage-admission window. *Rationale:* leverage's risk surface — the liquidation book, the NAV floor correction, the bounded liquidation sweep folded into mint and live redeem, the probability-sensitive admission cap, and the near-expiry block — was disproportionate to its value pre-launch; removing it collapses NAV to a single boundary-linear walk and deletes an entire class of keeper-timeliness risk. *Superseded:* every leverage/floor/knock-out decision above in "Economic model", "Data structures", and "Near-expiry leverage block", retired in place rather than deleted, per the response-policy register's RETIRED convention (RP-17).
 - **Mint admission combines the entry-probability band, minimum premium, and maximum-payout bound.** `strike_exposure_config::assert_mint_admission` requires `entry_probability` inside `[min_entry_probability, max_entry_probability]` and `premium = entry_probability × quantity >= min_premium`; after the complete quote is assembled, `expiry_market::compute_mint_quote` requires `all_in_cost <= quantity`, so the trader's debit cannot exceed the position's maximum settlement payout. The probability band remains independent tail-pricing policy rather than being inferred from the variable fee. *Rejected:* keeping the admission machinery as a dead 1x-only code path — deleting it removes the liquidation book's guard surface entirely rather than leaving it unreachable; replacing the probability band with the maximum-payout bound — a low or subsidized fee would then admit tail prices the band deliberately declines.
-- **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
+- **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still evaluated at every boundary; since DBU-790 it aborts only on a rise past `pricing::price_monotonicity_tolerance` (RP-15).
 
 See `predeploy/response-policies.md` RP-27 for the guard-duty inventory this removal required.
 

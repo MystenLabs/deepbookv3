@@ -1,0 +1,138 @@
+# UP price inverts on valid surfaces — Move measurement, 2026-09-04
+
+**Item:** RP-15 · **Instrument:** Move unit probe (not committed) over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run, extended to #1335's SSVI slices, reachability re-derived, and tolerance audited 2026-09-29
+
+Status: reproduced, deterministic, no provider defect involved. The pricer's own
+fixed point makes `up_price` rise across ascending strikes on surfaces that are valid
+and butterfly-free, which the pre-existing strict guard in `strike_payout_tree`
+treated as a surface defect and aborted on.
+
+## Where it comes from
+
+`compute_up_price` returns `floor(N(d2))` minus the floored skew correction
+`floor(phi(d2) * w' / (2 * sqrt(w)))`. Deep in the tail `N(d2)` sits on a plateau
+while the correction still steps, so the difference of the two floored terms rises by
+raw units across adjacent strikes. Nothing about the surface is inverted; only the
+evaluation is.
+
+## Measurement
+
+A probe walked ascending strike grids on each committed scenario and counted adjacent
+pairs whose UP price rises. Inside these windows every inversion sits at the upper
+edge of the deep-ITM plateau, within `5e-8` of 1.
+
+| Scenario | Grid | Window | Inverting pairs |
+| --- | --- | --- | --- |
+| 0 | $10 | $50,000-$60,000 | 24 (first $55,240 -> $55,250, 999,999,995 -> 999,999,996) |
+| 0 | $100 | $55,200-$69,000 | 1 ($55,200 -> $55,300) |
+| 0 | $1 | $55,200-$56,200 | 7 |
+| 0 | $500 | $55,200-$69,000 | 0 |
+| 1 | $10 | $62,800-$71,000 | 10 |
+| 1 | $100 | $62,800-$71,000 | 0 |
+| 2 | $10 | $66,100-$71,300 | 7 |
+| 3 | $10 / $1 | $73,100-$73,400 | 0 |
+
+Grid coarseness is the only attenuator measured: the same surface that gives 24 pairs
+on a $10 grid gives one on a $100 grid and none on a $500 grid. Scenario 3 is the
+near-degenerate low-variance surface, whose plateau edge is only ~$200 wide.
+
+The 2026-09-29 re-runs reproduced every row exactly, first on `main` at `84cf16d3` and
+again at `94c42370`, after #1335 moved the SVI square root to 1e18 precision and
+lowered the `sigma` floor to 1e-5. They also recorded the largest rise: one raw unit
+in every window, and the same measured against the running minimum the walk compares
+with. Wider $10 sweeps found the mirror plateau in the OTM tail inverting the same
+way: scenario 1 inverts 15 times between $55,000 and $90,000 (10 in its table window;
+the first above the forward is $81,990, 20 -> 21), and scenario 2 inverts 10 times
+between $60,000 and $90,000 (7 in its window; above the forward at $79,680, $79,720
+and $79,960, UP 5 to 15 raw units). On the $1 grid scenario 0's OTM wing inverts 167
+times between $88,000 and $90,700, where UP falls from 722 to 45 raw units, and
+scenario 2's 48 times between $78,600 and $80,400 (50 before #1335); every one of
+those rises is also a single raw unit.
+
+#1335's short-tenor Block Scholes SSVI slices (`pricing_ssvi_reference_data`, slices
+0-4, at their real forwards) stay inside the same bound. The three one-minute slices
+do not invert at all on a $0.10 grid within $60 of the forward. On a $1 grid the
+one-to-five-minute slice inverts 4 times within $500 of the forward, all on the
+deep-ITM plateau, and the sub-hour slice 14 times within $1,000, in both tails. Every
+one of those rises is one raw unit, including against the running minimum.
+
+P-35's two real short-dated slices (`evidence/rp5-ssvi-backfill-2026-09-28.md`)
+reproduce on the same branch: the 2026-03-19 backfill slice returns UP(72,670) = 4 and
+UP(72,680) = 5, and the one-minute SSVI slice returns UP(66,811) = 9 and UP(66,812) =
+10. Both are pinned as walk tests at the two-unit tolerance.
+
+## Reachability
+
+The strike whose UP price inverts sits on a tail plateau, about 10% to 27% below spot
+on the deep-ITM side of these surfaces and 7% to 20% above it in the OTM tail, where
+the boundary's own UP price lies outside the entry band (1%-99% by default; Mainnet
+has since narrowed it to 25%-75%). Mint admission applies that band to each finite
+boundary as well as to the range (#1304, DBU-811), so no mint can place a boundary
+there directly: on scenario 0 the range `($55,240, $76,000]` prices at 0.553, inside
+the band, and is still rejected on its 0.999999995 lower leg
+(`pool_valuation_flow_tests::the_entry_band_keeps_a_plateau_boundary_out_of_a_mint`).
+When this record was first taken the band bounded only the range price, and two mints
+at the plateau were enough; #1304 closed that path before this change merged.
+
+The market carries admitted boundaries onto the plateau instead. A boundary's UP price
+moves with spot and with the variance left to expiry, so a boundary admitted inside
+the band sweeps through the plateau as the market ages.
+`pool_valuation_flow_tests::a_fixed_point_dust_inversion_does_not_stall_the_flush`
+carries the end-to-end path. Two ranges `($66,170, $76,000]` and `($66,180, $76,000]`
+are admitted on the $10 grid against scenario 0's smile at 16x its remaining variance,
+as a market 16x as far from expiry would carry it, with lower legs at 0.931, the upper
+leg at 0.523, and both ranges at 0.409. The market then reprices to committed scenario
+2, the same market 18 hours after scenario 0 with spot 2% lower, where the two lower
+boundaries price at 999,999,994 -> 999,999,995 on the deep-ITM plateau. On that book
+the strict guard aborts `current_nav` and `value_expiry` with `ENonMonotonePrice`.
+Under `price_monotonicity_tolerance` both proceed: the live NAV equals free cash less
+the independent per-order sum, and the flush's pool mark composes that same market
+value with the vault ledger exactly. In principle no adversary is needed: any book
+whose boundaries end up on either tail plateau near expiry can reach an inverting
+pair. On Mainnet's configuration at the time of the audit below (1- and 5-minute
+cadences, a $1 admission grid, a 25%-75% band) it takes a dense ladder of boundaries
+and a large move.
+
+## Tolerance audit, 2026-09-29
+
+Instrument: a Python port of `compute_up_price`, checked bit-exact against the
+contract on the 16 contract outputs quoted in this record and on 60,000 random
+pricing-safe inputs, plus Move runs for the two reproducers below; not committed.
+
+Of 21,600 SVI surfaces sampled inside the pricing envelope — generic, short-dated,
+SSVI-shaped with Predict's roll-down, production-shaped BTC one- and five-minute
+slices, and families tuned toward the butterfly boundary, at forwards from $1,000 to
+$200,000 on $0.01, $1, $10 and $100 grids — the 20,865 that are butterfly-free by
+Durrleman's `g(k) >= 0` and were scanned have these largest rises against the running
+minimum:
+
+| Smallest `g` on the surface | Surfaces | At most 1 | 2 | 3 | 4-5 | 6-20 | 21-100 | 101-1,000 | Above 1,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.03 or more | 19,564 | 19,564 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| below 0.03 | 1,301 | 1,020 | 8 | 6 | 13 | 56 | 71 | 111 | 16 |
+
+Every surface whose smallest `g` is 0.03 or more rises by at most one unit on every
+grid. Rises above one occur only on surfaces nearer the boundary, and there they run
+from 2 to 2,808 with no gap: a small tolerance admits only a handful of them, and none
+short of about 3,000 admits them all. Two are confirmed in Move and pinned as walk
+tests (raw 1e9 SVI, spot equal to the forward, roll factor 1):
+
+- A rise of exactly 2 on a $0.01 grid: forward 131_066_329_593_242, `a` = 27_519_073,
+  `b` = 507_873_048, `rho` = +859_667_519, `m` = -178_490_722, `sigma` = 106_067_390;
+  UP($163,201.46) = 21,921,130 and UP($163,201.47) = 21,921,132; smallest `g` 0.027.
+- A rise of 502 on a $1 grid: forward 170_742_326_426_584, `a` = 4_003, `b` =
+  2_375_780, `rho` = -701_075_992, `m` = -7_234, `sigma` = 11_969; UP($170,691) =
+  902,738,257 and UP($170,692) = 902,738,759; smallest `g` 0.00026.
+
+The six real slices checked, the four committed scenarios and P-35's two, stay at one
+unit down to a $0.001 grid; they rise by 2 to 21 only on grids of $0.0001 and finer,
+well below Predict's $0.01 tick.
+
+## What it does not measure
+
+The probe fixes each surface at the reference fixture's expiry, so it does not sweep
+time to expiry, and it says nothing about how the plateau edge moves as a market ages.
+The aging regression above is one path, not a sweep: it does not measure how often a
+real book lands on an inverting pair.
+It also does not measure the external half of RP-15: no sampled Block Scholes surface
+has violated butterfly freedom, and that half remains unobserved.

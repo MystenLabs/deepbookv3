@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-09-04. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
+Updated 2026-09-29. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
 
 `open-items.md` tracks work that is still open; when an item closes, the
 *decision* it produced graduates into an entry here instead of surviving only
@@ -796,54 +796,162 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-15: Block Scholes guarantees butterfly-free surfaces; active-book inversions fail closed (resolves P-11)
+## RP-15: Sub-precision price inversions price through; a material inversion fails closed (resolves P-11, P-35)
 
-- **Trigger state:** despite the provider's guarantee that every published SVI
-  surface is monotone and butterfly-arbitrage-free, a fresh Block Scholes
-  surface makes a higher-strike UP price exceed a lower-strike UP price. During
-  `current_nav`, the active payout tree exposes that inversion at two increasing
-  boundary ticks.
-- **Controller:** external — the BS surface publisher controls the shape inside
-  Predict's pricing-safe envelope; traders cannot choose SVI parameters.
-- **Blast radius:** single-order pricing trusts the provider's surface and
-  floors an inverted range to zero. NAV adds a defense-in-depth active-book
-  check: one exposed inversion aborts that market's NAV read, and because the
-  pool flush uses one frozen mark for all LP supply and withdraw fills, it can
-  block LP fills pool-wide until the surface is corrected.
-- **Response:** accept the provider guarantee for surface admission; do not add
-  an on-chain `g(k) >= 0` or tighter synthetic-parameter envelope. If an active
-  book nevertheless exposes an inversion, abort valuation and retry after the
-  provider publishes a corrected surface. This converts the known aggregate-NAV
-  overstatement into fail-closed liveness.
-- **Reasoning:** `strike_payout_tree::walk_linear` relies on active boundary
-  prices being monotone. Skipping the market or carrying a partial mark would
-  poison the single LP mark used for both supply and withdraw, while allowing
-  the inverted segment through can overstate pool NAV. Surface quality is part
-  of the trusted Block Scholes provider contract rather than an invariant the
-  signature or Predict Move code proves; the active-book check stays as a
-  narrow accounting backstop rather than duplicating the provider's global
-  surface validation on chain.
-- **Risk profile:** `BEST-GUESS` — no sampled Block Scholes surface violated
-  butterfly freedom, and reachability requires the trusted publisher to violate
-  its guarantee with a surface whose inversion intersects the active book. The
-  guarantee is not enforced by Predict on chain.
-- **Pinning tests:** `current_nav_flow_tests.move` —
-  `current_nav_rejects_non_monotone_active_book_surface`; and
-  `payout_tree_walk_tests.move` —
-  `inversion_on_a_cancelling_last_boundary_still_aborts`. The guard moved from
+- **Trigger state:** the in-order walk over the payout tree (`walk_linear`, and
+  `walk_linear_frozen` under the flush) reads a higher UP price at a higher
+  boundary tick than at a lower one.
+- **Controller:** internal AND external. `compute_up_price` floors `N(d2)` and
+  the skew correction independently, so where `N(d2)` sits on a tail plateau the
+  difference steps UP by one raw unit on a surface that is valid and
+  butterfly-free — the committed real scenario 0 inverts at 24 adjacent pairs on
+  a $10 grid between $50k and $60k (first $55,240 -> $55,250, 999,999,995 ->
+  999,999,996) and at one pair on a $100 grid; scenarios 1 and 2 invert on the
+  $10 grid too, and the OTM tail mirrors the deep-ITM plateau (scenario 0
+  inverts at 167 adjacent $1 pairs between $88,000 and $90,700). The same
+  one-unit ripple appears on the short-tenor SSVI slices DBU-849 admits
+  (`evidence/rp5-ssvi-backfill-2026-09-28.md`, P-35). The entry band bounds each
+  finite boundary at mint (since #1304, DBU-811), so no mint places a boundary
+  on a plateau directly; the market can carry admitted boundaries there as spot
+  moves and the variance left to expiry shrinks, so the source needs no
+  adversary in principle. On Mainnet's short cadences, $1 admission grid and
+  narrowed entry band it takes a dense ladder of boundaries and a large move,
+  and no flush has been seen to abort on it. Surface shape itself stays with the
+  provider.
+- **Blast radius:** a hard abort here lands in the pool flush's mandatory leg
+  (`plp::value_expiry` -> `expiry_market::snapshot_nav`) and in the public
+  `current_nav` read. `finish_flush` proves completeness over the snapshotted
+  set and has no per-market skip, so one aborting market stops every LP supply
+  and withdraw fill; the valuation flag that flush holds also gates request
+  cancels and the flush-gated `ProtocolConfig` setters, and a restart
+  re-snapshots the same book. A market leaves the expected set only at
+  settlement, so the stall can last as long as successive surfaces keep an
+  inverting pair under the book, up to the market's remaining life. Per-order
+  value is unaffected: `RangePrice::probability` floors an inverted pair to
+  zero, so `redeem_live` and settlement stay open.
+- **Response:** price through (the ladder's `skip/carry` rung, applied to the
+  one boundary: it keeps its quoted price, the rise over the running minimum is
+  charged, rounded up, on the quantity ending there, and the walk continues —
+  not the per-market skip the reopen condition names) while that rise is at most
+  `pricing::price_monotonicity_tolerance`, two raw units at 1e9; `abort`
+  (`ENonMonotonePrice`) above it. Surface admission still rests on the provider
+  guarantee — no on-chain `g(k) >= 0` or tighter synthetic-parameter envelope.
+- **Reasoning:** keeping the quoted price leaves every book that valued before
+  the bound valued identically. Netting alone would let an order whose own two
+  boundaries invert carry the pair's small negative value where its per-order
+  price floors at zero, understating liability. The walk therefore charges each
+  tolerated rise, rounded up, on the quantity ending at that boundary: the
+  running minimum is at most every earlier price, so the charge covers any
+  inverted order ending there, and the walk never falls below the per-order sum
+  beyond boundary rounding. That keeps this response inside R2's rule that NAV
+  never overstates recoverable value, so a withdrawal is never over-paid. An
+  order that does not invert but ends at a risen boundary is over-charged by at
+  most the rise, rounded up, so NAV can read low and never high beyond P-13's
+  boundary rounding. On real and healthy surfaces every rise is exactly one
+  unit, the signature of the two separately floored terms; the pricer's other
+  rounding (the floored `sqrt(w)`, smile root and `w'`) is larger per strike,
+  but the true slope outruns it there. A search over 20,865 butterfly-free
+  surfaces found rises above one only on surfaces near the butterfly-arbitrage
+  boundary (Durrleman's `g` below 0.03), and there they range from 2 to 2,808
+  with no gap (evidence). Aborting on the one-unit dust is a false positive in a
+  mandatory path over a market-moved variable, which the blast-radius ladder
+  above puts at skip/carry. The tolerance is that measured unit plus one unit of
+  headroom. One would have no margin at all. Three or more buys nothing
+  identifiable: moving from two to three admits 6 of the 281 near-boundary
+  surfaces that exceed one, and only about 3,000 admits them all, at which point
+  the guard stops catching small provider inversions. Two costs nothing
+  material: the over-charge is at most 2e-9 of the quantity ending at risen
+  boundaries plus one raw unit of rounding per such boundary, $0.002 per $1M of
+  that quantity, and it scales with the open interest that ends across an
+  inverting pair. A mark that low favours incumbent LPs on a withdrawal but a
+  supplier on a supply, by the same amount; on supply it is therefore an
+  accepted, bounded exception to the supply-mark invariant (a supplier can
+  over-mint by at most that dust), recorded here as R2's audit obligation
+  requires. Both directions sit far inside the ratified 1% NAV deviation bound.
+  The bound is absolute, not relative to the price, and two units stays small
+  even on the OTM plateau, where UP is tens of raw units. Accepted residual: a
+  surface near the butterfly boundary can rise by more and fails closed,
+  stalling the flush until a later snapshot or the market settles; real slices
+  sit far from that boundary. Above the bound the rise is treated as a surface
+  defect, with "retry once the provider publishes a corrected surface" as the
+  recovery path. P-35 also proposed netting each boundary at `min(price,
+  previous)`; that is declined. Clamping is conservative in neither direction —
+  it lowers liability at a lower boundary and raises it at an upper one — so it
+  could understate a book whose inversions are only across orders. Keeping the
+  quote leaves such a book at its per-order sum unless quantity ends at a risen
+  boundary, and the charge there moves liability only upward. The comparison is
+  against the running minimum rather than the previous boundary, so dust
+  accumulated across many boundaries trips the same bound instead of ratcheting
+  underneath it.
+- **Duty inventory (guard weakening):** the strict check's only consumers are
+  `live_marked_liability` -> `current_nav` and `frozen_marked_liability` ->
+  `snapshot_nav`, and both clamp the walk with `saturating_sub`, so the check
+  bounded no arithmetic headroom; `envelope + tolerance` cannot overflow because
+  UP prices are at most 1e9. What the weakening admits is the bounded
+  over-charge above and, silently, any provider inversion of at most two raw
+  units. `harness/verdict.py` still classifies `strike_payout_tree:2` as an
+  expected oracle-surface abort. Nothing else was incidentally bounded.
+- **Risk profile:** `MEASURED` — the internal source is counted over every
+  committed reference surface, including #1335's short-tenor SSVI slices, and
+  reproduced end to end through the flush; a search over 20,865 butterfly-free
+  surfaces, with two reproducers confirmed in Move, bounds where rises above one
+  unit occur (`evidence/rp15-price-inversion-2026-09-04.md`). P-35's sampled
+  SSVI and current-style slices show the same one-unit ripple
+  (`evidence/rp5-ssvi-backfill-2026-09-28.md`). The external source remains
+  unobserved, no sampled Block Scholes surface having violated butterfly
+  freedom.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted`,
+  `a_ripple_on_a_short_dated_backfill_slice_is_walked` and
+  `a_ripple_on_a_one_minute_ssvi_slice_is_walked` (P-35's two real slices),
+  `a_two_unit_rise_on_a_valid_surface_is_walked` (the headroom a tolerance of
+  one would lack), `a_valid_surface_at_the_butterfly_edge_fails_closed` (the
+  accepted residual), `a_self_inverted_order_is_charged_its_rise`,
+  `a_rise_overcharges_an_order_that_does_not_invert`,
+  `the_frozen_walk_charges_a_self_inverted_order_it_still_holds`,
+  `a_rise_is_charged_against_the_running_minimum`, `a_rise_charge_rounds_up` and
+  `a_cancelling_boundary_still_lowers_the_running_minimum` (the charge: an
+  inverted order values at its per-order price, one that does not invert is
+  over-charged by exactly the rise, the frozen walk charges through snapshot
+  copies, and the charge is measured from the running minimum, rounds up, and
+  counts a cancelling boundary's price),
+  `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
+  `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
+  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance`,
+  `the_running_minimum_follows_a_falling_price`,
+  `the_live_walk_drops_the_staircase_husks` and
+  `the_frozen_walk_keeps_one_running_minimum_across_husks` (the running minimum,
+  including after a fall, in the live walk and across snapshot copies in the
+  frozen walk), `inversion_on_a_cancelling_last_boundary_still_aborts`;
+  `current_nav_flow_tests.move` —
+  `current_nav_rejects_non_monotone_active_book_surface`;
+  `pool_valuation_flow_tests.move` —
+  `a_fixed_point_dust_inversion_does_not_stall_the_flush`,
+  `the_entry_band_keeps_a_plateau_boundary_out_of_a_mint`. The guard moved from
   the price memo to `strike_payout_tree::ENonMonotonePrice` when leverage was
-  removed and the memo was deleted. It is enforced at EVERY payout-tree boundary,
-  exactly as it was before the move. An intermediate revision of that change
-  enforced it only over the boundaries whose start and end quantities do not
-  cancel; that was wrong — the netted aggregate is unaffected by a cancelling
-  boundary, but live redeem prices each order individually, so an inversion
-  sitting on a cancelling tick let NAV understate liability while the flush
-  succeeded. The second pinning test above is the regression for it.
-- **Reopen when:** Block Scholes changes or violates the surface guarantee,
-  Predict accepts another SVI publisher without the same guarantee, the
-  active-book guard is removed, NAV valuation gains a safe per-market
-  skip/carry design, or the LP flush no longer uses one shared mark for both
-  queues.
+  removed and the memo was deleted. It is evaluated at EVERY payout-tree
+  boundary. An intermediate revision of that change enforced it only over the
+  boundaries whose start and end quantities do not cancel; that was wrong — the
+  netted aggregate is unaffected by a cancelling boundary, but live redeem
+  prices each order individually, so an inversion sitting on a cancelling tick
+  let NAV understate liability while the flush succeeded.
+  `inversion_on_a_cancelling_last_boundary_still_aborts` is the regression for
+  it.
+- **Reopen when:** a re-measurement after `compute_up_price` changes its
+  rounding or primitives, or after the SVI envelope widens, finds a rise of more
+  than one raw unit on a real or healthy surface (the bound keeps one unit of
+  margin); a cadence's admission grid becomes finer than about $0.001 at
+  BTC-scale forwards, or Predict lists an underlying far below the
+  $1,000-$200,000 forwards the audit sampled (real slices rise by 2 to 21 on
+  grids of $0.0001 and finer); the provider publishes surfaces near the
+  butterfly boundary often enough that flushes stall on them; P-16 or P-28 is
+  resolved and the regenerated reference changes that picture; Block Scholes
+  changes or violates the surface guarantee; Predict accepts another SVI
+  publisher without the same guarantee; or NAV valuation gains a safe per-market
+  skip/carry design. Absorbed rises emit nothing on chain, so the first
+  condition is caught only by re-measurement or an off-chain monitor that prices
+  active boundaries through devInspect; a provider inversion of at most two
+  units is likewise invisible on chain.
 
 ---
 
@@ -1608,8 +1716,10 @@ worth-fixing.
 - **Response:** all of the above are removals of guards whose duties are either
   deleted alongside them or re-homed strictly stronger. No replacement guard is
   required. The one guard that was *narrowed* rather than deleted — the
-  non-monotone surface check — is recorded separately in RP-15 and is now enforced
-  at every payout-tree boundary again, pinned by
+  non-monotone surface check — is recorded separately in RP-15 and is evaluated
+  at every payout-tree boundary again (since DBU-790 it aborts only on a rise of
+  more than `pricing::price_monotonicity_tolerance` over the running minimum),
+  pinned by
   `payout_tree_walk_tests::inversion_on_a_cancelling_last_boundary_still_aborts`.
 - **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is
   static reachability of the deleted expressions, verified by grep against HEAD.
