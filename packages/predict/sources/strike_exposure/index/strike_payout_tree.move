@@ -37,7 +37,7 @@
 /// stood at the snapshot instant through the same walk the live read uses.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, pricing::Pricer, range_codec};
+use deepbook_predict::{constants, pricing::{Self, Pricer}, range_codec};
 use fixed_math::math;
 use sui::table::{Self, Table};
 
@@ -186,17 +186,18 @@ public(package) fun settled_payout_liability(
 /// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
 /// are never stored (`P = 0`).
 public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
-    let mut previous_price = option::none();
+    let mut price_envelope = option::none();
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         0,
-        &mut previous_price,
+        &mut price_envelope,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
-    // once. This can differ from pricing and flooring each order independently.
+    // once. This can differ from pricing and flooring each order independently, as
+    // can the rounded-up charge on a tolerated rise (RP-15).
     (tree.base + start_total).saturating_sub(end_total)
 }
 
@@ -215,14 +216,14 @@ public(package) fun walk_linear_frozen(
         tree.snapshot_active && tree.snapshot_seq == snapshot_seq && snapshot_seq != 0,
         EStaleValuationSnapshot,
     );
-    let mut previous_price = option::none();
+    let mut price_envelope = option::none();
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         snapshot_seq,
-        &mut previous_price,
+        &mut price_envelope,
     );
     (tree.snapshot_base + start_total).saturating_sub(end_total)
 }
@@ -594,17 +595,17 @@ fun window_summary(
 /// monotonicity is observed, and a cancelling boundary is still the shared edge
 /// of two live orders. An inversion sitting on it does not move this walk's
 /// total, but it does move what `redeem_live` pays per order (`range_price` is
-/// evaluated per order, not netted), so skipping the observation would let NAV
-/// understate liability without aborting. A node whose selected terms are both
-/// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
-/// creation) — the view that owns the tick observes it.
+/// evaluated per order, not netted), so skipping the observation would let an
+/// inversion of any size there understate liability without aborting. A node
+/// whose selected terms are both zero is NOT part of the view (live: a husk;
+/// frozen: a post-snapshot creation) — the view that owns the tick observes it.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
     tick_size: u64,
     frozen_seq: u64,
-    previous_price: &mut Option<u64>,
+    price_envelope: &mut Option<u64>,
 ): (u64, u64) {
     if (root.is_none()) return (0, 0);
     let tick = *root.borrow();
@@ -616,7 +617,7 @@ fun walk_linear_subtree(
         pricer,
         tick_size,
         frozen_seq,
-        previous_price,
+        price_envelope,
     );
 
     let (local_start, local_end) = if (frozen_seq != 0 && node.snapshot_seq == frozen_seq) {
@@ -629,17 +630,29 @@ fun walk_linear_subtree(
     let mut end_total = 0;
     if (local_start != 0 || local_end != 0) {
         let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
-        // UP price is non-increasing in strike and the in-order walk visits
-        // ascending ticks, so a rising price is a non-monotone surface: the netted
-        // aggregate below would understate the per-order liability the protocol
-        // actually honors.
-        if (previous_price.is_some()) {
-            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+        // UP price is non-increasing in strike, so a rise across these ascending
+        // ticks is either the pricer's own fixed-point dust or an inverted surface.
+        // A rise within `price_monotonicity_tolerance` of the running minimum walks
+        // at its quoted price, and the rise is charged, rounded up, on the quantity
+        // ending here so no order nets below its floored per-order value; a larger
+        // rise fails closed. RP-15 owns the response, its NAV bound, and why this
+        // mandatory path cannot hard-assert.
+        if (price_envelope.is_some()) {
+            let envelope = *price_envelope.borrow();
+            assert!(
+                price <= envelope + pricing::price_monotonicity_tolerance!(),
+                ENonMonotonePrice,
+            );
+            if (price > envelope) {
+                start_total = math::mul_div_up(price - envelope, local_end, math::float_scaling!());
+            };
+            *price_envelope = option::some(envelope.min(price));
+        } else {
+            *price_envelope = option::some(price);
         };
-        *previous_price = option::some(price);
 
         if (local_start != local_end) {
-            start_total = math::mul_down(price, local_start);
+            start_total = start_total + math::mul_down(price, local_start);
             end_total = math::mul_down(price, local_end);
         };
     };
@@ -650,7 +663,7 @@ fun walk_linear_subtree(
         pricer,
         tick_size,
         frozen_seq,
-        previous_price,
+        price_envelope,
     );
     (start_total + left_start + right_start, end_total + left_end + right_end)
 }

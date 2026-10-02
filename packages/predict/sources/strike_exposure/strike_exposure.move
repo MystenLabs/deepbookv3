@@ -184,7 +184,12 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// value, priced once per boundary by the payout tree's in-order walk. Every order
 /// is worth `quantity * P(range)` live, so no per-order correction is needed. The
 /// aggregate is netted per boundary rather than per order, so it can differ from
-/// the per-order sum by boundary rounding; it is clamped at zero once, in the walk.
+/// the per-order sum by boundary rounding. A price rise within
+/// `pricing::price_monotonicity_tolerance` is charged on the quantity ending at
+/// that boundary, rounded up, so the walk never falls below the per-order sum
+/// beyond that rounding and can exceed it by at most the rise times that quantity
+/// plus one raw unit: liability reads high and NAV low, never the reverse beyond
+/// boundary rounding (RP-15). It is clamped at zero once, in the walk.
 public(package) fun live_marked_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     exposure.payout.walk_linear(pricer, exposure.tick_size)
 }
