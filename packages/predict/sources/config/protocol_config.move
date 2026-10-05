@@ -340,6 +340,9 @@ public fun set_template_max_entry_probability(
 /// Select which source the live forward is built from: `true` carries the Block
 /// Scholes basis on a fresh Pyth spot, `false` uses the Block Scholes forward
 /// directly. Locked during valuation so one flush marks every market on one formula.
+/// Clearing it also lifts the live-trade Pyth freshness requirement
+/// (`pricing::assert_pyth_spot_fresh`), which is the way to keep mints and live
+/// redeems open through a Pyth outage once no valuation is in flight.
 public fun set_use_pyth_spot_for_forward(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -352,7 +355,13 @@ public fun set_use_pyth_spot_for_forward(
     config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
 
-/// Set the live Pyth spot freshness threshold.
+/// Set the live Pyth spot freshness threshold. While `use_pyth_spot_for_forward`
+/// is set, a Pyth spot older than this makes valuation price off the Block Scholes
+/// forward and makes every mint, mint quote, and live redeem abort
+/// `pricing::EPythSpotStale`, so tightening it rejects more live trades and
+/// widening it admits older Pyth spots. A window shorter than the time a Pyth
+/// update takes to land halts live trading. Locked during valuation, like the
+/// source selector.
 public fun set_pyth_spot_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

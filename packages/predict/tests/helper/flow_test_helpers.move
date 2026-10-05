@@ -2690,6 +2690,19 @@ public fun advance_live_oracle_bundle_to(
     );
 }
 
+/// Move the fixture clock to `timestamp_ms` and reseed only a market bundle's
+/// Block Scholes surface there, leaving the Pyth spot where it was: the state a
+/// gap in Pyth pushes produces, with the rest of the surface still fresh.
+public fun advance_block_scholes_bundle_to(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    timestamp_ms: u64,
+) {
+    self.clock.set_for_testing(timestamp_ms);
+    self.seed_bs_surface(&market.market, &mut market.bs, live_price, live_price, timestamp_ms);
+}
+
 /// Advance the fixture clock by one millisecond and reseed a market bundle's live
 /// oracle.
 public fun advance_live_oracle_bundle(

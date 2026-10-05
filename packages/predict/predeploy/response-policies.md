@@ -278,8 +278,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   and disclose it (commit `057f9565`); select Pyth by its own freshness rather
   than relative source time; fail closed on provider-width overflow. The
   cross-feed deviation guards are gone. Representable inputs still must satisfy
-  positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`, the
-  sigma band, and positive minimum total variance. A correct-but-adversarial
+  positive spot/forward, bounded basis, bounded SVI `b` and `m`, `|rho| ≤ 1`, the
+  sigma band, and positive minimum total variance, which is the only constraint
+  on `a`. A correct-but-adversarial
   source can steer prices anywhere inside that envelope. While
   `use_pyth_spot_for_forward` is set, every independently fresh usable Pyth spot
   reanchors the Block Scholes basis even when the Block Scholes spot is newer;
@@ -288,6 +289,45 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `EBlockScholesInputTooWide` before the `u128`-to-`u64` cast and semantic
   envelope. Recovery is a newer signed, representable observation followed by
   retrying the affected action or flush.
+- **Sigma floor (lowered from 1e-3 to 1e-5):** Block Scholes SSVI surfaces
+  narrow `sigma` toward expiry. In their SSVI backfill (BTC, February–June 2026,
+  6.5M slices; `evidence/rp5-ssvi-backfill-2026-09-28.md`) 83% of slices at most
+  a minute from expiry, 55% of slices one to five minutes out, and 12% of slices
+  five minutes to an hour out sit below 1e-3, with a minimum of 4.7e-5. The 1e-3
+  floor rejected 1.6M of them, and every pricer load over such a slice aborted:
+  mints and live closes on that market, and the flush's atomic snapshot stage,
+  so the pool-wide flush could not start and queued LP fills waited. None is
+  below 1e-5, the floor the provider recommends. Duty inventory of the old
+  floor: (1) it kept `sigma²` representable in the 1e9 smile root — replaced by
+  taking the root from exact `u128` squares at 1e18, without which the lowered
+  floor misprices real one-minute slices by up to 49% relative off the forward;
+  (2) it kept the root, the skew slope's divisor, away from zero — any positive
+  floor does, so 1e-5 is the provider's number rather than an arithmetic need,
+  and for SSVI slices the gate's minimum-variance rounding binds first: with the
+  provider's `eta ≤ 2`, `sigma < 1e-5` means a minimum total variance under
+  4e-10, which rounds to zero at 1e9 (P-33);
+  (3) the root's `u128` input is bounded by `|k − m| ≤ 144.4` and `sigma ≤ 100`,
+  not by the floor; (4) it did not bound the skew correction: `w'` is at most
+  `2b` for any `sigma`, so the correction's headroom is set by `b` and the
+  variance. Positive total variance stays owned by the analytical-minimum check
+  and the per-strike `ENonPositiveVariance` backstop, neither of which reads the
+  floor.
+- **`a` magnitude cap removed (was `|a| ≤ 100`):** Block Scholes recommends no
+  bound on `a` beyond positive total variance. Negative `a` was already admitted
+  and still is: slices in the SSVI backfill carry it (0.27% of one-minute slices,
+  and slices further out too), none of them SSVI, since an SSVI slice has
+  `a = theta·(1 − rho²)/2 ≥ 0` (P-37), and every one passes the minimum-variance
+  check. `a` is now constrained only by that minimum and its `u64` provider
+  width. Duty inventory of the cap: (1) it bounded the roll-down's
+  `u128` result — `a < 2^64` already keeps `a × 1e9` under `u128`; (2) it bounded
+  the 1e18 total-variance sum, `sqrt(w)`, and `d2`'s numerator — all stay inside
+  `u128`/`u64` at `a = u64::MAX`; (3) it kept the minimum-variance check's `u64`
+  sum `a + b·sigma·sqrt(1 − rho²)` from overflowing — replaced by comparing the
+  two terms, so an extreme `a` is rejected or admitted by name, never by an
+  arithmetic abort. No price-quality duty: at `a = +100` the at-the-forward
+  digital is already about 3e-7, so the cap never separated sane surfaces from
+  degenerate ones; on the negative side it only limited how much of `b · sigma`
+  could be cancelled, which the minimum-variance check governs anyway.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity
@@ -318,16 +358,39 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `block_scholes_svi_a_above_u64_aborts_with_named_width_error`,
   `block_scholes_svi_b_above_u64_aborts_with_named_width_error`,
   `block_scholes_svi_rho_above_u64_aborts_with_named_width_error`,
-  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`, and
-  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`;
+  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`,
+  `surface_with_svi_sigma_below_min_aborts`,
+  `surface_with_zero_svi_sigma_aborts`,
+  `short_dated_negative_a_offsetting_the_minimum_increment_aborts`,
+  `zero_svi_a_with_unit_rho_aborts_at_load`,
+  `negative_svi_a_with_unit_rho_aborts_at_load`,
+  `smile_root_at_the_otm_envelope_corner_prices_the_tail_to_zero`,
+  `smile_root_at_the_itm_envelope_corner_prices_the_tail_to_one`,
+  `svi_a_at_the_provider_width_limit_prices_to_zero`,
+  `svi_a_at_the_provider_width_limit_with_shape_ceilings_and_positive_m_prices_to_zero`,
+  `svi_a_at_the_provider_width_limit_with_shape_ceilings_and_negative_m_prices_to_zero`,
+  `negative_svi_a_at_the_provider_width_limit_aborts_at_load`,
+  `negative_svi_a_past_the_former_cap_cancels_to_one_unit_of_variance`, and
+  `negative_svi_a_past_the_former_cap_offsetting_the_minimum_increment_aborts`;
+  `pricing_exact_tests.move` —
+  `surface_at_the_sigma_floor_prices_at_its_vertex`,
+  `short_dated_slice_with_negative_a_prices_to_true_math`,
+  `one_minute_slice_the_1e9_root_mispriced_prices_to_true_math`,
+  `negative_svi_a_past_the_former_cap_prices_to_true_math`,
+  `positive_svi_a_past_the_former_cap_prices_to_true_math`, and
+  `unit_rho_surface_with_one_unit_of_a_prices_to_true_math`;
   `pool_valuation_flow_tests.move` —
-  `overwide_block_scholes_spot_aborts_pool_valuation_flush` and
-  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`.
+  `overwide_block_scholes_spot_aborts_pool_valuation_flush`,
+  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`,
+  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`, and
+  `short_dated_ssvi_surface_completes_pool_valuation_flush`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
   a bounded-skew source rule, or explicit unavailable classification rather than
-  the named mandatory-path abort.
+  the named mandatory-path abort. Revisit the SVI bounds if the provider
+  publishes `sigma < 1e-5` or a live surface with `|a| > 100` reaches a NAV mark.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -359,14 +422,18 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 - **Trigger state:** `PauseCap` pauses trading (globally or per-market).
 - **Controller:** protocol (pause operator).
-- **Response:** mint paths abort; exits (redeem), settlement cleanup, and
-  valuation stay live and are governed only by the valuation lock. One-way
-  pause; recovery is admin-side.
+- **Response:** mint paths abort; the pause does not reach exits
+  (`redeem_live`, `redeem_settled*`), settlement cleanup, or valuation, which
+  keep only their own gates (version, the snapshot stage, and for a live redeem
+  the trade window and live-pricing freshness, including RP-37's Pyth check).
+  One-way pause; recovery is admin-side.
 - **Reasoning:** blocking exits during an emergency converts a safety switch
   into a user-fund trap; only new risk creation needs to stop.
 - **Risk profile:** n/a (semantics decision, not a probabilistic risk).
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `expiry_market_gate_tests.move` —
+  `mint_while_trading_paused_aborts` and
+  `redeem_live_while_trading_paused_closes`; `mint_exact_cost_tests.move` —
+  `mint_exact_cost_while_trading_paused_aborts`.
 - **Reopen when:** pause semantics are intentionally changed.
 
 ## RP-8: Deferred protocol profit — defer-and-carry (D033)
@@ -1026,19 +1093,25 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   1.4e14 against a `u64` ceiling of 1.8e19. That is headroom, not a proof — `b`
   ranges to 100e9, so the rounding slack in `inner` is large enough in principle
   to drive `w` lower — so the cap stays and is pinned at its own inputs.
-- **Pinning tests:** `pricing_guard_tests.move` —
-  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a loadable
-  surface whose per-strike variance is positive but floors to zero at 1e9 (the
-  region this policy admits) and asserts the independently generated digital;
+- **Pinning tests:** `pricing_exact_tests.move` —
+  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a
+  loadable surface whose per-strike variance at the forward is positive but under
+  one raw unit at 1e9 (0.99993e-9, the region this policy admits) and asserts the
+  independently generated digital, and
+  `one_raw_unit_variance_surface_prices_to_true_math` pins a surface whose
+  forward variance is exactly one raw unit; `pricing_guard_tests.move` —
   `d2_saturates_at_the_normal_clamp_instead_of_overflowing` drives the cap at the
   helper's scalar inputs, where a `w` of one raw unit at 1e18 makes the quotient
   exceed `u64` (unit-tests rule 4 — the guard is exercised at its own inputs
   because no admissible surface has been shown to reach it);
   `boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts` still
-  aborts (the surface it pins is negative on the true value, not only after
-  truncation), and `zero_total_variance_aborts_at_load` pins the unchanged
-  construction gate. Both new tests were mutation-checked: restoring the coarse
-  1e9 rejection fails the first two, and deleting the cap fails the second.
+  aborts: its rounded minimum clears the load gate by one raw unit, and at the
+  forward, the smile's minimum, the true variance is about 1e-9 while the floored
+  smile root takes that unit back, so the computed variance is 0. That is the
+  per-strike rounding boundary the backstop exists for, not a surface that is
+  negative in true math. `zero_total_variance_aborts_at_load` pins the unchanged
+  construction gate. Mutation checks: flooring the variance increment to 1e9 fails
+  the sub-unit test, and deleting the cap fails the `d2` test.
 - **Reopen when:** a surface is observed whose true total variance is positive
   but so small that `sqrt(w)` itself underflows the 1e9 result scale, or if the
   saturation cap is ever read by something other than `normal_cdf`/`normal_pdf`.
@@ -1206,7 +1279,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   price carries this transaction's digest. Pyth is checked only on the
   re-anchor branch (`use_pyth_spot_for_forward` and a fresh read); when the flag
   is off or the read is stale, Pyth is provenance-only and must not trip the
-  guard.
+  guard. A live trade on a pricer whose Pyth read was stale while the flag is
+  set aborts on RP-37's freshness gate instead, not here.
 - **Reasoning:** Without the guard, Variant A (mint → update → mint of the
   complement) extracts a risk-free box: the two legs together pay $1 and cost
   less than $1 against a stale-then-fresh forward. Variant C (update → redeem a
@@ -1247,7 +1321,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `write_bs_svi_only_then_load_pricer_same_tx_aborts`,
   `write_fresh_pyth_only_then_load_pricer_same_tx_aborts`,
   `pyth_write_same_tx_succeeds_when_reanchor_disabled`,
-  `pyth_write_same_tx_succeeds_when_pyth_read_is_stale`,
+  `pyth_write_same_tx_succeeds_when_pyth_read_is_stale` (pinned on live
+  valuation — a pricer load and `current_nav` in the same transaction as the
+  stale write — because every live trade refuses a stale Pyth spot on its own,
+  RP-37),
   `price_then_write_same_tx_is_permitted`.
   Propbook also pins digest survival across project_read in its own suite
   (outside this package's test tree).
@@ -1600,9 +1677,9 @@ worth-fixing.
 
 ## RP-32: The flush's stored mark cannot reach a trade path — `Pricer` is non-`store`, `FrozenPricer` is flush-only
 
-- **Trigger state:** the staged flush must carry one mark per market across transactions, so it needs a *storable* pricing snapshot. The live trade paths (`mint_exact_quantity`/`_amount`, `redeem_live`, and the quote functions) accept a caller-supplied `&Pricer` and gate it on market-id alone (`assert_pricer_bound`) — no freshness re-check, no `clock < expiry`, no oracle re-read, because a fresh mark is guaranteed some other way.
+- **Trigger state:** the staged flush must carry one mark per market across transactions, so it needs a *storable* pricing snapshot. The live trade paths (`mint_exact_quantity`/`_amount`/`_cost`, `redeem_live`, and the quote functions) accept a caller-supplied `&Pricer` and gate it on market-id (`assert_pricer_bound`), the trade window, and the Pyth timestamp the pricer itself recorded (RP-37) — no unconditional `clock < expiry` (`no_trade_window_ms = 0` disables the window), no oracle re-read, and no re-check of the Block Scholes inputs, because a fresh mark is guaranteed some other way.
 - **Controller:** any account composing its own PTB — permissionless and repeatable.
-- **Blast radius if the guarantee is a storable `Pricer`:** were the live `Pricer` type itself made storable (to satisfy the flush), the freshness guarantee for every trade would silently degrade from a type-level invariant to an unenforceable convention. An attacker calls the public `load_live_pricer` at a favorable instant, wraps the returned `Pricer` in their own `has store` object to persist it, and later replays that stale mark into `redeem_live` of their own position (or `mint_*`) with slippage floors at 0 — extracting the gap between the stale-favorable mark and true value from LP-backed pool cash. With no `clock < expiry` re-check, a pre-expiry mark is even replayable after expiry. It is a free look-back option to trade at the best mark seen since loading: permissionless, repeatable, direct LP theft.
+- **Blast radius if the guarantee is a storable `Pricer`:** were the live `Pricer` type itself made storable (to satisfy the flush), the freshness guarantee for every trade would silently degrade from a type-level invariant to an unenforceable convention. An attacker calls the public `load_live_pricer` at a favorable instant, wraps the returned `Pricer` in their own `has store` object to persist it, and later replays that stale mark into `redeem_live` of their own position (or `mint_*`) with slippage floors at 0 — extracting the gap between the stale-favorable mark and true value from LP-backed pool cash. With no unconditional `clock < expiry` re-check, a pre-expiry mark is even replayable after expiry while the trade window is disabled. It is a free look-back option to trade at the best mark seen since loading: permissionless, repeatable, direct LP theft.
 - **Response:** the freshness invariant is kept at the type level. `Pricer` has NO `store` ability — a non-`store` value cannot enter an object or dynamic field, so it cannot survive its loading transaction, and `load_live_pricer` (the only constructor) validates freshness at load. The flush's cross-transaction need is served by a SEPARATE `FrozenPricer` (`has store`) held only in `plp::PoolValuation`; it is constructed solely by `pricing::into_frozen` at the snapshot stage and consumed solely by `pricing::thaw` inside `expiry_market::snapshot_nav` (both `public(package)`). No live trade entrypoint accepts a `FrozenPricer`, so the compiler guarantees a persisted mark can never price a fund-moving trade. `thaw` produces a transient non-`store` `Pricer` for the frozen walk that likewise cannot outlive its transaction.
 - **Risk profile:** `MITIGATED-BY-CONSTRUCTION` — the guarantee is a type ability, not a runtime check, so it holds for every current and future trade path that takes `&Pricer` without a separate audit. The residual is purely the fidelity of the freeze/thaw round trip.
 - **Pinning tests:** `pricing_tests.move` — `freeze_then_thaw_preserves_the_mark` (the round trip reproduces the up-price, the range price, and the source timestamps bit-for-bit); the full flush's use of the frozen mark end to end is exercised by the staged-flush tests in `pool_valuation_flow_tests.move`. The core invariant — no trade path accepts a storable mark — is compile-time and needs no runtime pin.
@@ -1662,5 +1739,19 @@ worth-fixing.
 - **Risk profile:** n/a (sizing semantics, not a probabilistic risk). Cost, stated honestly: the budget search runs up to ~32 probes bounded by the lot cap, and the step-down search up to ~32 more in the rare case it runs. The range is priced once and both payout-tree reads are hoisted out of the loops, so no probe touches storage — but each probe does re-derive the quantity-independent fee rates, which costs a `sqrt_down` per finite leg (seven u128 divides each) plus one more inside the congestion penalty. Hoisting those would mean a probe that no longer routes through the function that charges, which is the invariant this entry exists to protect; the recompute is the price of that guarantee.
 - **Pinning tests:** `mint_exact_cost_tests.move` — `budget_below_the_next_lot_mints_the_largest_fitting_fill` and `budget_at_the_next_lot_all_in_cost_spends_it_exactly` (budget sizing pinned from both sides, the second at zero dust), `premium_budget_sizing_overspends_the_same_figure`; the non-monotone payout bound: `payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill` with `lot_below_the_sized_fill_is_inadmissible` (false at a smaller lot, true at the larger one sizing returns), `fill_at_the_largest_admissible_quantity_clears_its_own_floor`, `budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot`, `overshoot_past_the_maximum_payout_steps_down_instead_of_aborting` with `lot_above_a_payout_limited_fill_is_inadmissible`, `market_where_every_fill_is_loss_making_aborts_on_the_payout_bound`, `fill_whose_cost_equals_its_maximum_payout_mints`; slippage: `quantity_floor_aborts_when_the_price_moves_after_the_quote`, `quantity_floor_aborts_when_a_surcharge_lands_after_the_quote`, `quantity_floor_at_the_repriced_fill_mints`, `payout_limited_fill_below_the_quantity_floor_aborts`, against `congestion_surcharge_after_the_quote_resizes_instead_of_aborting`, `price_move_after_the_quote_resizes_instead_of_aborting` and `premium_budget_mint_aborts_when_the_surcharge_lands_after_the_quote`; each cost term inside the budget: `builder_fee_is_sized_inside_the_budget`, `builder_fee_at_its_own_rate_cap_sizes_exactly`, `sponsor_subsidy_is_sized_inside_the_budget`, `configured_subsidy_rate_is_sized_inside_the_budget`, `subsidy_capped_by_the_sponsored_balance_still_sizes_exactly`, `two_finite_legs_size_exactly`, `inventory_impact_is_sized_inside_the_budget`, `impact_above_the_curve_kink_still_sizes_exactly`, `impact_over_a_disjoint_book_sizes_exactly`, `impact_on_a_range_that_already_holds_exposure_sizes_exactly`; monotonicity of the total walked lot by lot: `all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch`, `all_in_cost_never_falls_across_the_subsidy_cap`, `all_in_cost_never_falls_across_the_subsidy_cap_at_the_maximum_rate`, `all_in_cost_never_falls_at_the_maximum_backing_buffer`; budget edges: `zero_budget_aborts`, `dust_budget_below_the_minimum_premium_aborts`, `empty_balance_caps_the_budget_to_zero`, `oversized_budget_and_balance_saturate_at_the_lot_cap`, `account_quote_is_the_exact_debit_of_the_mint_it_sizes`, `account_quote_caps_the_budget_to_the_account_balance`, `whole_balance_budget_leaves_less_than_one_lot_unspent`; the sized position is an ordinary one: `cost_sized_position_closes_live`, `cost_sized_winner_redeems_its_full_quantity_at_settlement`; `referral_fee_flow_tests.move` — `cost_sized_mint_routes_the_referral_and_emits_the_sized_fill`; `mint_terms_binding_tests.move` — `admitting_a_range_quoted_on_another_exposure_aborts`.
 - **Reopen when:** a mint charge becomes non-monotone in quantity (a volume discount, a per-order flat component that shrinks with size, an impact curve that can fall as liability rises), the subsidy-rate ceiling rises above one, a sizing mode arrives where `min_quantity` no longer bounds price per contract, the search's probe stops routing through the function that charges, or any bound other than the budget is folded into the budget search's predicate without a proof that it is monotone in quantity.
+
+## RP-37: A live trade does not execute on the Pyth-stale fallback
+
+- **Trigger state:** `use_pyth_spot_for_forward` is set and a live trade (a mint, a mint quote, or `redeem_live`) runs on a pricer loaded while the canonical Pyth spot was missing, non-normalizable, or older than `pyth_spot_freshness_ms`, so the pricer's forward is the Block Scholes forward rather than the Pyth-anchored one.
+- **Controller:** external — whoever relays Pyth Lazer updates into Propbook controls how old the latest spot is, and Pyth controls whether the feed prints at all. Writes are permissionless for anyone holding a verified payload, and a writer can only make the stored spot newer. Freshness keys on the time Pyth generated the price, so two states leave the spot stale while updates keep landing: Pyth carrying an unchanged price forward, and a generation timestamp ahead of the Sui clock, which Propbook's Pyth lane skips without aborting or emitting an event (P-31). The window itself is protocol-controlled: an `AdminCap` holder sets it.
+- **Blast radius:** feed-wide for as long as the state lasts. One Pyth feed serves every market on an underlying, so no live trade executes on any of them: no mint, no mint quote, and no live redeem, full or partial. Early exits stop with entries; a holder cannot close until the state clears. A window set shorter than Pyth can meet does the same on every underlying at once. No mandatory path gains an abort: `load_live_pricer`, `current_nav`, `live_order_value`, the flush's snapshot and valuation, settlement, and `redeem_settled`/`redeem_settled_permissionless` do not call the check. Valuation keeps pricing on the fallback, so the flush never stalls on a stale or missing Pyth spot, and settlement reads no live price, so every position stays redeemable at settlement.
+- **Response:** `abort` for mints, mint quotes, and live redeems; proceed for valuation. `expiry_market::assert_live_flow_allowed`, the gate all three mint entrypoints, all three mint quotes, and `redeem_live` share, ends with `pricing::assert_pyth_spot_fresh`, which aborts `EPythSpotUnavailable` when the pricer recorded no usable Pyth spot and `EPythSpotStale` when it recorded one older than the window. It runs after the version, snapshot-stage, pricer-binding, and trade-window checks, so on a mint it precedes `ETradingPaused` and `EMintPaused`. The load is unchanged: `load_live_pricer` still falls back, so valuation keeps pricing. The check re-evaluates the load's own selection predicate from the pricer's snapshotted Pyth source timestamp (`0` when there is no usable observation) against the same window and the same transaction clock. Unless `PricingConfig` changes between the load and the trade inside one transaction, which only an `AdminCap` holder can do, it fails exactly when the load fell back. With the setting clear it is skipped, because no Pyth spot feeds the forward.
+- **Reasoning:** the fallback keeps pricing alive through a gap in Pyth updates, but it moves the forward onto the lower-frequency source. A live redeem moves pool cash at the mark just as a mint does, and with the fallback open to both, a trade near the window edge could land on either side of the source switch; gating one direction would leave that open in the other. Each gated call is a single-user action its caller can retry after the next in-window update, which is the rung `abort` is for. Blocking an exit strands nothing: settlement prices from exact history, not the live forward, and settled redemption stays open, so a Pyth gap delays an early close rather than trapping the position. Valuation is a mandatory path, so it keeps the fallback. RP-7 covers a different trigger and its pause semantics are unchanged: the operator's trading pause still blocks new risk only, and this check is one of the live redeem's own gates that RP-7's Response lists. Reusing the fallback window rather than adding a separate threshold keeps the rule to one statement — a live trade never executes on the fallback — and adds no stored config; the accepted cost is coupling, since the bound on the Pyth age a trade executes against is also the point at which valuation switches source.
+- **Recovery:** a Pyth update whose generation timestamp is newer than the stored one and still within the window when the trade runs restores live trading with no admin action. A landed update is not enough on its own: a carried-forward price changes nothing, and a newer price already older than the window leaves the gate closed. Whoever lands it trades in a later transaction, because a pricer cannot use an observation written in its own transaction (RP-24). If Pyth itself is down, an admin clears `use_pyth_spot_for_forward` (mints and live redeems then price on the Block Scholes forward) or widens `pyth_spot_freshness_ms` up to its 60-second ceiling. Both setters are locked while a pool valuation is in flight, so neither lever is available until that flush ends. A holder who cannot wait holds to settlement.
+- **The window floor is also a live-trading stop:** `pyth_spot_freshness_ms` keeps its 1 ms floor. Before this rule a window too tight to meet only moved pricing onto the Block Scholes forward; now, while `use_pyth_spot_for_forward` is set, a window shorter than the time a Pyth update takes to land stops all live trading, exits included, and the only on-chain signal is `PricingConfigUpdated`, not a pause event.
+- **Version scope:** earlier package versions do not carry the check, so a mint or live redeem routed through one still executes on the fallback until the version watermark retires it. A wrapper package linked against an earlier Predict version, such as Sessions, whose mint and `redeem_live` wrappers call into that version, keeps the earlier behavior: the check binds there only after the wrapper is upgraded against the new Predict, and once the watermark retires the earlier version an un-upgraded wrapper aborts `EPackageVersionDisabled` instead.
+- **Risk profile:** `BEST-GUESS`; how often the trigger state occurs depends on relayer uptime and Pyth's own publishing, and neither has been measured under `evidence/`. Each occurrence now costs early exits as well as entries for its duration.
+- **Pinning tests:** `live_trade_pyth_freshness_tests.move` — the window boundary from both sides, on each trade direction: `mint_exact_quantity_one_ms_past_the_window_aborts` with `mint_exactly_at_the_window_succeeds`, and `redeem_live_one_ms_past_the_window_aborts` with `redeem_live_exactly_at_the_window_succeeds`; the remaining mint and quote entrypoints: `mint_exact_amount_on_a_stale_pyth_spot_aborts`, `mint_exact_cost_on_a_stale_pyth_spot_aborts`, `quote_mint_on_a_stale_pyth_spot_aborts`, `quote_mint_for_account_on_a_stale_pyth_spot_aborts`, `quote_mint_exact_cost_for_account_on_a_stale_pyth_spot_aborts`; the gate order, the Pyth check before the trading pause: `stale_pyth_aborts_a_mint_before_the_trading_pause`; the unavailable states: `mint_without_any_pyth_observation_aborts`, `mint_on_a_non_positive_pyth_print_aborts`, `redeem_live_without_any_pyth_observation_aborts`; the guard reads the configured window in both directions: `the_default_window_admits_a_spot_between_the_windows` with `a_tightened_window_rejects_the_same_spot` and `a_widened_window_admits_a_spot_past_the_default`; the setting: `deselecting_pyth_lifts_the_requirement` (mint and live redeem) and `deselected_pyth_ignores_an_unseeded_feed`; recovery: `a_new_pyth_push_restores_live_trading`; valuation keeps the fallback: `current_nav_on_a_stale_pyth_spot_still_prices` and `flush_on_a_stale_pyth_spot_completes`.
+- **Reopen when:** a trade-only bound tighter than the fallback window is wanted, any mandatory path (valuation, the flush, settlement, settled redemption) is gated on Pyth freshness, settlement stops being an exit that is independent of the live forward, the fallback itself is removed, or measured Pyth gaps keep holders from closing early for long enough to warrant a separate exit policy.
 
 ---

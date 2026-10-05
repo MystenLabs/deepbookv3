@@ -38,7 +38,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   consistent with settlement paying full quantity). *Rejected:* a symmetric
   redeem-side price band.
 - **Adjusted one-sided digital prices clamp to probability bounds.** The
-  pricing-safe envelope bounds each SVI parameter independently and enforces no
+  pricing-safe envelope bounds `b`, `rho`, `m`, and `sigma` independently, `a`
+  only through positive minimum total variance, and enforces no
   butterfly/no-arbitrage condition, so an admissible surface can push the raw
   skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any
   moneyness. The one-sided UP price saturates to `[0, 1]` and range differencing
@@ -321,6 +322,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  `use_pyth_spot_for_forward` clear the Block Scholes forward is used on every load,
 	  no fresh Pyth spot re-anchors it, and an oversized normalized Pyth spot is ignored
 	  rather than aborting — `EPythSpotInvalid` guards only the value the re-anchor consumes.
+	  *Now valuation-only:* the fallback still prices valuation, but while the setting is
+	  on every live trade (mint, mint quote, and live redeem) refuses it, so a stale or
+	  unusable Pyth spot now does block trading — see "Live trades refuse the Pyth-stale
+	  fallback; valuation keeps it" under "Switchable live-forward source".
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
@@ -668,12 +673,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   Block Scholes forward has never been measured against that accuracy gap. Colocation and other latency work can move that
   comparison, so the choice has to stay reversible from data rather than be
   frozen by a package upgrade. This does not supersede the Pyth-stale fallback
-  decision above: under the default setting that fallback is unchanged, and with
-  the setting off there is nothing to fall back from. It does narrow that entry's
-  one sub-claim that an oversized normalized Pyth spot "still aborts under
-  Predict's pricing envelope" — `EPythSpotInvalid` guards the value the re-anchor
-  consumes, so with the setting off an oversized print is ignored along with every
-  other Pyth print instead of aborting.
+  decision above: with the setting off there is nothing to fall back from, and under
+  the default the fallback still prices valuation, although live trades now refuse
+  it (see "Live trades refuse the Pyth-stale fallback; valuation keeps it" below).
+  It does narrow that entry's one sub-claim that an oversized normalized Pyth spot
+  "still aborts under Predict's pricing envelope" — `EPythSpotInvalid` guards the
+  value the re-anchor consumes, so with the setting off an oversized print is
+  ignored along with every other Pyth print instead of aborting.
 - **One global switch, live-read, valuation-locked.** It sits in `PricingConfig`
   with the freshness windows rather than in the per-expiry template snapshot, so
   it is not a contract term and it moves for every market at once — the same
@@ -690,6 +696,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   reintroduce exactly the state-triggered abort over an externally-controlled
   variable that response policy RP-5 removed. Disclosed in `docs/risks.md` instead.
 - **Pricing keys on each Block Scholes update's provider source timestamp.** Spot and forward observations map the signed `value_timestamp` to `source_timestamp_ms`; SVI observations map the signed `svi_timestamp`. That one clock orders each series, gates freshness, is snapshotted onto the `Pricer` for trade events, and anchors the SVI `a`/`b` roll-down. A retransmitted batch with an unchanged update timestamp does not refresh or re-anchor the observation. The signed value/SVI batch timestamp is retained only in `BlockScholesBatchIngested` for transport observability. `model_timestamp_ms` is removed because it duplicated the update timestamp under an ambiguous local name. *Supersedes* the earlier publish-time policy. *Rationale:* Block Scholes confirmed that `value_timestamp` and `svi_timestamp` are the source times consumers should use; using the batch timestamp conflated transport with data age and let retransmission renew freshness without a new observation. *Rejected:* retaining separate `model_timestamp_ms` and `source_timestamp_ms` fields for the same observation clock, and keying freshness or roll-down on the batch timestamp.
+- **Live trades refuse the Pyth-stale fallback; valuation keeps it.** While `use_pyth_spot_for_forward` is set, every mint, mint quote, and `redeem_live` aborts `pricing::EPythSpotUnavailable` or `pricing::EPythSpotStale` when the pricer it was handed fell back to the Block Scholes forward because the Pyth spot was missing, non-normalizable, or older than `pyth_spot_freshness_ms`. The check closes `expiry_market::assert_live_flow_allowed`, the gate every live trade shares. `load_live_pricer`, `current_nav`, `live_order_value`, and the flush snapshot still price on the fallback, and settlement and settled redemption read no live price. *Rationale:* the fallback exists so a gap in Pyth updates does not halt pricing, but it swaps the forward onto the lower-frequency source, and a live redeem moves pool cash at that mark just as a mint does. With the fallback open to either, a trade near the window edge could land on either side of the source switch, so exits are gated for the same reason as entries. Blocking an exit strands nothing: settlement prices from exact history rather than the live forward, and settled redemption stays open, so a Pyth gap delays an early close rather than trapping the position. Valuation is mandatory, so it keeps the fallback and the flush never stalls on a stale or missing Pyth spot. The check reuses the existing window instead of adding a separate threshold: the rule is "a live trade never executes on the fallback", it needs no new stored config, and it is the load's own selection predicate re-evaluated from the pricer's snapshotted Pyth timestamp, because `Pricer` cannot gain a field in a compatible upgrade. The cost of reusing the window is coupling: the bound on the Pyth age a trade executes against is also the point at which valuation switches source. *Consequence:* during a Pyth gap no live trade executes on any market of that underlying, early exits included, until an in-window update lands or an admin clears the setting or widens the window; the trading pause is unchanged and still blocks new risk only (RP-7). *Rejected:* gating mints only and leaving live redeems on the fallback, which keeps an exit able to execute on either side of the switch; aborting inside `load_live_pricer`, which would also stop valuation and stall the flush; applying the rule with the setting off, which would make a feed that prices nothing a liveness dependency for trading. *Revisit when:* a trade-only bound tighter than the fallback window is wanted (store it separately rather than narrowing the shared window), or Pyth gaps keep holders from closing early for long enough to warrant a separate exit policy. Earlier package versions lack the check, so it binds only once the version watermark retires them. RP-37 owns the response.
 
 ## Leverage removal (2026-08-14)
 
