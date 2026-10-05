@@ -7,7 +7,7 @@
 /// Registry operations are not version-gated because each feed owns its write version and migration path.
 module propbook::registry;
 
-use propbook::{block_scholes_store, pyth_feed::{Self, PythFeed}};
+use propbook::{block_scholes_store::{Self, BlockScholesSVIStore}, pyth_feed::{Self, PythFeed}};
 use std::string::String;
 use sui::{event, table::{Self, Table}};
 
@@ -36,7 +36,8 @@ public(package) macro fun value_kind_spot(): u8 {
     0
 }
 
-/// Root capability authorized to choose and replace canonical oracle bindings.
+/// Root capability authorized to choose and replace canonical oracle bindings and to choose the
+/// provider model each Block Scholes SVI store accepts and serves.
 /// The package exposes no on-chain revocation or rotation mechanism for it.
 public struct RegistryAdminCap has key, store {
     id: UID,
@@ -329,6 +330,22 @@ public fun replace_pyth_binding_for_underlying(
         pyth_binding_key(propbook_underlying_id),
     );
     feed.assign_underlying(propbook_underlying_id);
+}
+
+/// Admin-set the Block Scholes model `svi_store` derives its accepted and served SVI series ids from.
+///
+/// The provider can publish more than one SVI surface for the same asset and expiry, each under its
+/// own model name, and the series id hashes that name. Setting the model therefore chooses which
+/// surface every consumer of this store prices from. A store whose model was never set uses
+/// `"SVI"`. A relayer subscribed under the previous model has its SVI batches rejected as a
+/// foreign series until it resubscribes, and the new model's series read `none` until their
+/// first signed observation lands.
+public fun set_block_scholes_svi_model(
+    svi_store: &mut BlockScholesSVIStore,
+    _admin_cap: &RegistryAdminCap,
+    svi_model: String,
+) {
+    svi_store.set_svi_model(svi_model);
 }
 
 // === Public-Package Functions ===
