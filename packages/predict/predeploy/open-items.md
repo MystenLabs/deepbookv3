@@ -73,7 +73,8 @@ passing, on-chain and off, because the series id is correct for what it names.
 
 **Action:** Before a value-bearing deployment, devInspect the created stores'
 `spot_sid()` / `forward_sid(expiry)` / `svi_sid(expiry)` and assert they equal
-the ids the subscription layer derives. Those getters are `public fun` so an
+the ids the subscription layer derives. Repeat the `svi_sid` check, together
+with `svi_model()`, after every SVI model change. Those getters are `public fun` so an
 external caller can ask the chain what it will accept; nothing asks today.
 Confirm the bound base asset against the subscription config in the same step
 and record the answer, since no code path can.
@@ -360,7 +361,7 @@ Block Scholes signs SVI parameters at 1e9 fixed point, and on the last publicati
 
 The same scale sets a liveness edge. An SSVI slice's minimum total variance is `theta·(1 − rho²)`, and the load gate rounds `a` and floors the SVI increment at 1e9, so a slice whose `theta·(1 − rho²)` is under about 1e-9 loads with a minimum variance of zero and is rejected, aborting that market's pricer loads and the flush snapshot. At 20 s to expiry that happens below an ATM volatility of about 4% (about 5.6% if the provider truncates rather than rounds); Block Scholes' planned realised-volatility ATM level makes quiet windows the ones to watch. The 1e-5 sigma floor never binds first on SSVI slices (RP-5).
 
-**Action:** ask Block Scholes for a higher-precision SVI encoding (the store carries `u128`, so a 1e18 scale for `a` and `b` fits), or measure the mispricing against realized settlement on the final-seconds markets and disclose it in `docs/risks.md`. Until then, ask them to round rather than truncate at 1e9, to floor the ATM volatility their realised/implied blend can produce well above 4%, and to keep the staging and live SSVI feeds on the existing `SVI` series descriptor (model name and 9 decimals are part of the signed series id; a change aborts ingestion with `ESeriesIdMismatch`). Alert on `EBlockScholesMinVarianceInvalid` as well as `EBlockScholesInputsInvalid`. Rerun O-1's calibration on SSVI slices before enabling the one-minute cadence, and keep short-cadence minimum fees at or above the measured error until then.
+**Action:** ask Block Scholes for a higher-precision SVI encoding (the store carries `u128`, so a 1e18 scale for `a` and `b` fits), or measure the mispricing against realized settlement on the final-seconds markets and disclose it in `docs/risks.md`. Until then, ask them to round rather than truncate at 1e9, to floor the ATM volatility their realised/implied blend can produce well above 4%, and to keep the 9-decimal scale, which is part of the signed series id (a change aborts ingestion with `ESeriesIdMismatch`). The SVI model name is part of the id too, but since DBU-906 each SVI store's model is admin-set, so the provider's SSVI surface under `SVI_REGIME` is reached by setting the store's model rather than by keeping SSVI on the `SVI` descriptor. Alert on `EBlockScholesMinVarianceInvalid` as well as `EBlockScholesInputsInvalid`. Rerun O-1's calibration on SSVI slices before enabling the one-minute cadence, and keep short-cadence minimum fees at or above the measured error until then.
 
 ### P-34: The minimum-variance load gate rounds in both directions
 
@@ -465,6 +466,13 @@ Coupled exposures:
   fill against LPs. The order fee is returned, so it moves no value, but it is
   a trust surface no register records. Either limit `admin_refund` to Pending
   orders or record the decision.
+- The same `RegistryAdminCap` sets each Block Scholes SVI store's provider
+  model (`registry::set_block_scholes_svi_model`): one call switches the SVI
+  surface every market on that underlying prices from, or, with a model the
+  provider does not publish for some expiry, halts live pricing, live exits,
+  and the pool flush for the whole underlying. Like a rebind, it also makes
+  queued orders' commits abort until the new model's observations land or
+  their deadline refunds them.
 
 **Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
 multisig custody plus a rotation/replacement mechanism for each non-rotatable
@@ -527,6 +535,10 @@ correctness today.
   `pricing::chk_oracles`, and the duplicated
   `block_scholes_base_asset` field whose two copies agree only by construction
   and can never be checked against each other on-chain.
+- An SVI model change (DBU-906) rotates the SVI identity space the same way
+  for one underlying: the previous model's rows go dead to every reader linked
+  to Propbook v2 or later, and a missing series under the new model fails
+  closed exactly like a stopped feed.
 - Every series id is scoped to the verifier package id
   (`type_name::original_id<PackageMarker>()`), so repointing Propbook at a new
   `bs_oracle` publication rotates the entire identity space at once: stored rows
