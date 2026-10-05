@@ -122,9 +122,11 @@ A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvel
 Block Scholes data lives in two per-underlying shared objects:
 
 - `block_scholes_store::BlockScholesValueStore`: ten recent spot observations in an inline vector with a next-write index, latest forwards keyed by signed series id, and separate exact minute-boundary spot history keyed by `source_timestamp_ms`, all for one immutable provider base asset.
-- `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets, bound to the same base asset and keyed by signed series id.
+- `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets, bound to the same base asset, keyed by signed series id, and derived under an admin-set provider model.
 
-Writes are permissionless and enter only through `apply_spot_batch`, `insert_at`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
+Writes are permissionless and enter only through `apply_spot_batch`, `insert_at`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor (for SVI, including the store's provider model), value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
+
+An SVI series id also hashes the provider's model name, and the provider can publish more than one SVI surface for the same asset and expiry, each under its own model. Each SVI store therefore carries an admin-set model, `"SVI"` until `registry::set_block_scholes_svi_model` sets another, and `svi_model` returns it so a relayer can derive its subscription from the chain. Writes and reads switch together: after a change, a batch signed under the previous model aborts as a foreign series (`ESeriesIdMismatch`), the new model's series read `none` until their first signed observation lands, and the previous model's rows stay in the table, unreachable until that model is set back. The model lives in a dynamic field on the store because it became admin-set after deploy; a store that never had it set reads `"SVI"`, the model earlier package versions hardcoded, so no migration step is needed. Setting it is version-gated like every store write, accepts 1 to 32 bytes, and emits `BlockScholesSVIModelSet`.
 
 Each stored observation carries two clocks: its provider source timestamp and its Sui execution time. Spot and forward source timestamps come from the signed update's `value_timestamp`; SVI source timestamps come from the signed update's `svi_timestamp`. A series advances only when its source timestamp is strictly newer than the stored one, so a retransmission with an unchanged update timestamp cannot refresh the observation. A zero or future source timestamp is skipped. Predict uses that one source timestamp for freshness, trade-event provenance, and, for SVI, the `a`/`b` roll-down anchor. The signed value/SVI batch timestamp is retained only on `BlockScholesBatchIngested` for provider-batch observability and does not participate in observation validity or ordering.
 
@@ -163,7 +165,8 @@ Canonical binding is admin-gated because it is the trust claim that a source id
 represents a Propbook underlying.
 
 Admin trust model: package init mints one `RegistryAdminCap`, and canonical
-bindings are controlled by whoever holds that cap. Propbook does not implement
+bindings and each Block Scholes SVI store's provider model are controlled by
+whoever holds that cap. Propbook does not implement
 on-chain multisig, rotation, or timelock. Production deployments should treat the
 cap as governance custody and enforce multisig/timelock operationally, or add an
 on-chain governance layer before relying on registry bindings as a trust anchor.
@@ -213,6 +216,7 @@ Block Scholes stores emit their dedicated event surface:
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
 - `BlockScholesObservationRecorded<Observation>` records every stored observation with its Propbook underlying, store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
 - `BlockScholesObservationInserted<Observation>` records every canonical spot inserted into exact minute-boundary history with its store ID and observation payload.
+- `BlockScholesSVIModelSet` records the Propbook underlying, SVI store ID, and provider model each time the admin sets an SVI store's model.
 - `BlockScholesBatchIngested` records every verified batch with its Propbook underlying, store ID, series kind (`0` spot, `1` forward, `2` SVI), provider batch time, on-chain ingestion time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
