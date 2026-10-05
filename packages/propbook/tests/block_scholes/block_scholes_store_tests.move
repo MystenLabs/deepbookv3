@@ -1336,6 +1336,41 @@ fun each_models_observations_return_when_it_is_set_back() {
     scenario.end();
 }
 
+/// The batch path reads the model once and derives every expiry's series id from it.
+#[test]
+fun a_multi_expiry_batch_under_a_switched_model_lands_every_expiry() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    store::apply_svi_batch(
+        &mut svi_store,
+        verify::new_svi_batch_for_testing(
+            BATCH_EARLY,
+            vector[
+                svi_update_with_sid(independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_A), SOURCE_EARLY),
+                svi_update_with_sid(independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_B), SOURCE_MID),
+            ],
+        ),
+        vector[EXPIRY_A, EXPIRY_B],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_EARLY,
+    );
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_B).destroy_some().read_source_timestamp_ms(),
+        SOURCE_MID,
+    );
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
 #[test]
 fun a_maximum_length_model_is_accepted() {
     let (scenario, _value_id, svi_id) = setup_stores();
@@ -1370,16 +1405,42 @@ fun an_empty_model_aborts() {
     abort
 }
 
+/// A store still at the previous package version cannot take a model: the old package's writers,
+/// which derive under the hardcoded default, stay live until the store migrates.
 #[test, expected_failure(abort_code = store::EWrongVersion)]
 fun setting_the_model_on_an_unmigrated_store_aborts() {
     let (scenario, value_id, svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
-    store::set_store_versions_for_testing(&mut value_store, &mut svi_store, 0);
+    store::set_store_versions_for_testing(
+        &mut value_store,
+        &mut svi_store,
+        constants::current_version!() - 1,
+    );
 
     store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
 
     abort
+}
+
+#[test]
+fun a_migrated_store_takes_a_model() {
+    let (scenario, value_id, svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    store::set_store_versions_for_testing(
+        &mut value_store,
+        &mut svi_store,
+        constants::current_version!() - 1,
+    );
+
+    store::migrate_svi_store(&mut svi_store);
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+
+    assert_eq!(svi_store.svi_model(), SVI_REGIME_MODEL.to_string());
+    return_shared(value_store);
+    return_shared(svi_store);
+    scenario.end();
 }
 
 // === Store identity and version ===

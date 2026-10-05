@@ -336,10 +336,13 @@ public fun replace_pyth_binding_for_underlying(
 ///
 /// The provider can publish more than one SVI surface for the same asset and expiry, each under its
 /// own model name, and the series id hashes that name. Setting the model therefore chooses which
-/// surface every consumer of this store prices from. A store whose model was never set uses
-/// `"SVI"`. A relayer subscribed under the previous model has its SVI batches rejected as a
-/// foreign series until it resubscribes, and the new model's series read `none` until their
-/// first signed observation lands.
+/// surface every consumer of this store prices from, for every expiry at once. A store whose model
+/// was never set uses `"SVI"`, and the store must be at the running package version.
+/// After a change, a batch signed under any other model aborts as a foreign series, so a relayer
+/// must resubscribe under the new model. A model never used on this store reads `none` until its
+/// first signed observation lands; a model set back serves its last stored rows, which consumers'
+/// freshness checks reject until newer ones land. Confirm the provider publishes the model for
+/// every expiry the store serves before setting it.
 public fun set_block_scholes_svi_model(
     svi_store: &mut BlockScholesSVIStore,
     _admin_cap: &RegistryAdminCap,

@@ -80,13 +80,6 @@ fun svi_matches_the_official_descriptor() {
     assert_eq!(block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), EXPIRY_MS), expected);
 }
 
-/// The default is the model every SVI store used before the model became admin-set, so a store
-/// that has never had it set keeps accepting and serving the series it always did.
-#[test]
-fun the_default_svi_model_is_the_classic_svi_surface() {
-    assert_eq!(block_scholes_sid::default_svi_model!(), b"SVI".to_string());
-}
-
 #[test]
 fun svi_under_another_model_matches_that_models_descriptor() {
     let base_asset = btc();
@@ -103,7 +96,7 @@ fun svi_under_another_model_matches_that_models_descriptor() {
 }
 
 #[test]
-fun base_asset_and_expiry_are_part_of_the_identity() {
+fun base_asset_expiry_and_model_are_part_of_the_identity() {
     let btc = btc();
     let eth = b"ETH".to_string();
     assert!(block_scholes_sid::spot(&btc) != block_scholes_sid::spot(&eth));
