@@ -3,8 +3,8 @@
 
 /// Pins Propbook's chosen Block Scholes descriptors against explicit calls to the provider-owned
 /// SID package. The upstream package's own vectors pin BCS and hashing; these tests pin the asset,
-/// exchange, model, scale, timestamp precision, expiry shape, and oracle-package domain Propbook
-/// passes into that implementation.
+/// exchange, default model, scale, timestamp precision, expiry shape, and oracle-package domain
+/// Propbook passes into that implementation.
 #[test_only]
 module propbook::block_scholes_sid_tests;
 
@@ -16,6 +16,7 @@ use std::{string::String, type_name, unit_test::assert_eq};
 const EXPIRY_MS: u64 = 1_785_888_000_000;
 /// Block Scholes signs every Propbook scalar and SVI value at nine decimal places.
 const DECIMALS: u8 = 9;
+const SVI_REGIME: vector<u8> = b"SVI_REGIME";
 const ORACLE_VECTOR_SCOPE: address =
     @0x1111111111111111111111111111111111111111111111111111111111111111;
 const SPOT_HYPE_OFFICIAL: u256 = 0x215ab77d29adef1066cb6a229a7e74e083bee79b5aff973a36d2ba2aa8f560f3;
@@ -76,7 +77,29 @@ fun svi_matches_the_official_descriptor() {
         DECIMALS,
         b"ms".to_string(),
     );
-    assert_eq!(block_scholes_sid::svi(&base_asset, EXPIRY_MS), expected);
+    assert_eq!(block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), EXPIRY_MS), expected);
+}
+
+/// The default is the model every SVI store used before the model became admin-set, so a store
+/// that has never had it set keeps accepting and serving the series it always did.
+#[test]
+fun the_default_svi_model_is_the_classic_svi_surface() {
+    assert_eq!(block_scholes_sid::default_svi_model!(), b"SVI".to_string());
+}
+
+#[test]
+fun svi_under_another_model_matches_that_models_descriptor() {
+    let base_asset = btc();
+    let expected = sid::model_params(
+        oracle_package_id(),
+        b"option".to_string(),
+        copy base_asset,
+        SVI_REGIME.to_string(),
+        sid::expiry_at(EXPIRY_MS),
+        DECIMALS,
+        b"ms".to_string(),
+    );
+    assert_eq!(block_scholes_sid::svi(&base_asset, &SVI_REGIME.to_string(), EXPIRY_MS), expected);
 }
 
 #[test]
@@ -88,6 +111,10 @@ fun base_asset_and_expiry_are_part_of_the_identity() {
         block_scholes_sid::forward(&btc, EXPIRY_MS) !=
         block_scholes_sid::forward(&btc, EXPIRY_MS + 1),
     );
+    assert!(
+        block_scholes_sid::svi(&btc, &b"SVI".to_string(), EXPIRY_MS) !=
+        block_scholes_sid::svi(&btc, &SVI_REGIME.to_string(), EXPIRY_MS),
+    );
 }
 
 #[test]
@@ -95,7 +122,7 @@ fun series_shapes_are_distinct() {
     let base_asset = btc();
     let spot = block_scholes_sid::spot(&base_asset);
     let forward = block_scholes_sid::forward(&base_asset, EXPIRY_MS);
-    let svi = block_scholes_sid::svi(&base_asset, EXPIRY_MS);
+    let svi = block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), EXPIRY_MS);
     assert!(spot != forward);
     assert!(spot != svi);
     assert!(forward != svi);
