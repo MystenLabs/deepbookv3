@@ -95,7 +95,8 @@ Predict reads it but does not own it.
   `propbook::pyth_feed`.
 - **`BlockScholesValueStore`** — one per-underlying store of ten recent BS spots in an inline ring, latest forwards keyed by signed series id, and separate insert-only exact minute-boundary spot history. Predict reads `forward(expiry_ms)` then `recent_spot_at(forward_source_timestamp_ms)` to select an exact source-time pair; each read retains its own landing time and writer digest. The selected source timestamp gates freshness and is reported in trade events. `spot_at(expiry_ms)` remains the settlement fallback. Code module `propbook::block_scholes_store`.
 - **`BlockScholesSVIStore`** — one per-underlying store of the latest BS SVI
-  parameter sets, keyed by signed series id. Predict reads `svi(expiry_ms)` and
+  parameter sets, keyed by signed series id under the store's admin-set provider
+  model (`"SVI"` until set). Predict reads `svi(expiry_ms)` and
   its `source_timestamp_ms`, one clock for freshness, the roll-down anchor, and
   trade-event reporting. Code module `propbook::block_scholes_store`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied

@@ -1361,7 +1361,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reasoning:** a Pyth wrapper represents one replaceable provider source, but
   a Block Scholes pair permanently binds one Propbook underlying to an immutable
   provider base asset and the descriptor-derived spot, forward, and SVI series
-  for that asset. A bad observation can advance in place; a wrong base-asset
+  for that asset (the SVI series under the store's admin-set provider model,
+  DBU-906). A bad observation can advance in place; a wrong base-asset
   spelling cannot, so it must be prevented by confirming the provider's
   acknowledged subscription before creation. A generic rebind would instead let
   an admin switch all markets to fresh empty state without a concrete migration
