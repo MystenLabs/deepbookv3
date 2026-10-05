@@ -102,8 +102,10 @@ public struct BlockScholesSVIStore has key {
 
 /// Dynamic-field key on `BlockScholesSVIStore` for its admin-set `String` provider model. The model
 /// became admin-set after deploy, so it lives off the struct layout; an absent field reads as
-/// `block_scholes_sid::default_svi_model`, the model earlier package versions hardcoded, so no
-/// migration step is needed.
+/// `block_scholes_sid::default_svi_model`, the model earlier package versions hardcoded, so stores
+/// need no data migration. Reads are ungated and every package version stays callable, so this key,
+/// its `String` value, and the default's spelling are permanent: changing the default would
+/// silently re-key every store whose model was never set.
 public struct SviModelKey() has copy, drop, store;
 
 /// Emitted only for observations that were stored, so its presence means the series advanced.
@@ -420,10 +422,9 @@ public(package) fun create_and_share_value_store(
     id
 }
 
-/// Set the provider model this store derives its SVI series ids from. Writes and reads switch
-/// together: a batch signed under any other model aborts as a foreign series, and observations
-/// stored under the previous model stay in the table but are unreachable until it is set back.
-/// A series under the new model reads `none` until its first observation lands.
+/// Set the provider model this store derives its SVI series ids from; writes and reads switch
+/// together. Rows stored under other models stay keyed by their own series ids. The public contract
+/// lives on `registry::set_block_scholes_svi_model`.
 public(package) fun set_svi_model(store: &mut BlockScholesSVIStore, svi_model: String) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
     assert!(!svi_model.is_empty(), EInvalidSviModel);
