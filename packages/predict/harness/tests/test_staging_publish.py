@@ -248,6 +248,30 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("bs_oracle", rewritten["dep-replacements"]["testnet"])
         self.assertEqual(canonical.read_bytes(), before)
 
+    def test_consumer_rewrite_points_the_order_flow_companion_at_staged_oracles(self) -> None:
+        canonical = config.PACKAGES_DIR / "predict_orders" / "Move.toml"
+        before = canonical.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "Move.toml"
+            manifest.write_bytes(before)
+            publish.rewrite_consumer(
+                manifest, root / "pyth", "0x11", root / "wormhole", "0x22",
+                root / "bs_oracle", "0x33", root / "bs_sid", "0x44",
+            )
+            rewritten = staging._manifest(manifest)
+            self.assertEqual(rewritten["dependencies"]["pyth_lazer"], {"local": str(root / "pyth")})
+            self.assertEqual(rewritten["dependencies"]["bs_oracle"], {"local": str(root / "bs_oracle")})
+            self.assertEqual(rewritten["dep-replacements"]["testnet"]["bs_oracle"]["original-id"], "0x33")
+            self.assertEqual(rewritten["dependencies"]["deepbook_predict"], {"local": "../predict"})
+        self.assertEqual(canonical.read_bytes(), before)
+
+    def test_the_order_flow_companion_publishes_after_predict(self) -> None:
+        order = publish.publication_order()
+        self.assertIn("predict_orders", config.LOCAL_CLOSURE)
+        self.assertLess(order.index("predict"), order.index("predict_orders"))
+        self.assertLess(order.index("predict_math"), order.index("predict_orders"))
+
     def test_publication_order_is_topological(self) -> None:
         order = publish.publication_order()
         positions = {name: index for index, name in enumerate(order)}

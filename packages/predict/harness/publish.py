@@ -38,6 +38,17 @@ PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
         "propbook",
         "predict_math",
     ),
+    "predict_orders": (
+        "usdc",
+        "fixed_math",
+        "account",
+        "wormhole",
+        "pyth_lazer",
+        "bs_oracle",
+        "propbook",
+        "predict_math",
+        "predict",
+    ),
 }
 
 
@@ -154,9 +165,10 @@ def rewrite_consumer(
     bs_sid_id: str,
     build_env: str = config.BUILD_ENV,
 ) -> None:
-    """Point a staged Propbook, Predict, or Predict-math manifest at staged oracle
-    packages. The math library has no Block Scholes dependency, so `bs_oracle`,
-    like `bs_sid`, is rewritten only where the manifest declares it."""
+    """Point a staged Propbook, Predict, Predict-math, or order-flow companion
+    manifest at staged oracle packages. The math library has no Block Scholes
+    dependency, so `bs_oracle`, like `bs_sid`, is rewritten only where the
+    manifest declares it."""
     text = toml_path.read_text()
     text = _replace_first(
         r"(?m)^pyth_lazer = \{ (?:git|local)[^}]*\}",
@@ -333,7 +345,7 @@ def publish_closure(
         elif name in {"bs_oracle", "bs_sid"}:
             rewrite_block_scholes_package(paths[name] / "Move.toml")
             staging.validate_workspace(workspace)
-        elif name in {"propbook", "predict_math", "predict"}:
+        elif name in {"propbook", "predict_math", "predict", "predict_orders"}:
             rewrite_consumer(
                 paths[name] / "Move.toml",
                 paths["pyth_lazer"],
