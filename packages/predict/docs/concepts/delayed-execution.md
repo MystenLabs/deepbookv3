@@ -99,7 +99,7 @@ The deadline is `min(τ + stall_timeout_ms, expiry)`, never earlier than the mar
 
 The cutoff is `expiry − max(no_trade_window_ms, stall_timeout_ms + 5_000)`. An order whose τ is at or past the cutoff aborts `EPastCutoff`. Every deadline therefore falls at least 5 seconds before expiry, and every waiting order is due before the market can settle.
 
-Launch runs at an 800 ms delay and a 10-second no-trade window, which an admin sets over the compiled defaults of 1,000 ms and 2 seconds. On the 200 ms channel with the 5-second stall timeout, τ then falls 600 to 800 ms after placement, the deadline falls 5 seconds after τ, and the cutoff is 10 seconds before expiry, so new orders stop about 11 seconds before expiry. With the compiled defaults, τ falls 0.8 to 1.0 seconds after placement and the cutoff is also 10 seconds before expiry, because the stall timeout plus its 5-second margin is the larger term.
+Launch runs at the compiled 800 ms delay and a 10-second no-trade window, which an admin sets over its 2-second compiled default. On the 200 ms channel with the 5-second stall timeout, τ then falls 600 to 800 ms after placement, the deadline falls 5 seconds after τ, and the cutoff is 10 seconds before expiry, so new orders stop about 11 seconds before expiry.
 
 ## Commit
 
@@ -221,7 +221,7 @@ The batch bounds come from Sui's limit of 1,000 dynamic-object loads per transac
 
 | Field | Default | Bound | What it does |
 | --- | --- | --- | --- |
-| `delay_ms` | 1,000 (launch runs at 800) | 0 to 5,000 | The latest τ may fall after placement |
+| `delay_ms` | 800 | 0 to 5,000 | The latest τ may fall after placement |
 | `pyth_channel` | `3` (`fixed_rate@200ms`) | `2` (`fixed_rate@50ms`) or `3` | The tick grid for new orders' τ |
 | `stall_timeout_ms` | 5,000 | 2,000 to 10,000 | Time from τ to the deadline |
 | `stuck_threshold_ms` | 1,500 | 50 to 10,000, and at least one tick | When the stuck gate refuses new orders |
@@ -236,7 +236,7 @@ The batch bounds come from Sui's limit of 1,000 dynamic-object loads per transac
 | `settle_refund_batch` | 450 | 1 to 450 | Records one `try_settle` call visits while refunding |
 | `settle_payout_batch` | 900 | 1 to 900 | Records one `try_settle` call visits while paying |
 
-Times are milliseconds and USDC amounts are base units. The table lists compiled defaults. Launch runs `delay_ms` at 800, and `no_trade_window_ms` on `ProtocolConfig`, which also bounds the cutoff, at 10 seconds.
+Times are milliseconds and USDC amounts are base units. The table lists compiled defaults, which are also the launch settings. Launch runs `no_trade_window_ms` on `ProtocolConfig`, which also bounds the cutoff, at 10 seconds.
 
 - `set_delayed_execution_timing` sets the delay, stall timeout, stuck threshold, gap wait, price buffer, channel, and SVI age together, so the relational rules are checked on the final state. The channel must be a fixed-rate Lazer channel (`EUnsupportedPythChannel`). The buffer must be zero or one tick, the stuck threshold at least one tick, and `pyth_price_buffer_ms < stuck_threshold_ms <= gap_wait_ms < stall_timeout_ms` (`EInvalidDelayedExecutionTiming`). `gap_wait_ms < stall_timeout_ms` leaves commit room to take a backup tick before the deadline refund.
 - `set_delayed_execution_limits` sets both capacities, the per-account cap, the minimum sell, and both settle batches. The per-account cap may not exceed the smaller capacity (`EInvalidDelayedExecutionLimits`).
