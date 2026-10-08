@@ -57,6 +57,7 @@ import {
     ensureMarkets,
     marketQueueCreationTransaction,
     marketQueueId,
+    moveSourceTypeOriginsOf,
     recordPublish,
     assertPackagePlan,
     assertRecoverableInFlight,
@@ -2489,4 +2490,44 @@ test("DEEP resolution uses the module identity instead of an incidental token di
     } finally {
         rmSync(directory, { recursive: true, force: true });
     }
+});
+
+test("expected type origins skip test-only declarations, as a production publish does", () => {
+    const origins = moveSourceTypeOriginsOf([
+        {
+            path: "sources/queue.move",
+            source: [
+                "module pkg::queue;",
+                "",
+                "/// One per market.",
+                "public struct MarketQueue has key { id: UID }",
+                "",
+                "#[test_only]",
+                "/// Stands in for a verified update.",
+                "public struct TestUpdate has copy, drop { channel: u8 }",
+                "",
+                "#[allow(unused_field)]",
+                "public enum Phase has copy, drop { Drain, Pay }",
+            ].join("\n"),
+        },
+        {
+            path: "sources/fixture.move",
+            source: ["#[test_only]", "module pkg::fixture;", "", "public struct Fixture {}"].join("\n"),
+        },
+    ]);
+    assert.deepEqual(origins, [
+        { module: "queue", datatype: "MarketQueue" },
+        { module: "queue", datatype: "Phase" },
+    ]);
+
+    // The companion declares `queue::TestUpdate` under `#[test_only]`, which its publish strips.
+    const directory = resolve(import.meta.dirname, "..", "..", "predict_orders", "sources");
+    const companion = moveSourceTypeOriginsOf(
+        readdirSync(directory)
+            .filter((name) => name.endsWith(".move"))
+            .map((name) => ({ path: name, source: readFileSync(join(directory, name), "utf8") })),
+    ).map((origin) => `${origin.module}::${origin.datatype}`);
+    assert.ok(companion.includes("queue::MarketQueue"));
+    assert.ok(companion.includes("desk::OrderDesk"));
+    assert.ok(!companion.includes("queue::TestUpdate"));
 });

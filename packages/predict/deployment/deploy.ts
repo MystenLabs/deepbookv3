@@ -2288,28 +2288,59 @@ function packageMetadata(runtime: Runtime, id: string): ReturnType<typeof parseP
     return metadata;
 }
 
-function moveSourceTypeOrigins(directory: string): CompiledPackageMetadata["typeOrigins"] {
+// Whether the declaration at `lines[index]` carries `#[test_only]`: its attribute lines sit
+// directly above it, possibly interleaved with doc comments and blank lines.
+function testOnlyDeclaration(lines: readonly string[], index: number): boolean {
+    for (let line = index - 1; line >= 0; line -= 1) {
+        const text = lines[line]!.trim();
+        if (text === "" || text.startsWith("//")) continue;
+        if (!text.startsWith("#[")) return false;
+        if (/\btest_only\b/.test(text)) return true;
+    }
+    return false;
+}
+
+// The datatypes a production build of the package's sources declares. A normal publish strips
+// `#[test_only]` modules and declarations, so they never get a type origin.
+export function moveSourceTypeOriginsOf(
+    sources: ReadonlyArray<{ path: string; source: string }>,
+): CompiledPackageMetadata["typeOrigins"] {
     const origins: CompiledPackageMetadata["typeOrigins"] = [];
+    for (const { path, source } of sources) {
+        const lines = source.split("\n");
+        const moduleLine = lines.findIndex((line) =>
+            /^\s*module\s+[A-Za-z0-9_]+::[A-Za-z0-9_]+\s*;/.test(line),
+        );
+        if (moduleLine < 0) throw new Error(`${path} has no Move module declaration`);
+        if (testOnlyDeclaration(lines, moduleLine)) continue;
+        const module = lines[moduleLine]!.match(/::([A-Za-z0-9_]+)\s*;/)![1]!;
+        lines.forEach((line, index) => {
+            const match = line.match(
+                /^\s*(?:public(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/,
+            );
+            if (match && !testOnlyDeclaration(lines, index)) {
+                origins.push({ module, datatype: match[1]! });
+            }
+        });
+    }
+    return origins.sort((left, right) =>
+        `${left.module}::${left.datatype}`.localeCompare(`${right.module}::${right.datatype}`),
+    );
+}
+
+function moveSourceTypeOrigins(directory: string): CompiledPackageMetadata["typeOrigins"] {
+    const sources: Array<{ path: string; source: string }> = [];
     const visit = (path: string): void => {
         for (const entry of readdirSync(path, { withFileTypes: true })) {
             const child = resolve(path, entry.name);
             if (entry.isDirectory()) visit(child);
             else if (entry.isFile() && entry.name.endsWith(".move")) {
-                const source = readFileSync(child, "utf8");
-                const module = source.match(/\bmodule\s+[A-Za-z0-9_]+::([A-Za-z0-9_]+)\s*;/)?.[1];
-                if (!module) throw new Error(`${child} has no Move module declaration`);
-                for (const match of source.matchAll(
-                    /^\s*(?:public(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/gm,
-                )) {
-                    origins.push({ module, datatype: match[1] });
-                }
+                sources.push({ path: child, source: readFileSync(child, "utf8") });
             }
         }
     };
     visit(resolve(directory, "sources"));
-    return origins.sort((left, right) =>
-        `${left.module}::${left.datatype}`.localeCompare(`${right.module}::${right.datatype}`),
-    );
+    return moveSourceTypeOriginsOf(sources);
 }
 
 function compiledPackageMetadata(pkg: PackageName): CompiledPackageMetadata {
