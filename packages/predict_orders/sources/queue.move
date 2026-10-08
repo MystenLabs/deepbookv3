@@ -681,8 +681,10 @@ public fun cleanup(
 
 // --- Settlement ---
 
-/// Run one bounded settlement phase on this queue and return the phase it
-/// reached. Permissionless; aborts `EMarketNotExpired` before expiry.
+/// Run one bounded settlement phase on this queue and return the phase the
+/// queue is in afterwards, which the next call runs (`phase_drain`,
+/// `phase_pay`, or `phase_done`). Permissionless; aborts `EMarketNotExpired`
+/// before expiry.
 ///
 /// - DRAIN, while unfinished orders remain: refund them in τ order with reason
 ///   5, visiting at most the policy's `settle_refund_batch` records, refunded
@@ -1502,6 +1504,12 @@ fun send_or_destroy(funds: Balance<USDC>, recipient: address) {
 }
 
 // === Test-Only Functions ===
+
+#[test_only]
+/// The receipt a record holds, for checks against Predict's admission.
+public(package) fun receipt_for_testing(queue: &MarketQueue, record_id: u64): &OrderReceipt {
+    queue.book.receipt(record_id)
+}
 
 #[test_only]
 public fun new_test_update(

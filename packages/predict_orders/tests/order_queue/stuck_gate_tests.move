@@ -5,9 +5,9 @@
 /// policy (delay 1_000 on the 200 ms channel): an order at `BASE + k * 200`
 /// gets τ = `BASE + 1_000 + k * 200`.
 #[test_only]
-module deepbook_predict::stuck_gate_tests;
+module deepbook_predict_orders::stuck_gate_tests;
 
-use deepbook_predict::{order_queue::{Self, OrderBook}, order_queue_test_helpers as h};
+use deepbook_predict_orders::{order_queue::{Self, OrderBook}, order_queue_test_helpers as h};
 use std::unit_test::{assert_eq, destroy};
 
 const BASE: u64 = 1_000_000_000;

@@ -4,9 +4,9 @@
 /// τ, deadline, and cutoff planning, worked by hand. `BASE` is a multiple of
 /// both channel ticks, so every expected τ below is `BASE` plus a round offset.
 #[test_only]
-module deepbook_predict::plan_timing_tests;
+module deepbook_predict_orders::plan_timing_tests;
 
-use deepbook_predict::{
+use deepbook_predict_orders::{
     delayed_execution_config::DelayedExecutionPolicy,
     order_queue::{Self, OrderBook},
     order_queue_test_helpers as h
@@ -22,7 +22,8 @@ const NO_TRADE_WINDOW_ZERO: u64 = 0;
 const DELAY_ZERO: u64 = 0;
 const DELAY_800: u64 = 800;
 const DELAY_DEFAULT: u64 = 1_000;
-const STALL_LOW: u64 = 2_000;
+/// Above the fixture gap wait of 2_000, which the stall timeout must exceed.
+const STALL_LOW: u64 = 3_000;
 const STALL_DEFAULT: u64 = 5_000;
 const STALL_HIGH: u64 = 8_000;
 /// stall timeout + the 5 s deadline margin at the default stall timeout.
@@ -194,8 +195,8 @@ fun a_new_cohort_deadline_never_drops_after_the_stall_timeout_is_lowered() {
     // τ = BASE + 31_000, D = BASE + 36_000.
     place(&mut book, &h::default_policy(), T0);
 
-    // Stall lowered to 2_000. BASE + 30_330 + 1_000 rounds to BASE + 31_200, a
-    // new cohort: min(τ + 2_000, expiry) = BASE + 33_200, raised to last D.
+    // Stall lowered to 3_000. BASE + 30_330 + 1_000 rounds to BASE + 31_200, a
+    // new cohort: min(τ + 3_000, expiry) = BASE + 34_200, raised to last D.
     let lowered = h::policy(DELAY_DEFAULT, STALL_LOW, h::channel_200ms());
     let timing = book.plan_timing(&lowered, EXPIRY, NO_TRADE_WINDOW_ZERO, BASE + 30_330);
 

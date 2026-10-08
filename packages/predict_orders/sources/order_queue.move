@@ -883,3 +883,34 @@ public(package) fun remove_finished_record(book: &mut OrderBook, record_id: u64)
 fun next_tick_after(time_ms: u64, tick_ms: u64): u64 {
     (time_ms / tick_ms + 1) * tick_ms
 }
+
+// === Test-Only Functions ===
+
+#[test_only]
+/// A record with no receipt and no escrow, for the book-level unit tests: only
+/// Predict's admission builds a receipt, so book tests that need no market use
+/// this instead. Not a production state.
+public(package) fun new_order_for_testing(
+    kind: u8,
+    request: OrderRequest,
+    account_id: ID,
+    receive_address: address,
+    timing: OrderTiming,
+    escrow: OrderEscrow,
+    position: HeldPosition,
+): QueuedOrder {
+    QueuedOrder {
+        status: STATUS_PENDING,
+        kind,
+        request,
+        account_id,
+        receive_address,
+        timing,
+        escrow,
+        position,
+        price: CommittedPrice { spot: 0, tick_ms: 0, generation_us: 0 },
+        result: OrderResult { reason: 0, quantity: 0, amount: 0, finished_at_ms: 0 },
+        receipt: option::none(),
+        funds: sui::balance::zero(),
+    }
+}

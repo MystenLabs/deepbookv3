@@ -2,21 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Pure-unit fixtures for `order_queue`: policies with chosen timing, and mint
-/// and sell records placed the way enqueue places them (`plan_timing`, then the
-/// escrow deposit, then `append`). No market, oracle, or account objects.
+/// and sell records placed the way placement places them (`plan_timing`, then
+/// `append`). The records hold no receipt and no escrow, since only Predict's
+/// admission builds a receipt; the flow suites cover records that do. No
+/// market, oracle, or account objects.
 #[test_only]
-module deepbook_predict::order_queue_test_helpers;
+module deepbook_predict_orders::order_queue_test_helpers;
 
-use deepbook_predict::{
+use deepbook_predict_orders::{
     delayed_execution_config::{Self, DelayedExecutionPolicy},
-    order_queue::{Self, OrderBook, QueuedOrder},
-    pricing::{Self, VolSnapshot},
-    strike_exposure::{Self, StrikeExposure},
-    strike_exposure_config,
-    test_constants
+    order_queue::{Self, OrderBook, QueuedOrder}
 };
-use fixed_math::i64;
-use sui::balance;
 
 /// Base Sui clock for the unit tests; a multiple of both channel ticks.
 const BASE_MS: u64 = 1_000_000_000;
@@ -53,24 +49,13 @@ public fun account(index: u64): ID {
 
 public fun receive_address(): address { @0xBEEF }
 
-/// The compiled defaults (stall 5_000, channel 3 at 200 ms) with the delay pinned
-/// at 1_000 ms, which the hand-derived queue fixtures assume.
+/// The launch defaults (stall 5_000, channel 3 at 200 ms) with the delay pinned
+/// at 1_000 ms, which the hand-derived fixtures assume.
 public fun default_policy(): DelayedExecutionPolicy {
-    let defaults = delayed_execution_config::new();
-    let mut policy = defaults;
-    policy.set_timing(
-        1_000,
-        defaults.stall_timeout_ms(),
-        defaults.stuck_threshold_ms(),
-        defaults.gap_wait_ms(),
-        defaults.pyth_price_buffer_ms(),
-        defaults.pyth_channel(),
-        defaults.svi_max_age_ms(),
-    );
-    policy
+    policy(1_000, 5_000, CHANNEL_200MS)
 }
 
-/// Defaults with the delay, stall timeout, and channel replaced.
+/// The launch defaults with the delay, stall timeout, and channel replaced.
 public fun policy(delay_ms: u64, stall_timeout_ms: u64, channel: u8): DelayedExecutionPolicy {
     let mut policy = delayed_execution_config::new();
     policy.set_timing(
@@ -85,39 +70,8 @@ public fun policy(delay_ms: u64, stall_timeout_ms: u64, channel: u8): DelayedExe
     policy
 }
 
-/// An all-zero snapshot; nothing in `order_queue` reads it.
-public fun zero_vol(): VolSnapshot {
-    pricing::new_vol_snapshot_for_testing(
-        0,
-        0,
-        0,
-        i64::zero(),
-        0,
-        i64::zero(),
-        i64::zero(),
-        0,
-        0,
-        0,
-        0,
-    )
-}
-
-/// A strike exposure with no nodes, for the refund routine's `exposure` part.
-public fun new_exposure(ctx: &mut TxContext): StrikeExposure {
-    strike_exposure::new(
-        object::id_from_address(@0xE),
-        strike_exposure_config::new(),
-        test_constants::default_tick_size(),
-        test_constants::default_tick_size(),
-        0,
-        1_000_000_000,
-        ctx,
-    )
-}
-
 /// Place an exact-quantity mint over `(lower_tick, higher_tick]` at `now_ms`:
-/// plan its timing against `EXPIRY_MS`, deposit `budget + order_fee` into
-/// escrow, and append it. Returns the record ID.
+/// plan its timing against `EXPIRY_MS` and append it. Returns the record ID.
 public fun place_mint(
     book: &mut OrderBook,
     policy: &DelayedExecutionPolicy,
@@ -140,12 +94,11 @@ public fun place_mint(
         order_fee,
         cash_need,
     );
-    book.deposit_escrow(balance::create_for_testing(budget + order_fee));
     book.append(order)
 }
 
-/// Place an early sell of `close_quantity` of position `order_id` at `now_ms`,
-/// depositing its order fee. Returns the record ID.
+/// Place an early sell of `close_quantity` of position `order_id` at `now_ms`.
+/// Returns the record ID.
 public fun place_sell(
     book: &mut OrderBook,
     policy: &DelayedExecutionPolicy,
@@ -159,16 +112,15 @@ public fun place_sell(
     opened_at_ms: u64,
 ): u64 {
     let timing = book.plan_timing(policy, EXPIRY_MS, NO_TRADE_WINDOW_MS, now_ms);
-    let order = order_queue::new_order(
+    let order = order_queue::new_order_for_testing(
         order_queue::kind_redeem_open(),
         order_queue::new_request(0, 0, close_quantity, 0, 0, 0, 0, 0, 0),
-        parties(account_id),
+        account_id,
+        receive_address(),
         timing,
-        zero_vol(),
         order_queue::new_escrow(0, order_fee, 0, cash_need),
         order_queue::new_held_position(order_id, root_id, opened_at_ms),
     );
-    book.deposit_escrow(balance::create_for_testing(order_fee));
     book.append(order)
 }
 
@@ -185,24 +137,13 @@ public fun mint_order(
     cash_need: u64,
 ): QueuedOrder {
     let timing = book.plan_timing(policy, EXPIRY_MS, NO_TRADE_WINDOW_MS, now_ms);
-    order_queue::new_order(
+    order_queue::new_order_for_testing(
         order_queue::kind_exact_quantity(),
         order_queue::new_request(lower_tick, higher_tick, budget, 0, 0, budget, 0, 0, 0),
-        parties(account_id),
+        account_id,
+        receive_address(),
         timing,
-        zero_vol(),
         order_queue::new_escrow(budget, order_fee, 0, cash_need),
         order_queue::empty_position(),
-    )
-}
-
-fun parties(account_id: ID): order_queue::OrderParties {
-    order_queue::new_parties(
-        account_id,
-        @0xA11CE,
-        receive_address(),
-        option::none(),
-        option::none(),
-        option::none(),
     )
 }
