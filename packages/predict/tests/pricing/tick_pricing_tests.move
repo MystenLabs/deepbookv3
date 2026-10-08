@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Tick-time pricing for delayed execution: `pricing::pricer_at`, the non-aborting
-/// `try_up_price` / `try_range_price`, and the committed-spot bound
-/// `is_committable_spot`.
+/// `try_up_price` / `try_range`, and the committed-spot bound
+/// `can_commit`.
 ///
 /// `pricer_at` must rebuild exactly the Pricer the live load builds from the same
 /// inputs, re-anchor the snapshot basis on the committed spot, roll the SVI down to the
@@ -106,7 +106,7 @@ const DOUBLE_FORWARD_STRIKE: u64 = 200_000_000_000;
 const STRIKE_BELOW: u64 = 101_000_000_000;
 const STRIKE_ABOVE: u64 = 104_000_000_000;
 
-// === is_committable_spot (hand-derived) ===
+// === can_commit (hand-derived) ===
 
 /// A committed spot may sit at most a tenth of the snapshot's Block Scholes spot
 /// away from it: `100e9 / 10 = 10e9`, so 90e9 and 110e9 are in and one raw unit
@@ -239,16 +239,16 @@ fun pricer_at_reports_the_generation_and_snapshot_timestamps() {
     );
 
     assert_eq!(pricer.expiry_market_id(), fx.expiry_id());
-    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), GENERATION_MS);
+    assert_eq!(pricer.pyth_ts(), GENERATION_MS);
     assert_eq!(
-        pricer.block_scholes_spot_source_timestamp_ms(),
+        pricer.bs_spot_ts(),
         test_constants::live_source_timestamp_ms(),
     );
     assert_eq!(
-        pricer.block_scholes_forward_source_timestamp_ms(),
+        pricer.bs_fwd_ts(),
         test_constants::live_source_timestamp_ms(),
     );
-    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), tick_ref::svi_source_timestamp_ms());
+    assert_eq!(pricer.bs_svi_ts(), tick_ref::svi_source_timestamp_ms());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -354,7 +354,7 @@ fun try_reads_match_the_aborting_reads_where_those_price() {
     ];
     ranges.do_ref!(|r| {
         assert_eq!(
-            pricer.try_range_price(r[0], r[1]),
+            pricer.try_range(r[0], r[1]),
             option::some(pricer.range_price(r[0], r[1])),
         );
     });
@@ -377,9 +377,9 @@ fun try_reads_are_none_on_a_zero_forward() {
     assert!(pricer.try_up_price(finite).is_none());
     assert_eq!(pricer.try_up_price(neg_inf), option::some(float!()));
     assert_eq!(pricer.try_up_price(pos_inf), option::some(0));
-    assert!(pricer.try_range_price(finite, pos_inf).is_none());
-    assert!(pricer.try_range_price(neg_inf, finite).is_none());
-    let whole_line = pricer.try_range_price(neg_inf, pos_inf);
+    assert!(pricer.try_range(finite, pos_inf).is_none());
+    assert!(pricer.try_range(neg_inf, finite).is_none());
+    let whole_line = pricer.try_range(neg_inf, pos_inf);
     assert_eq!(whole_line.destroy_some().probability(), float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -397,9 +397,9 @@ fun try_reads_are_none_where_the_variance_rounds_to_zero() {
     let double_forward = strike(DOUBLE_FORWARD_STRIKE);
 
     assert!(pricer.try_up_price(at_forward).is_none());
-    assert!(pricer.try_range_price(at_forward, strike(constants::pos_inf!())).is_none());
-    assert!(pricer.try_range_price(strike(constants::neg_inf!()), at_forward).is_none());
-    assert!(pricer.try_range_price(at_forward, double_forward).is_none());
+    assert!(pricer.try_range(at_forward, strike(constants::pos_inf!())).is_none());
+    assert!(pricer.try_range(strike(constants::neg_inf!()), at_forward).is_none());
+    assert!(pricer.try_range(at_forward, double_forward).is_none());
     assert_eq!(pricer.try_up_price(double_forward), option::some(pricer.up_price(double_forward)));
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -412,8 +412,8 @@ fun try_range_price_is_none_on_an_empty_range() {
     let (mut fx, oracle) = setup_tick_reference();
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert!(pricer.try_range_price(strike(STRIKE_BELOW), strike(STRIKE_BELOW)).is_none());
-    assert!(pricer.try_range_price(strike(STRIKE_ABOVE), strike(STRIKE_BELOW)).is_none());
+    assert!(pricer.try_range(strike(STRIKE_BELOW), strike(STRIKE_BELOW)).is_none());
+    assert!(pricer.try_range(strike(STRIKE_ABOVE), strike(STRIKE_BELOW)).is_none());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -442,19 +442,19 @@ fun range_price_where_the_variance_rounds_to_zero_aborts_from_the_higher_boundar
 #[test]
 fun committable_spot_band_is_ten_percent_of_the_block_scholes_spot() {
     let snapshot = default_surface_snapshot(BAND_BS_SPOT, BAND_BS_SPOT);
-    assert!(snapshot.is_committable_spot(BAND_BS_SPOT));
-    assert!(snapshot.is_committable_spot(BAND_LOW_EDGE));
-    assert!(snapshot.is_committable_spot(BAND_HIGH_EDGE));
-    assert!(!snapshot.is_committable_spot(BAND_LOW_EDGE - 1));
-    assert!(!snapshot.is_committable_spot(BAND_HIGH_EDGE + 1));
-    assert!(!snapshot.is_committable_spot(ZERO_SPOT));
+    assert!(snapshot.can_commit(BAND_BS_SPOT));
+    assert!(snapshot.can_commit(BAND_LOW_EDGE));
+    assert!(snapshot.can_commit(BAND_HIGH_EDGE));
+    assert!(!snapshot.can_commit(BAND_LOW_EDGE - 1));
+    assert!(!snapshot.can_commit(BAND_HIGH_EDGE + 1));
+    assert!(!snapshot.can_commit(ZERO_SPOT));
 }
 
 #[test]
 fun committable_spot_is_capped_at_the_pricing_safe_ceiling() {
     let snapshot = default_surface_snapshot(CEILING_BS_SPOT, CEILING_BS_SPOT);
-    assert!(snapshot.is_committable_spot(MAX_PRICING_SPOT));
-    assert!(!snapshot.is_committable_spot(MAX_PRICING_SPOT + 1));
+    assert!(snapshot.can_commit(MAX_PRICING_SPOT));
+    assert!(!snapshot.can_commit(MAX_PRICING_SPOT + 1));
 }
 
 // === Helpers ===

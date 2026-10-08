@@ -81,7 +81,7 @@ fun build_checked(ticks: vector<u64>, ctx: &mut TxContext): StrikePayoutTree {
 /// Settlement above every boundary: every `(tick, +inf]` range is in the money, so
 /// the liability is one `QUANTITY` per surviving boundary.
 fun settled_above_all(tree: &StrikePayoutTree): u64 {
-    tree.settled_payout_liability(constants::pos_inf_tick!() - 1, 1)
+    tree.settled_liab(constants::pos_inf_tick!() - 1, 1)
 }
 
 #[test]
@@ -185,7 +185,7 @@ fun successor_keeps_its_own_right_subtree() {
     tree.assert_tree_invariant_for_testing();
     // Survivors are ticks 1, 3 and 4. Losing tick 4 would report 2 * QUANTITY.
     assert_eq!(settled_above_all(&tree), 3 * QUANTITY);
-    let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
+    let (max_net_payout, total_net_payout) = tree.rsv_terms();
     assert_eq!(max_net_payout, 3 * QUANTITY);
     assert_eq!(total_net_payout, 3 * QUANTITY);
 
@@ -222,8 +222,8 @@ fun boundary_gc_preserves_terms_and_balance() {
     // agreement on every evaluator is a real check, not a tautology.
     let rebuilt = build_checked(survivors, &mut ctx);
     assert_eq!(settled_above_all(&tree), settled_above_all(&rebuilt));
-    let (gc_max, gc_total) = tree.payout_reserve_terms();
-    let (rebuilt_max, rebuilt_total) = rebuilt.payout_reserve_terms();
+    let (gc_max, gc_total) = tree.rsv_terms();
+    let (rebuilt_max, rebuilt_total) = rebuilt.rsv_terms();
     assert_eq!(gc_max, rebuilt_max);
     assert_eq!(gc_total, rebuilt_total);
 
@@ -268,7 +268,7 @@ fun interleaved_churn_preserves_the_invariant() {
 
 #[test]
 /// Draining every boundary must leave the tree genuinely empty, including the
-/// root-removal case where `join_subtrees` has to produce a new root.
+/// root-removal case where `join_trees` has to produce a new root.
 fun draining_every_boundary_empties_the_tree() {
     let mut ctx = tx_context::dummy();
     let ticks = SKEWED_TICKS;
@@ -281,7 +281,7 @@ fun draining_every_boundary_empties_the_tree() {
 
     assert_eq!(tree.assert_tree_invariant_for_testing(), 0);
     assert_eq!(settled_above_all(&tree), 0);
-    let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
+    let (max_net_payout, total_net_payout) = tree.rsv_terms();
     assert_eq!(max_net_payout, 0);
     assert_eq!(total_net_payout, 0);
 

@@ -76,7 +76,7 @@ public fun set_builder_code(
     let account = wrapper.load_account_mut(auth);
     let builder_code_id = code.id();
     data_mut(account, ctx).builder_code_id = option::some(builder_code_id);
-    builder_code_events::emit_builder_code_set(
+    builder_code_events::code_set(
         account.account_id(),
         account.owner(),
         option::some(builder_code_id),
@@ -87,7 +87,7 @@ public fun set_builder_code(
 public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(auth);
     data_mut(account, ctx).builder_code_id = option::none();
-    builder_code_events::emit_builder_code_set(
+    builder_code_events::code_set(
         account.account_id(),
         account.owner(),
         option::none(),
@@ -134,7 +134,7 @@ public(package) fun add_position(
 }
 
 /// Remove an order position and return its root order ID for event attribution.
-public(package) fun remove_position(
+public(package) fun remove_pos(
     account: &mut Account,
     expiry_market_id: ID,
     order_id: u256,

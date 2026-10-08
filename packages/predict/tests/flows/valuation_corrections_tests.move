@@ -49,7 +49,7 @@ const MID_FLUSH_EXPIRY_MS: u64 = 360_000;
 const NO_MIN_OUT: u64 = 0;
 /// Settlement spot ABOVE the baseline strike, so the baseline `(strike, +inf]`
 /// position settles IN the money. `default_live_price()` sits exactly on the strike
-/// tick, where `settlement_in_range` is false — settling there makes every payout
+/// tick, where `in_range` is false — settling there makes every payout
 /// zero and the settled paths vacuous (no cash moves, no retained liability).
 const ITM_SETTLEMENT_PRICE: u64 = 101_000_000_000;
 

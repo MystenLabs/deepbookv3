@@ -171,7 +171,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     assert_eq!(vault.pending_protocol_profit(), 0);
 
     // The pool mark is gross value less the protocol's share of realised profit.
-    // This is the one line that mirrors `lp_pool_value`; every input to it is
+    // This is the one line that mirrors `pool_value`; every input to it is
     // pinned above against fixture arithmetic, so the composition is all that is
     // taken from the implementation.
     let active = 2 * expected_nav;
@@ -251,7 +251,7 @@ fun multi_market_pool_nav_is_exact_with_a_mid_flush_rebalance() {
     assert_eq!(vault.pending_protocol_profit(), 0);
 
     // The pool mark is gross value less the protocol's share of realised profit.
-    // This is the one line that mirrors `lp_pool_value`; every input to it is
+    // This is the one line that mirrors `pool_value`; every input to it is
     // pinned above against fixture arithmetic, so the composition is all that is
     // taken from the implementation.
     let active = 2 * expected_nav;
@@ -1097,7 +1097,7 @@ fun end_valuation_without_start_aborts() {
     let mut fx = helpers::setup_market_default();
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    config.end_valuation();
+    config.end_val();
 
     abort 999
 }
@@ -1112,7 +1112,7 @@ fun set_protocol_reserve_profit_share_round_trips() {
     let admin_cap = admin::new(fx.scenario_mut().ctx());
 
     config.set_protocol_reserve_profit_share(&admin_cap, 123_456_789);
-    assert_eq!(config.protocol_reserve_profit_share(), 123_456_789);
+    assert_eq!(config.rsv_share(), 123_456_789);
 
     destroy(admin_cap);
     return_shared(config);

@@ -55,9 +55,9 @@ fun default_zero_rate_is_a_kill_switch() {
 
     assert_eq!(terms.inventory_impact_charge(), 0);
     let order = harness.exposure.allocate_mint_order(terms);
-    assert_eq!(harness.exposure.inventory_impact_potential(), 0);
+    assert_eq!(harness.exposure.impact_pot(), 0);
     let close = harness.exposure.quote_live_close(&pricer, &order, order.quantity());
-    assert_eq!(close.inventory_impact_rebate(), 0);
+    assert_eq!(close.rebate(), 0);
 
     cleanup(fx, oracle, harness);
 }
@@ -72,28 +72,28 @@ fun quadratic_below_scale_and_linear_above_scale() {
     let first = quote_mint(&harness.exposure, &pricer, 3_000_000_000, fx.clock());
     assert_eq!(first.inventory_impact_charge(), 225_000_000);
     let first_order = harness.exposure.allocate_mint_order(first);
-    assert_eq!(harness.exposure.inventory_impact_potential(), 225_000_000);
+    assert_eq!(harness.exposure.impact_pot(), 225_000_000);
 
     // At L=5B/4, phi(B)=20%*B/2=400M and the 1B excess costs
     // the capped 20%, for 600M total. The second trade therefore costs 375M.
     let second = quote_mint(&harness.exposure, &pricer, 2_000_000_000, fx.clock());
     assert_eq!(second.inventory_impact_charge(), 375_000_000);
     let second_order = harness.exposure.allocate_mint_order(second);
-    assert_eq!(harness.exposure.inventory_impact_potential(), 600_000_000);
+    assert_eq!(harness.exposure.impact_pot(), 600_000_000);
 
     // Reverse the mutations: each close returns the exact potential decrement.
     let second_close = harness
         .exposure
         .quote_live_close(&pricer, &second_order, second_order.quantity());
-    assert_eq!(second_close.inventory_impact_rebate(), 375_000_000);
-    harness.exposure.process_live_close(second_close, &vec_map::empty());
+    assert_eq!(second_close.rebate(), 375_000_000);
+    harness.exposure.apply_close(second_close, &vec_map::empty());
 
     let first_close = harness
         .exposure
         .quote_live_close(&pricer, &first_order, first_order.quantity());
-    assert_eq!(first_close.inventory_impact_rebate(), 225_000_000);
-    harness.exposure.process_live_close(first_close, &vec_map::empty());
-    assert_eq!(harness.exposure.inventory_impact_potential(), 0);
+    assert_eq!(first_close.rebate(), 225_000_000);
+    harness.exposure.apply_close(first_close, &vec_map::empty());
+    assert_eq!(harness.exposure.impact_pot(), 0);
 
     cleanup(fx, oracle, harness);
 }
@@ -127,17 +127,17 @@ fun cross_range_cycle_cannot_extract_inventory_escrow() {
 
     // Close in the non-reverse order that defeated a range-local skew formula.
     let close_a = harness.exposure.quote_live_close(&pricer, &order_a, order_a.quantity());
-    let rebate_a = close_a.inventory_impact_rebate();
+    let rebate_a = close_a.rebate();
     assert_eq!(rebate_a, 31_250_000);
-    harness.exposure.process_live_close(close_a, &vec_map::empty());
+    harness.exposure.apply_close(close_a, &vec_map::empty());
 
     let close_b = harness.exposure.quote_live_close(&pricer, &order_b, order_b.quantity());
-    let rebate_b = close_b.inventory_impact_rebate();
+    let rebate_b = close_b.rebate();
     assert_eq!(rebate_b, 25_000_000);
-    harness.exposure.process_live_close(close_b, &vec_map::empty());
+    harness.exposure.apply_close(close_b, &vec_map::empty());
 
     assert_eq!(charge_a + charge_b, rebate_a + rebate_b);
-    assert_eq!(harness.exposure.inventory_impact_potential(), 0);
+    assert_eq!(harness.exposure.impact_pot(), 0);
     cleanup(fx, oracle, harness);
 }
 
@@ -150,18 +150,18 @@ fun partial_close_schedule_telescopes_without_rounding_dust() {
     let order = harness.exposure.allocate_mint_order(mint);
 
     let first_close = harness.exposure.quote_live_close(&pricer, &order, 400_000_000);
-    let first_rebate = first_close.inventory_impact_rebate();
+    let first_rebate = first_close.rebate();
     let survivor = harness
         .exposure
-        .process_live_close(first_close, &vec_map::empty())
+        .apply_close(first_close, &vec_map::empty())
         .destroy_some();
 
     let final_close = harness.exposure.quote_live_close(&pricer, &survivor, survivor.quantity());
-    let final_rebate = final_close.inventory_impact_rebate();
-    harness.exposure.process_live_close(final_close, &vec_map::empty());
+    let final_rebate = final_close.rebate();
+    harness.exposure.apply_close(final_close, &vec_map::empty());
 
     assert_eq!(charge, first_rebate + final_rebate);
-    assert_eq!(harness.exposure.inventory_impact_potential(), 0);
+    assert_eq!(harness.exposure.impact_pot(), 0);
     cleanup(fx, oracle, harness);
 }
 
@@ -191,7 +191,7 @@ fun buffered_liability_carry_is_included_in_charge_and_rebate() {
         fx.clock(),
     );
     harness.exposure.allocate_mint_order(seed);
-    assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_BEFORE_POTENTIAL);
+    assert_eq!(harness.exposure.impact_pot(), ROUNDING_BEFORE_POTENTIAL);
 
     // Adding 30M grows the gap from 10M to 40M:
     // floor(lambda*40M) - floor(lambda*10M) = 13,333,333 - 3,333,333 = 10M.
@@ -206,7 +206,7 @@ fun buffered_liability_carry_is_included_in_charge_and_rebate() {
     );
     assert_eq!(carried.inventory_impact_charge(), 10_000_000);
     let carried_order = harness.exposure.allocate_mint_order(carried);
-    assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_AFTER_POTENTIAL);
+    assert_eq!(harness.exposure.impact_pot(), ROUNDING_AFTER_POTENTIAL);
 
     let close = harness
         .exposure
@@ -215,9 +215,9 @@ fun buffered_liability_carry_is_included_in_charge_and_rebate() {
             &carried_order,
             carried_order.quantity(),
         );
-    assert_eq!(close.inventory_impact_rebate(), 10_000_000);
-    harness.exposure.process_live_close(close, &vec_map::empty());
-    assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_BEFORE_POTENTIAL);
+    assert_eq!(close.rebate(), 10_000_000);
+    harness.exposure.apply_close(close, &vec_map::empty());
+    assert_eq!(harness.exposure.impact_pot(), ROUNDING_BEFORE_POTENTIAL);
 
     cleanup(fx, oracle, harness);
 }
@@ -328,7 +328,7 @@ fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
 
 fun impact_config(max_rate: u64, backing_buffer_lambda: u64): StrikeExposureConfig {
     let mut config = strike_exposure_config::new();
-    config.set_backing_buffer_lambda(backing_buffer_lambda);
-    config.set_inventory_impact_max_rate(max_rate);
+    config.set_lambda(backing_buffer_lambda);
+    config.set_impact(max_rate);
     config
 }

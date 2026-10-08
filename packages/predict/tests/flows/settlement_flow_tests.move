@@ -437,7 +437,7 @@ fun settled_order_payout_of_live_market_aborts() {
 
 /// A settled order can be redeemed exactly once.
 ///
-/// With the settled close-terms token gone, `predict_account::remove_position` is the
+/// With the settled close-terms token gone, `predict_account::remove_pos` is the
 /// SOLE mechanism preventing a second redeem from releasing the same payout liability
 /// twice. It also runs before the liability is decremented, so the second attempt
 /// aborts before touching any accounting.

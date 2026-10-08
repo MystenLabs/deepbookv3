@@ -172,16 +172,16 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     let settlement_a_only = GC_SETTLEMENT_A_ONLY_TICK * tick_size();
-    let settled_a_only = tree.settled_payout_liability(settlement_a_only, tick_size());
-    assert_eq!(settled_a_only, rebuilt.settled_payout_liability(settlement_a_only, tick_size()));
+    let settled_a_only = tree.settled_liab(settlement_a_only, tick_size());
+    assert_eq!(settled_a_only, rebuilt.settled_liab(settlement_a_only, tick_size()));
     assert_eq!(settled_a_only, GC_SURVIVOR_A_QUANTITY);
     let settlement_overlap = GC_SETTLEMENT_OVERLAP_TICK * tick_size();
-    let settled_overlap = tree.settled_payout_liability(settlement_overlap, tick_size());
-    assert_eq!(settled_overlap, rebuilt.settled_payout_liability(settlement_overlap, tick_size()));
+    let settled_overlap = tree.settled_liab(settlement_overlap, tick_size());
+    assert_eq!(settled_overlap, rebuilt.settled_liab(settlement_overlap, tick_size()));
     assert_eq!(settled_overlap, GC_SURVIVOR_A_QUANTITY + GC_SURVIVOR_C_QUANTITY);
     let settlement_c_only = GC_SETTLEMENT_C_ONLY_TICK * tick_size();
-    let settled_c_only = tree.settled_payout_liability(settlement_c_only, tick_size());
-    assert_eq!(settled_c_only, rebuilt.settled_payout_liability(settlement_c_only, tick_size()));
+    let settled_c_only = tree.settled_liab(settlement_c_only, tick_size());
+    assert_eq!(settled_c_only, rebuilt.settled_liab(settlement_c_only, tick_size()));
     assert_eq!(settled_c_only, GC_SURVIVOR_C_QUANTITY);
 
     let mutated_walk = walk_linear(&tree, &pricer);

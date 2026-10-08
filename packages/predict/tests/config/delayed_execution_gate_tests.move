@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// `ProtocolConfig` gates added for delayed execution: the flush-operator
-/// allowlist (add, remove, read, and the package `assert_flush_operator`), the
-/// freeze-blind `assert_version_floor`, the `assert_cutover_reached` check
+/// allowlist (add, remove, read, and the package `chk_operator`), the
+/// freeze-blind `chk_floor`, the `chk_cutover` check
 /// against the version watermark, and the `FlushOperatorUpdated` event layout.
 #[test_only]
 module deepbook_predict::delayed_execution_gate_tests;
@@ -154,7 +154,7 @@ fun assert_flush_operator_passes_for_listed_sender() {
     config.add_flush_operator(&admin_cap, test_constants::admin(), &clock);
 
     // The scenario's sender is admin.
-    config.assert_flush_operator(scenario.ctx());
+    config.chk_operator(scenario.ctx());
 
     assert_eq!(scenario.ctx().sender(), test_constants::admin());
     finish(scenario, admin_cap, config, clock);
@@ -169,7 +169,7 @@ fun assert_flush_operator_rejects_unlisted_sender() {
 
     scenario.next_tx(test_constants::alice());
     let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.assert_flush_operator(scenario.ctx());
+    config.chk_operator(scenario.ctx());
     abort 999
 }
 
@@ -177,7 +177,7 @@ fun assert_flush_operator_rejects_unlisted_sender() {
 fun assert_flush_operator_rejects_everyone_before_any_add() {
     let (mut scenario, _admin_cap, config_id, _clock) = new_shared_config();
     let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.assert_flush_operator(scenario.ctx());
+    config.chk_operator(scenario.ctx());
     abort 999
 }
 
@@ -196,7 +196,7 @@ fun version_watermark_reads_the_floor() {
     finish(scenario, admin_cap, config, clock);
 }
 
-/// Unlike `assert_version`, the floor check ignores the freeze, so refunds,
+/// Unlike `chk_version`, the floor check ignores the freeze, so refunds,
 /// admin refunds, and cleanup keep working while frozen.
 #[test]
 fun assert_version_floor_passes_while_frozen() {
@@ -204,7 +204,7 @@ fun assert_version_floor_passes_while_frozen() {
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_frozen(&admin_cap, true);
 
-    config.assert_version_floor();
+    config.chk_floor();
 
     assert!(config.frozen());
     finish(scenario, admin_cap, config, clock);
@@ -215,7 +215,7 @@ fun assert_version_floor_below_watermark_aborts() {
     let (scenario, _admin_cap, config_id, _clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_version_watermark_for_testing(constants::current_version!() + 1);
-    config.assert_version_floor();
+    config.chk_floor();
     abort 999
 }
 
@@ -224,7 +224,7 @@ fun assert_cutover_reached_at_current_version() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    config.assert_cutover_reached();
+    config.chk_cutover();
 
     assert_eq!(config.version_watermark(), constants::current_version!());
     finish(scenario, admin_cap, config, clock);
@@ -237,7 +237,7 @@ fun assert_cutover_reached_one_version_below_aborts() {
     let (scenario, _admin_cap, config_id, _clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_version_watermark_for_testing(constants::current_version!() - 1);
-    config.assert_cutover_reached();
+    config.chk_cutover();
     abort 999
 }
 
@@ -248,7 +248,7 @@ fun bump_version_watermark_reaches_the_cutover() {
     config.set_version_watermark_for_testing(constants::current_version!() - 1);
 
     config.bump_version_watermark(&admin_cap);
-    config.assert_cutover_reached();
+    config.chk_cutover();
 
     assert_eq!(config.version_watermark(), constants::current_version!());
     finish(scenario, admin_cap, config, clock);

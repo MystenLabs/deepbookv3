@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Loads a `VolSnapshot` through the production `pricing::load_vol_snapshot` path
+/// Loads a `VolSnapshot` through the production `pricing::load_vol` path
 /// against the `oracle_fixture` feeds, bound to the fixture's market and expiry.
 #[test_only]
 module deepbook_predict::vol_snapshot_test_helpers;
@@ -59,8 +59,8 @@ public fun load_snapshot_with_stores(
     clock.set_for_testing(fx.clock().timestamp_ms());
     let expiry_market_id = fx.expiry_id();
     let expiry = fx.expiry();
-    let (snapshot, pricer) = pricing::load_vol_snapshot(
-        config.pricing_config(),
+    let (snapshot, pricer) = pricing::load_vol(
+        config.pricing_cfg(),
         oracle_registry,
         pyth,
         bs_values,

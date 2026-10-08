@@ -14,7 +14,7 @@
 /// live trade (mints, mint quotes, and live redeems) refuses it through
 /// `assert_pyth_spot_fresh`. Exact-history reads do not apply live freshness policy.
 ///
-/// Delayed execution splits that read in two. `load_vol_snapshot` validates the same live
+/// Delayed execution splits that read in two. `load_vol` validates the same live
 /// inputs when an order is admitted and returns the raw Block Scholes basis and SVI its receipt
 /// stores; `pricer_at` later rebuilds a `Pricer` from them at the order's committed Pyth tick.
 /// The `try_*` reads price exactly as `up_price` and `range_price` do, and return `none` where
@@ -36,10 +36,10 @@ use sui::clock::Clock;
 /// an object or a dynamic field, so it cannot survive the transaction that
 /// loaded it. `load_live_pricer` is the only constructor whose result a trade path
 /// accepts from a caller (package-only `thaw` rebuilds one solely inside the flush's
-/// `snapshot_nav`, and the queue's `load_vol_snapshot` and `pricer_at` build ones no
+/// `snapshot_nav`, and the queue's `load_vol` and `pricer_at` build ones no
 /// public function returns) and validates oracle freshness, the same-transaction-digest
 /// guard, and `clock < expiry` at load; the live trade paths then gate a supplied `&Pricer`
-/// on market-id (`assert_pricer_bound`) and on the Pyth spot this snapshot
+/// on market-id (`chk_pricer`) and on the Pyth spot this snapshot
 /// recorded (`assert_pyth_spot_fresh`), never on a second oracle read. The
 /// non-`store` ability is therefore the structural
 /// guarantee that every fund-moving trade prices against a mark loaded in its
@@ -96,7 +96,7 @@ public struct FrozenPricer has copy, drop, store {
 /// The provider carries every parameter at 128 bits; Predict prices `rho`, `m`, and `sigma` at 64,
 /// so the narrowing happens once where the live inputs are read and every bound below reads these
 /// widths. A provider value too large for them aborts with `EBlockScholesInputTooWide` before the
-/// cast, and everything representable is then checked by `assert_inputs_pricing_safe`: `b`, `rho`,
+/// cast, and everything representable is then checked by `chk_inputs`: `b`, `rho`,
 /// `m`, and `sigma` against limits far tighter than the widths, and `a` only through the minimum
 /// total variance it leaves.
 public struct RawSVI has copy, drop {
@@ -113,7 +113,7 @@ public struct RawSVI has copy, drop {
 /// `remaining_ms / anchor_tte_ms`, and flooring that product at 1e9 discards up to
 /// a full raw unit — which a short-dated surface cannot afford, because its whole
 /// total variance is only about ten raw units at 1e9. Keeping the rolled values at
-/// 1e18 hands `total_variance` the same domain it already computes in.
+/// 1e18 hands `total_var` the same domain it already computes in.
 public struct PricingSVI has copy, drop, store {
     /// Rolled-down SVI `a`, magnitude at 1e18, sign in `a_is_negative`.
     a_magnitude: u128,
@@ -128,7 +128,7 @@ public struct PricingSVI has copy, drop, store {
 /// The raw volatility inputs an order-flow admission read, stored in the order's
 /// receipt so its fill can rebuild a `Pricer` at the committed Pyth tick (RP-32:
 /// the rebuilt `Pricer` never leaves a package function). Captured by
-/// `load_vol_snapshot` in the trader's transaction and never written by a keeper.
+/// `load_vol` in the trader's transaction and never written by a keeper.
 /// Read through BCS; Predict exposes no field getters.
 public struct VolSnapshot has copy, drop, store {
     /// Canonical Propbook Pyth source for the market's underlying; commit finds
@@ -210,7 +210,7 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 /// Return the current UP digital probability for a typed strike. Public PTB and
 /// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
-    let (price, abort_code) = evaluate_up_price(&pricer.svi, pricer.forward, strike);
+    let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, strike);
     assert!(price.is_some(), abort_code);
     price.destroy_some()
 }
@@ -218,7 +218,7 @@ public fun up_price(pricer: &Pricer, strike: Strike): u64 {
 /// Return both boundary probabilities for `(lower, higher]`. Use `probability()`
 /// for the combined range probability; absent boundaries are infinite sentinels.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): RangePrice {
-    let (price, abort_code) = evaluate_range_price(pricer, lower, higher);
+    let (price, abort_code) = eval_range(pricer, lower, higher);
     assert!(price.is_some(), abort_code);
     price.destroy_some()
 }
@@ -247,19 +247,19 @@ public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
-public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
+public(package) fun pyth_ts(pricer: &Pricer): u64 {
     pricer.pyth_spot_source_timestamp_ms
 }
 
-public(package) fun block_scholes_spot_source_timestamp_ms(pricer: &Pricer): u64 {
+public(package) fun bs_spot_ts(pricer: &Pricer): u64 {
     pricer.block_scholes_spot_source_timestamp_ms
 }
 
-public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): u64 {
+public(package) fun bs_fwd_ts(pricer: &Pricer): u64 {
     pricer.block_scholes_forward_source_timestamp_ms
 }
 
-public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
+public(package) fun bs_svi_ts(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
 }
 
@@ -312,7 +312,7 @@ public(package) fun thaw(frozen: &FrozenPricer): Pricer {
 /// The `u256` intermediate keeps the product exact for any `expiry_ms` rather than
 /// relying on a bound on the anchored horizon. The result is at most
 /// `value * 1e9 < 2^64 * 1e9`, so narrowing to `u128` never truncates.
-public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
+public(package) fun roll_down(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
     let scaled =
         (value as u256) * (math::float_scaling!() as u256) * (remaining_ms as u256)
         / (anchor_tte_ms as u256);
@@ -344,7 +344,7 @@ public(package) fun load_live_pricer(
     clock: &Clock,
     ctx: &TxContext,
 ): Pricer {
-    assert_current_oracles(
+    chk_oracles(
         propbook_registry,
         propbook_underlying_id,
         pyth,
@@ -352,7 +352,7 @@ public(package) fun load_live_pricer(
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    let (_, pricer) = resolve_live_pricer(
+    let (_, pricer) = resolve_live(
         config,
         pyth,
         bs_values,
@@ -374,7 +374,7 @@ public(package) fun load_live_pricer(
 /// `use_pyth_spot_for_forward` (`EPythForwardRequired`). The on-chain Pyth spot
 /// need not be fresh: a stale or missing one makes the t₀ `Pricer` fall back to
 /// the Block Scholes forward.
-public(package) fun load_vol_snapshot(
+public(package) fun load_vol(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -387,7 +387,7 @@ public(package) fun load_vol_snapshot(
     clock: &Clock,
     ctx: &TxContext,
 ): (VolSnapshot, Pricer) {
-    assert_current_oracles(
+    chk_oracles(
         propbook_registry,
         propbook_underlying_id,
         pyth,
@@ -395,8 +395,8 @@ public(package) fun load_vol_snapshot(
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    assert!(config.use_pyth_spot_for_forward(), EPythForwardRequired);
-    let (snapshot, pricer) = resolve_live_pricer(
+    assert!(config.pyth_forward(), EPythForwardRequired);
+    let (snapshot, pricer) = resolve_live(
         config,
         pyth,
         bs_values,
@@ -410,7 +410,7 @@ public(package) fun load_vol_snapshot(
     // proved the source is at or before now, and now is before expiry, so the stored
     // roll-down anchor is before expiry without a separate check.
     assert!(
-        timestamp_is_fresh(snapshot.svi_source_timestamp_ms, svi_max_age_ms, clock),
+        is_fresh(snapshot.svi_source_timestamp_ms, svi_max_age_ms, clock),
         EBlockScholesSVIStale,
     );
     (snapshot, pricer)
@@ -428,7 +428,7 @@ public(package) fun pyth_source_id(snapshot: &VolSnapshot): u32 {
 /// wrong feed, exponent, or unit moves a reported spot far outside that band,
 /// while Pyth and Block Scholes normally differ by well under 1% over the few
 /// seconds an order waits.
-public(package) fun is_committable_spot(snapshot: &VolSnapshot, spot: u64): bool {
+public(package) fun can_commit(snapshot: &VolSnapshot, spot: u64): bool {
     spot <= max_pricing_spot!() && spot.diff(snapshot.bs_spot) <= snapshot.bs_spot / 10
 }
 
@@ -452,14 +452,14 @@ public(package) fun pricer_at(
     expiry: u64,
 ): Option<Pricer> {
     if (tick_ms >= expiry) return option::none();
-    // The re-anchoring `resolve_live_pricer` applies to a fresh Pyth spot.
+    // The re-anchoring `resolve_live` applies to a fresh Pyth spot.
     let forward = math::try_mul_div_down(
         spot,
         snapshot.bs_forward,
         snapshot.bs_spot,
     ).destroy_with_default(0);
     if (forward == 0) return option::none();
-    let pricer = pricer_from_snapshot(
+    let pricer = pricer_of(
         snapshot,
         expiry_market_id,
         expiry,
@@ -467,7 +467,7 @@ public(package) fun pricer_at(
         generation_ms,
         tick_ms,
     );
-    if (!has_positive_min_variance(&pricer.svi)) return option::none();
+    if (!has_min_var(&pricer.svi)) return option::none();
     option::some(pricer)
 }
 
@@ -476,18 +476,18 @@ public(package) fun pricer_at(
 /// as `up_price` everywhere else.
 #[test_only]
 public(package) fun try_up_price(pricer: &Pricer, strike: Strike): Option<u64> {
-    let (price, _) = evaluate_up_price(&pricer.svi, pricer.forward, strike);
+    let (price, _) = eval_up(&pricer.svi, pricer.forward, strike);
     price
 }
 
 /// Non-aborting `range_price`, under the same rule as `try_up_price`. An empty
 /// range (`lower >= higher`) is `none` too.
-public(package) fun try_range_price(
+public(package) fun try_range(
     pricer: &Pricer,
     lower: Strike,
     higher: Strike,
 ): Option<RangePrice> {
-    let (price, _) = evaluate_range_price(pricer, lower, higher);
+    let (price, _) = eval_range(pricer, lower, higher);
     price
 }
 
@@ -510,12 +510,12 @@ public(package) fun try_range_price(
 /// forward, so there is nothing to reject and it always passes.
 #[test_only]
 public(package) fun assert_pyth_spot_fresh(pricer: &Pricer, config: &PricingConfig, clock: &Clock) {
-    if (!config.use_pyth_spot_for_forward()) return;
+    if (!config.pyth_forward()) return;
     assert!(pricer.pyth_spot_source_timestamp_ms > 0, EPythSpotUnavailable);
     assert!(
-        timestamp_is_fresh(
+        is_fresh(
             pricer.pyth_spot_source_timestamp_ms,
-            config.pyth_spot_freshness_ms(),
+            config.pyth_age_ms(),
             clock,
         ),
         EPythSpotStale,
@@ -525,13 +525,13 @@ public(package) fun assert_pyth_spot_fresh(pricer: &Pricer, config: &PricingConf
 /// Validate the canonical Pyth binding and read its normalized spot at exactly
 /// `source_timestamp_ms`. The returned option preserves absence so the
 /// reference-tick and settlement flows can retain distinct missing-data policies.
-public(package) fun load_exact_spot(
+public(package) fun exact_spot(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
 ): Option<u64> {
-    assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
+    chk_pyth(propbook_registry, propbook_underlying_id, pyth);
     let read = pyth.normalized_spot_at(source_timestamp_ms);
     if (read.is_some()) {
         option::some(read.destroy_some().read_value())
@@ -543,13 +543,13 @@ public(package) fun load_exact_spot(
 /// Validate the canonical Block Scholes value-store binding and read its exact spot at
 /// `source_timestamp_ms`. Missing, zero, and values outside Predict's settlement width remain
 /// unavailable so the permissionless settlement flow can retry without aborting.
-public(package) fun load_exact_block_scholes_spot(
+public(package) fun bs_spot_at(
     propbook_registry: &OracleRegistry,
     bs_values: &BlockScholesValueStore,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
 ): Option<u64> {
-    let binding = current_block_scholes_binding(propbook_registry, propbook_underlying_id);
+    let binding = bs_binding(propbook_registry, propbook_underlying_id);
     assert!(
         binding.block_scholes_value_store_id() == bs_values.value_store_id(),
         EWrongBlockScholesValueStore,
@@ -565,15 +565,15 @@ public(package) fun load_exact_block_scholes_spot(
 // === Private Functions ===
 
 /// Validate all supplied feed objects against Propbook's canonical bindings.
-fun assert_current_oracles(
+fun chk_oracles(
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
 ) {
-    assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
-    let block_scholes_binding = current_block_scholes_binding(
+    chk_pyth(propbook_registry, propbook_underlying_id, pyth);
+    let block_scholes_binding = bs_binding(
         propbook_registry,
         propbook_underlying_id,
     );
@@ -587,7 +587,7 @@ fun assert_current_oracles(
     );
 }
 
-fun current_block_scholes_binding(
+fun bs_binding(
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
 ): BlockScholesStorePair {
@@ -600,7 +600,7 @@ fun current_block_scholes_binding(
     binding.destroy_some()
 }
 
-fun assert_current_pyth(
+fun chk_pyth(
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     pyth: &PythFeed,
@@ -624,7 +624,7 @@ fun assert_current_pyth(
 /// transaction. Pyth is checked only on the re-anchor branch: when the flag is
 /// off or the read is stale, the observation is provenance-only and must not
 /// trip the guard.
-fun resolve_live_pricer(
+fun resolve_live(
     config: &PricingConfig,
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
@@ -634,7 +634,7 @@ fun resolve_live_pricer(
     clock: &Clock,
     ctx: &TxContext,
 ): (VolSnapshot, Pricer) {
-    let snapshot = read_live_inputs(config, pyth, bs_values, bs_svi, expiry, clock, ctx);
+    let snapshot = read_inputs(config, pyth, bs_values, bs_svi, expiry, clock, ctx);
 
     // Read whatever the config does with it: the Pyth observation is retained on
     // every `Pricer` for trade-event provenance, including while
@@ -649,16 +649,16 @@ fun resolve_live_pricer(
     };
     let mut forward = snapshot.bs_forward;
     if (
-        config.use_pyth_spot_for_forward()
+        config.pyth_forward()
             && pyth_spot.is_some()
-            && timestamp_is_fresh(
+            && is_fresh(
                 pyth_spot_source_timestamp_ms,
-                config.pyth_spot_freshness_ms(),
+                config.pyth_age_ms(),
                 clock,
             )
     ) {
         let pyth_spot = pyth_spot.destroy_some();
-        assert_oracle_not_written_this_tx(&pyth_spot.read_writer_digest(), ctx);
+        chk_not_tx(&pyth_spot.read_writer_digest(), ctx);
         let spot = pyth_spot.read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
         // The re-anchored forward may exceed the input spot ceiling. The basis and
@@ -666,7 +666,7 @@ fun resolve_live_pricer(
         forward = math::mul_div_down(spot, snapshot.bs_forward, snapshot.bs_spot);
     };
 
-    let pricer = pricer_from_snapshot(
+    let pricer = pricer_of(
         &snapshot,
         expiry_market_id,
         expiry,
@@ -682,7 +682,7 @@ fun resolve_live_pricer(
 /// tuple. Each read must not have been written in this transaction (RP-24) and must
 /// pass its freshness window, and the narrowed set must fit the pricing-safe
 /// envelope. The live pricer and the queue's snapshot both validate through here.
-fun read_live_inputs(
+fun read_inputs(
     config: &PricingConfig,
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
@@ -694,20 +694,20 @@ fun read_live_inputs(
     let bs_forward_read = bs_values.forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
-    assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
+    chk_not_tx(&bs_forward_read.read_writer_digest(), ctx);
     let bs_spot_read = bs_values.recent_spot_at(bs_forward_read.read_source_timestamp_ms());
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
-    assert_oracle_not_written_this_tx(&bs_spot_read.read_writer_digest(), ctx);
+    chk_not_tx(&bs_spot_read.read_writer_digest(), ctx);
     // Freshness reads the provider's per-update source timestamp: `value_timestamp` for spot and
     // forward, and `svi_timestamp` for SVI. A newer batch carrying an unchanged update cannot
     // refresh pricing. The same source timestamp is snapshotted below, so trade events report the
     // clock pricing validated.
     let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
     assert!(
-        timestamp_is_fresh(
+        is_fresh(
             block_scholes_spot_source_timestamp_ms,
-            config.block_scholes_price_freshness_ms(),
+            config.bs_age_ms(),
             clock,
         ),
         EBlockScholesPriceStale,
@@ -716,9 +716,9 @@ fun read_live_inputs(
 
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
-        timestamp_is_fresh(
+        is_fresh(
             block_scholes_forward_source_timestamp_ms,
-            config.block_scholes_price_freshness_ms(),
+            config.bs_age_ms(),
             clock,
         ),
         EBlockScholesPriceStale,
@@ -728,7 +728,7 @@ fun read_live_inputs(
     let svi_read = bs_svi.svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
-    assert_oracle_not_written_this_tx(&svi_read.read_writer_digest(), ctx);
+    chk_not_tx(&svi_read.read_writer_digest(), ctx);
     // One clock serves every job: the SVI source timestamp the freshness gate accepts is also the
     // roll-down anchor and the snapshot trade events emit, so the parameters, their anchor, and
     // the reported clock always come from the same read. The gate's `source_timestamp <= now` bound
@@ -736,18 +736,18 @@ fun read_live_inputs(
     // `expiry - anchor` never underflows.
     let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
     assert!(
-        timestamp_is_fresh(
+        is_fresh(
             block_scholes_svi_source_timestamp_ms,
-            config.block_scholes_svi_freshness_ms(),
+            config.svi_age_ms(),
             clock,
         ),
         EBlockScholesSVIStale,
     );
     let raw_svi = narrow_svi(&svi_read.read_value());
-    assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
+    chk_inputs(bs_spot, bs_forward, &raw_svi);
 
     VolSnapshot {
-        // `assert_current_oracles` bound `pyth` as the underlying's canonical feed, so
+        // `chk_oracles` bound `pyth` as the underlying's canonical feed, so
         // its source is the registry binding's.
         pyth_source_id: pyth.pyth_source_id(),
         bs_spot,
@@ -763,7 +763,7 @@ fun read_live_inputs(
     }
 }
 
-fun assert_oracle_not_written_this_tx(writer_digest: &vector<u8>, ctx: &TxContext) {
+fun chk_not_tx(writer_digest: &vector<u8>, ctx: &TxContext) {
     assert!(writer_digest != ctx.digest(), EOracleWrittenInThisTransaction);
 }
 
@@ -813,7 +813,7 @@ fun sigma(svi: &RawSVI): u64 {
 /// Build a `Pricer` on `forward` from validated inputs, with the SVI rolled down to
 /// `priced_at_ms`. The live load prices at the clock and `pricer_at` at a committed
 /// tick, so both marks come from one assembly.
-fun pricer_from_snapshot(
+fun pricer_of(
     snapshot: &VolSnapshot,
     expiry_market_id: ID,
     expiry: u64,
@@ -824,7 +824,7 @@ fun pricer_from_snapshot(
     Pricer {
         expiry_market_id,
         forward,
-        svi: roll_down_svi_at(snapshot, expiry, priced_at_ms),
+        svi: roll_svi(snapshot, expiry, priced_at_ms),
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms: snapshot.bs_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms: snapshot.bs_forward_source_timestamp_ms,
@@ -835,26 +835,26 @@ fun pricer_from_snapshot(
 /// Scale the snapshot's raw `a` and `b` by `(expiry - priced_at) / (expiry - svi
 /// source)`, the remaining fraction of the time the SVI tuple was calibrated for.
 /// `rho`, `m`, and `sigma` are not rolled.
-fun roll_down_svi_at(snapshot: &VolSnapshot, expiry_ms: u64, priced_at_ms: u64): PricingSVI {
+fun roll_svi(snapshot: &VolSnapshot, expiry_ms: u64, priced_at_ms: u64): PricingSVI {
     let remaining_ms = expiry_ms - priced_at_ms;
     let anchor_tte_ms = expiry_ms - snapshot.svi_source_timestamp_ms;
     let a = snapshot.svi_a;
     PricingSVI {
-        a_magnitude: roll_down_to_1e18(a.magnitude(), remaining_ms, anchor_tte_ms),
+        a_magnitude: roll_down(a.magnitude(), remaining_ms, anchor_tte_ms),
         a_is_negative: a.is_negative(),
-        b: roll_down_to_1e18(snapshot.svi_b, remaining_ms, anchor_tte_ms),
+        b: roll_down(snapshot.svi_b, remaining_ms, anchor_tte_ms),
         rho: snapshot.svi_rho,
         m: snapshot.svi_m,
         sigma: snapshot.svi_sigma,
     }
 }
 
-fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
+fun is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     source_timestamp_ms > 0 && source_timestamp_ms <= now && now - source_timestamp_ms <= max_age_ms
 }
 
-fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
+fun chk_inputs(spot: u64, forward: u64, svi: &RawSVI) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
     // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
@@ -862,7 +862,7 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     // `a` carries no bound of its own: only total variance has to be positive,
     // which the minimum-variance check below owns, and every downstream use of
-    // `a` fits its provider width (`roll_down_to_1e18`, `total_variance`).
+    // `a` fits its provider width (`roll_down`, `total_var`).
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -870,11 +870,11 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
         svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
         EBlockScholesInputsInvalid,
     );
-    assert_min_total_variance_positive(svi);
+    chk_min_var(svi);
 }
 
-fun assert_min_total_variance_positive(svi: &RawSVI) {
-    let min_variance_increment = min_svi_variance_increment(svi);
+fun chk_min_var(svi: &RawSVI) {
+    let min_variance_increment = min_var_inc(svi);
     let a = svi.a();
     // `a + min_variance_increment > 0`, compared rather than summed: `a` reaches
     // `u64::MAX`, where the sum would leave `u64`.
@@ -889,25 +889,25 @@ fun assert_min_total_variance_positive(svi: &RawSVI) {
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
 // `x = k - m`. This returns the smallest possible non-`a` part over all strikes:
 // `b * sigma * sqrt(1 - rho^2)`, or 0 at the `|rho| == 1` boundary.
-fun min_svi_variance_increment(svi: &RawSVI): u64 {
-    math::mul_down(svi.b(), min_smile_inner(svi.rho(), svi.sigma()))
+fun min_var_inc(svi: &RawSVI): u64 {
+    math::mul_down(svi.b(), smile_inner(svi.rho(), svi.sigma()))
 }
 
 /// Whether a rolled surface's minimum total variance over all strikes is positive,
 /// at the 1e18 the rolled `a` and `b` are carried in. The load gate proves this for
 /// the raw tuple; `pricer_at` re-proves it after rolling to a tick.
-fun has_positive_min_variance(svi: &PricingSVI): bool {
-    total_variance(
+fun has_min_var(svi: &PricingSVI): bool {
+    total_var(
         svi.a_magnitude,
         svi.a_is_negative,
         svi.b,
-        min_smile_inner(svi.rho, svi.sigma),
+        smile_inner(svi.rho, svi.sigma),
     ).is_some()
 }
 
 /// The smallest SVI inner term `rho*x + sqrt(x^2 + sigma^2)` over all `x`:
 /// `sigma * sqrt(1 - rho^2)` at 1e9, or 0 at the `|rho| == 1` boundary.
-fun min_smile_inner(rho: I64, sigma: u64): u64 {
+fun smile_inner(rho: I64, sigma: u64): u64 {
     let rho_mag = rho.magnitude();
     if (rho_mag == math::float_scaling!()) return 0;
 
@@ -918,7 +918,7 @@ fun min_smile_inner(rho: I64, sigma: u64): u64 {
 /// Evaluate `range_price` without aborting: the boundary prices, or `none` with the
 /// abort code `range_price` raises for the first failed precondition. The code is
 /// meaningless alongside a price.
-fun evaluate_range_price(
+fun eval_range(
     pricer: &Pricer,
     lower: Strike,
     higher: Strike,
@@ -926,13 +926,13 @@ fun evaluate_range_price(
     if (lower.value() >= higher.value()) return (option::none(), EInvalidRange);
     let mut lower_up = option::none();
     if (!lower.is_neg_inf()) {
-        let (price, abort_code) = evaluate_up_price(&pricer.svi, pricer.forward, lower);
+        let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, lower);
         if (price.is_none()) return (option::none(), abort_code);
         lower_up = price;
     };
     let mut higher_up = option::none();
     if (!higher.is_pos_inf()) {
-        let (price, abort_code) = evaluate_up_price(&pricer.svi, pricer.forward, higher);
+        let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, higher);
         if (price.is_none()) return (option::none(), abort_code);
         higher_up = price;
     };
@@ -942,7 +942,7 @@ fun evaluate_range_price(
 /// Evaluate the adjusted UP digital for `strike` without aborting: the price, or
 /// `none` with the abort code `up_price` raises. The code is meaningless alongside
 /// a price. The infinite sentinels price before any surface check.
-fun evaluate_up_price(svi: &PricingSVI, forward: u64, strike: Strike): (Option<u64>, u64) {
+fun eval_up(svi: &PricingSVI, forward: u64, strike: Strike): (Option<u64>, u64) {
     if (strike.is_neg_inf()) return (option::some(math::float_scaling!()), 0);
     if (strike.is_pos_inf()) return (option::some(0), 0);
     evaluate_nd2(svi, forward, strike.value())
@@ -1000,14 +1000,14 @@ fun evaluate_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): (Option<u6
     if (inner.is_negative()) return (option::none(), ECannotBeNegative);
 
     let b = svi_params.b;
-    let total_var = total_variance(
+    let total_var = total_var(
         svi_params.a_magnitude,
         svi_params.a_is_negative,
         b,
         inner.magnitude(),
     );
     if (total_var.is_none()) return (option::none(), ENonPositiveVariance);
-    let (sqrt_var, d2) = sqrt_variance_and_d2(total_var.destroy_some(), &k);
+    let (sqrt_var, d2) = sqrt_var_d2(total_var.destroy_some(), &k);
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
@@ -1045,7 +1045,7 @@ fun evaluate_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): (Option<u6
 /// discards the entire low-variance signal, because a five-minute surface has
 /// `w ~ 1e-8` — about ten raw units at 1e9. `inner` is 1e9-scaled, so `b * inner`
 /// comes back down by 1e9 to land at 1e18.
-fun total_variance(a_magnitude: u128, a_is_negative: bool, b: u128, inner: u64): Option<u128> {
+fun total_var(a_magnitude: u128, a_is_negative: bool, b: u128, inner: u64): Option<u128> {
     let increment = b * (inner as u128) / (math::float_scaling!() as u128);
     if (a_is_negative) {
         if (increment > a_magnitude) option::some(increment - a_magnitude) else option::none()
@@ -1059,7 +1059,7 @@ fun total_variance(a_magnitude: u128, a_is_negative: bool, b: u128, inner: u64):
 /// `sqrt(w)` and `d2` for a positive total variance `w` at 1e18. `sqrt_u128_down`
 /// of a 1e18 value is its 1e9-scaled root, so `sqrt(w)` returns at the scale the
 /// rest of the formula reads. Returns `(sqrt(w), d2)`.
-fun sqrt_variance_and_d2(total_var: u128, k: &I64): (u64, I64) {
+fun sqrt_var_d2(total_var: u128, k: &I64): (u64, I64) {
     let scale = math::float_scaling!() as u128;
     let sqrt_var = math::sqrt_u128_down(total_var) as u64;
 
@@ -1085,7 +1085,7 @@ fun sqrt_variance_and_d2(total_var: u128, k: &I64): (u64, I64) {
     (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
 }
 
-/// Scalar-input view of `total_variance` and `sqrt_variance_and_d2` for the unit
+/// Scalar-input view of `total_var` and `sqrt_var_d2` for the unit
 /// tests, aborting `ENonPositiveVariance` as a quote does. The d2
 /// saturation guards a `u128 -> u64` cast that no admissible SVI surface has been
 /// shown to reach — the pricer-load minimum-variance gate keeps `sqrt(w)` large
@@ -1099,9 +1099,9 @@ public(package) fun variance_sqrt_and_d2_for_testing(
     inner: u64,
     k: &I64,
 ): (u64, I64) {
-    let total_var = total_variance(a_magnitude, a_is_negative, b, inner);
+    let total_var = total_var(a_magnitude, a_is_negative, b, inner);
     assert!(total_var.is_some(), ENonPositiveVariance);
-    sqrt_variance_and_d2(total_var.destroy_some(), k)
+    sqrt_var_d2(total_var.destroy_some(), k)
 }
 
 // Field reads for tests; production reads a snapshot through BCS.

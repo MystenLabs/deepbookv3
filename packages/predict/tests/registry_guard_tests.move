@@ -455,13 +455,13 @@ fun record_expiry_creation_duplicate_expiry_aborts() {
     let expiry = constants::one_week_ms!();
 
     manager.register_underlying(test_constants::propbook_underlying_id());
-    manager.record_expiry_creation(
+    manager.note_expiry(
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_day!(),
         expiry,
         object::id_from_address(@0xCAFE),
     );
-    manager.record_expiry_creation(
+    manager.note_expiry(
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_week!(),
         expiry,

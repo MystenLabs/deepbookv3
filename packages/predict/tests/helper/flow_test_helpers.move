@@ -955,7 +955,7 @@ public fun account_balance<T>(
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
-    market.receive_pool_cash(coin::mint_for_testing<USDC>(
+    market.recv_cash(coin::mint_for_testing<USDC>(
         amount,
         self.scenario.ctx(),
     ).into_balance());
@@ -1947,7 +1947,7 @@ public fun load_pricer_bound_to_bundle(
     expiry_market_id: ID,
 ): pricing::Pricer {
     pricing::load_live_pricer(
-        market.config.pricing_config(),
+        market.config.pricing_cfg(),
         &market.oracle_registry,
         &market.pyth,
         market.bs.values(),
@@ -2560,7 +2560,7 @@ public fun finish_flush(
 
 /// S1 — expiry cash backing: the market's USDC custody covers its payout
 /// liability plus its isolated inventory-impact escrow, mirroring the contract's
-/// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
+/// `expiry_cash::chk_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
     assert!(market.cash_balance() >= market.payout_liability() + market.inventory_impact_reserve());
@@ -2693,8 +2693,8 @@ public fun account_parts_mut(account: &mut AccountBundle): (&mut AccountWrapper,
 }
 
 /// Engage the valuation lock on a bundled protocol config.
-public fun begin_valuation(bundle: &mut MarketBundle) {
-    bundle.config.begin_valuation();
+public fun begin_val(bundle: &mut MarketBundle) {
+    bundle.config.begin_val();
 }
 
 /// Account balance through an account bundle.

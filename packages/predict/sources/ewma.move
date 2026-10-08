@@ -27,7 +27,7 @@ public struct EwmaState has copy, drop, store {
 /// zero, so no penalty applies until a later observation creates variance.
 public(package) fun new(ctx: &TxContext): EwmaState {
     EwmaState {
-        mean: scaled_gas_price(ctx),
+        mean: scaled_gas(ctx),
         variance: 0,
         last_updated_timestamp_ms: 0,
     }
@@ -45,7 +45,7 @@ public(package) fun penalty_fee(
     ctx: &TxContext,
 ): u64 {
     if (!config.enabled() || self.variance == 0) return 0;
-    let gas_price = scaled_gas_price(ctx);
+    let gas_price = scaled_gas(ctx);
     if (gas_price <= self.mean) return 0;
 
     let std_dev = math::sqrt_down(self.variance);
@@ -77,7 +77,7 @@ public(package) fun update(
 
     let alpha = config.alpha();
     let one_minus_alpha = math::float_scaling!() - alpha;
-    let gas_price = scaled_gas_price(ctx);
+    let gas_price = scaled_gas(ctx);
 
     let mean_new = math::mul_down(alpha, gas_price) + math::mul_down(one_minus_alpha, self.mean);
 
@@ -96,6 +96,6 @@ public(package) fun update(
 // === Private Functions ===
 
 /// Return the transaction gas price in FLOAT_SCALING.
-fun scaled_gas_price(ctx: &TxContext): u64 {
+fun scaled_gas(ctx: &TxContext): u64 {
     ctx.gas_price() * math::float_scaling!()
 }

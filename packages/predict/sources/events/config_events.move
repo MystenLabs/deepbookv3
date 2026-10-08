@@ -175,7 +175,7 @@ public struct MarketSettled has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun emit_strike_exposure_template_config_updated(
+public(package) fun template_upd(
     config: &StrikeExposureConfig,
     onchain_timestamp_ms: u64,
 ) {
@@ -183,8 +183,8 @@ public(package) fun emit_strike_exposure_template_config_updated(
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
         min_fee: config.min_fee(),
-        min_entry_probability: config.min_entry_probability(),
-        max_entry_probability: config.max_entry_probability(),
+        min_entry_probability: config.min_prob(),
+        max_entry_probability: config.max_prob(),
         expiry_fee_window_ms: config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier(),
         inventory_impact_max_rate: config.inventory_impact_max_rate(),
@@ -192,12 +192,12 @@ public(package) fun emit_strike_exposure_template_config_updated(
     });
 }
 
-public(package) fun emit_pricing_config_updated(config: &PricingConfig, onchain_timestamp_ms: u64) {
+public(package) fun pricing_upd(config: &PricingConfig, onchain_timestamp_ms: u64) {
     event::emit(PricingConfigUpdated {
-        use_pyth_spot_for_forward: config.use_pyth_spot_for_forward(),
-        pyth_spot_freshness_ms: config.pyth_spot_freshness_ms(),
-        block_scholes_price_freshness_ms: config.block_scholes_price_freshness_ms(),
-        block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms(),
+        use_pyth_spot_for_forward: config.pyth_forward(),
+        pyth_spot_freshness_ms: config.pyth_age_ms(),
+        block_scholes_price_freshness_ms: config.bs_age_ms(),
+        block_scholes_svi_freshness_ms: config.svi_age_ms(),
         onchain_timestamp_ms,
     });
 }
@@ -216,7 +216,7 @@ public(package) fun emit_ewma_config_updated(
     });
 }
 
-public(package) fun emit_plp_fee_rates_updated(
+public(package) fun plp_fees_upd(
     plp_supply_fee_rate: u64,
     plp_withdraw_fee_rate: u64,
     onchain_timestamp_ms: u64,
@@ -228,14 +228,14 @@ public(package) fun emit_plp_fee_rates_updated(
     });
 }
 
-public(package) fun emit_no_trade_window_updated(
+public(package) fun no_trade_upd(
     no_trade_window_ms: u64,
     onchain_timestamp_ms: u64,
 ) {
     event::emit(NoTradeWindowUpdated { no_trade_window_ms, onchain_timestamp_ms });
 }
 
-public(package) fun emit_fee_incentive_subsidy_rate_updated(
+public(package) fun subsidy_upd(
     fee_incentive_subsidy_rate: u64,
     onchain_timestamp_ms: u64,
 ) {
@@ -245,7 +245,7 @@ public(package) fun emit_fee_incentive_subsidy_rate_updated(
     });
 }
 
-public(package) fun emit_fee_incentive_allocation_rates_updated(
+public(package) fun rates_upd(
     fee_incentive_live_target_rate: u64,
     fee_incentive_lifetime_cap_rate: u64,
     onchain_timestamp_ms: u64,
@@ -257,25 +257,25 @@ public(package) fun emit_fee_incentive_allocation_rates_updated(
     });
 }
 
-public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: bool) {
+public(package) fun paused_upd(protocol_config_id: ID, paused: bool) {
     event::emit(TradingPausedUpdated {
         protocol_config_id,
         paused,
     });
 }
 
-public(package) fun emit_protocol_frozen_updated(protocol_config_id: ID, frozen: bool) {
+public(package) fun frozen_upd(protocol_config_id: ID, frozen: bool) {
     event::emit(ProtocolFrozenUpdated {
         protocol_config_id,
         frozen,
     });
 }
 
-public(package) fun emit_settled_redeem_keeper_updated(keeper: address, allowed: bool) {
+public(package) fun keeper_upd(keeper: address, allowed: bool) {
     event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
 }
 
-public(package) fun emit_order_flow_updated(
+public(package) fun flow_upd(
     order_flow: TypeName,
     enabled: bool,
     onchain_timestamp_ms: u64,
@@ -283,7 +283,7 @@ public(package) fun emit_order_flow_updated(
     event::emit(OrderFlowUpdated { order_flow, enabled, onchain_timestamp_ms });
 }
 
-public(package) fun emit_flush_operator_updated(
+public(package) fun operator_upd(
     operator: address,
     added: bool,
     onchain_timestamp_ms: u64,
@@ -291,7 +291,7 @@ public(package) fun emit_flush_operator_updated(
     event::emit(FlushOperatorUpdated { operator, added, onchain_timestamp_ms });
 }
 
-public(package) fun emit_market_created(
+public(package) fun mkt_created(
     expiry_market_id: ID,
     pool_vault_id: ID,
     propbook_underlying_id: u32,
@@ -314,15 +314,15 @@ public(package) fun emit_market_created(
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),
         min_fee: strike_exposure_config.min_fee(),
-        min_entry_probability: strike_exposure_config.min_entry_probability(),
-        max_entry_probability: strike_exposure_config.max_entry_probability(),
+        min_entry_probability: strike_exposure_config.min_prob(),
+        max_entry_probability: strike_exposure_config.max_prob(),
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
     });
 }
 
-public(package) fun emit_cadence_config_updated(
+public(package) fun cadence_upd(
     registry_id: ID,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -344,14 +344,14 @@ public(package) fun emit_cadence_config_updated(
     });
 }
 
-public(package) fun emit_expiry_market_mint_paused_updated(expiry_market_id: ID, paused: bool) {
+public(package) fun mkt_paused(expiry_market_id: ID, paused: bool) {
     event::emit(ExpiryMarketMintPausedUpdated {
         expiry_market_id,
         paused,
     });
 }
 
-public(package) fun emit_reference_tick_set(
+public(package) fun ref_tick_set(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
@@ -369,7 +369,7 @@ public(package) fun emit_reference_tick_set(
     });
 }
 
-public(package) fun emit_market_settled(
+public(package) fun mkt_settled(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     expiry: u64,

@@ -13,7 +13,7 @@
 /// read anything the caller supplies: rotations are driven by measured subtree
 /// height, which bounds depth at `O(log n)` for *every* tick set rather than in
 /// expectation over a random one. Depth is the cost model that matters — each node
-/// is a dynamic-field child, and `apply_at` and `settlement_prefix_payout`
+/// is a dynamic-field child, and `apply_at` and `prefix_pay`
 /// touch one per level against a per-transaction cached-object ceiling.
 ///
 /// It tracks each order's quantity, which is also its settled payout: a winning
@@ -21,26 +21,26 @@
 /// buffer over the disjoint-book gap; the tree's max-point term is the floor
 /// anchor of that enforced reserve.
 ///
-/// Shape carries no value for a consistent index: `combine_summaries` is
+/// Shape carries no value for a consistent index: `combine` is
 /// associative over the in-order sequence, so any arrangement of the same
 /// boundaries yields identical summaries, settlement prefixes, and linear-walk
 /// totals. That holds only while every prefix is non-negative, which a consistent
 /// book guarantees. Under a caller/index desync the settlement walk's underflow
 /// abort depends on which prefixes a given shape happens to visit, so it is not a
-/// desync detector — the per-boundary underflow in `apply_net_delta` is the
+/// desync detector — the per-boundary underflow in `apply_net` is the
 /// authority.
 ///
 /// The module also owns the valuation snapshot for the resumable flush: while a
 /// flush generation is active, each node lazily captures its boundary quantities
 /// immediately before its first mutation under that generation (an untouched node
-/// is its own snapshot), and `walk_linear_frozen` prices the tree exactly as it
+/// is its own snapshot), and `walk_frozen` prices the tree exactly as it
 /// stood at the snapshot instant through the same walk the live read uses.
 ///
 /// Delayed execution adds pins: a waiting order's boundary ticks, passed in as
 /// `pins` (tick -> count of waiting orders; a key is present only while its
 /// count is positive). Enqueue creates the nodes up front (`ensure_node`), no
 /// deletion path removes a pinned node, and a resolve fill inserts over existing
-/// nodes only (`insert_range_existing`), so the keeper never creates a node.
+/// nodes only (`insert_exist`), so the keeper never creates a node.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};
@@ -65,7 +65,7 @@ public struct StrikePayoutTree has store {
     /// Flush generation whose snapshot this tree holds. Node shadows are valid
     /// only against this value; monotonically increasing, 0 = never snapshotted.
     snapshot_seq: u64,
-    /// True from `activate_snapshot` until `release_snapshot`/`deactivate_snapshot`.
+    /// True from `snap_on` until `snap_done`/`snap_off`.
     /// While set, mutations capture shadows and emptied nodes with shadow
     /// quantities are retained for the frozen walk instead of removed.
     snapshot_active: bool,
@@ -77,8 +77,8 @@ public struct StrikePayoutTree has store {
 public struct PayoutSummary has copy, drop, store {
     start: u64,
     end: u64,
-    /// Never exceeds `start`, by construction in `boundary_summary` and
-    /// `combine_summaries`. That bound is what makes `combine_summaries`
+    /// Never exceeds `start`, by construction in `bound_sum` and
+    /// `combine`. That bound is what makes `combine`
     /// associative at u64 scale — and therefore what makes the tree's shape
     /// irrelevant to every value it reports. A summary term that could outgrow
     /// `start` would break shape-independence with no test to catch it, and
@@ -108,7 +108,7 @@ public struct PayoutNode has copy, drop, store {
 }
 
 /// Return `(max_payout, total_payout)` for pre-settlement reserve math.
-public(package) fun payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64) {
+public(package) fun rsv_terms(tree: &StrikePayoutTree): (u64, u64) {
     let mut max_payout = tree.base;
     let mut total_payout = tree.base;
     if (tree.root.is_some()) {
@@ -122,7 +122,7 @@ public(package) fun payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64) {
 /// Return the highest payout prefix reachable inside `(lower_tick, higher_tick]`.
 /// This is the existing payout peak a candidate over the same range would stack
 /// onto.
-public(package) fun range_max_payout(
+public(package) fun range_max(
     tree: &StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -130,13 +130,13 @@ public(package) fun range_max_payout(
     // Prefix evaluation folds boundaries with `tick < limit`, so `lower + 1`
     // includes a start boundary exactly at `lower`. Tick zero is the open-lower
     // sentinel and lives in `base`, not in the node table.
-    let prefix_at_lower = settlement_prefix_payout(
+    let prefix_at_lower = prefix_pay(
         &tree.nodes,
         tree.root,
         lower_tick + 1,
         tree.base,
     );
-    let window = window_summary(
+    let window = window_sum(
         &tree.nodes,
         tree.root,
         lower_tick,
@@ -148,7 +148,7 @@ public(package) fun range_max_payout(
 }
 
 /// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun complement_max_payout(
+public(package) fun outside_max(
     tree: &StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -156,12 +156,12 @@ public(package) fun complement_max_payout(
     let left = if (lower_tick == 0) {
         0
     } else {
-        tree.range_max_payout(0, lower_tick)
+        tree.range_max(0, lower_tick)
     };
     let right = if (higher_tick == constants::pos_inf_tick!()) {
         0
     } else {
-        tree.range_max_payout(higher_tick, constants::pos_inf_tick!())
+        tree.range_max(higher_tick, constants::pos_inf_tick!())
     };
     left.max(right)
 }
@@ -169,13 +169,13 @@ public(package) fun complement_max_payout(
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
-public(package) fun settled_payout_liability(
+public(package) fun settled_liab(
     tree: &StrikePayoutTree,
     settlement: u64,
     tick_size: u64,
 ): u64 {
-    let limit_tick = range_codec::prefix_limit_tick(settlement, tick_size);
-    settlement_prefix_payout(
+    let limit_tick = range_codec::limit_tick(settlement, tick_size);
+    prefix_pay(
         &tree.nodes,
         tree.root,
         limit_tick,
@@ -207,7 +207,7 @@ public(package) fun has_nodes(tree: &StrikePayoutTree, lower_tick: u64, higher_t
 /// are never stored (`P = 0`).
 public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
     let mut previous_price = option::none();
-    let (start_total, end_total) = walk_linear_subtree(
+    let (start_total, end_total) = walk_tree(
         &tree.nodes,
         tree.root,
         pricer,
@@ -225,7 +225,7 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
 /// captured one, and its live terms where untouched (live IS the snapshot). A
 /// post-snapshot boundary carries zero shadows and is outside the frozen
 /// surface; the live walk observes it instead.
-public(package) fun walk_linear_frozen(
+public(package) fun walk_frozen(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
     tick_size: u64,
@@ -236,7 +236,7 @@ public(package) fun walk_linear_frozen(
         EStaleValuationSnapshot,
     );
     let mut previous_price = option::none();
-    let (start_total, end_total) = walk_linear_subtree(
+    let (start_total, end_total) = walk_tree(
         &tree.nodes,
         tree.root,
         pricer,
@@ -300,13 +300,13 @@ public(package) fun insert_range(
 /// The zero leaf goes through the ordinary AVL insert, which never prunes, and
 /// is stamped like any post-snapshot creation: zero shadows under an active
 /// generation, so the frozen walk excludes it. Only a pin keeps it alive past
-/// the next emptying mutation or `release_snapshot`.
+/// the next emptying mutation or `snap_done`.
 public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
     if (tick == 0 || tick == constants::pos_inf_tick!() || tree.nodes.contains(tick)) {
         return false
     };
     assert!(tree.node_count + 1 <= constants::max_payout_tree_nodes!(), EMaxPayoutTreeNodes);
-    tree.apply_boundary_delta(tick, 0, true, true, &vec_map::empty());
+    tree.apply_delta(tick, 0, true, true, &vec_map::empty());
     true
 }
 
@@ -317,7 +317,7 @@ public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
 /// Mirrors `insert_range` over a path with no node-creation branch, so no keeper
 /// path reaches `table::add`. Each touched node still captures its shadow
 /// before the mutation (RP-29).
-public(package) fun insert_range_existing(
+public(package) fun insert_exist(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -327,12 +327,12 @@ public(package) fun insert_range_existing(
     if (quantity == 0) return;
 
     if (lower_tick == 0) {
-        apply_net_delta(&mut tree.base, quantity, true);
-        tree.add_existing_boundary(higher_tick, quantity, false);
+        apply_net(&mut tree.base, quantity, true);
+        tree.add_existing(higher_tick, quantity, false);
     } else {
-        tree.add_existing_boundary(lower_tick, quantity, true);
+        tree.add_existing(lower_tick, quantity, true);
         if (higher_tick != constants::pos_inf_tick!()) {
-            tree.add_existing_boundary(higher_tick, quantity, false);
+            tree.add_existing(higher_tick, quantity, false);
         };
     };
 }
@@ -355,7 +355,7 @@ public(package) fun remove_range(
 /// The refund routine's best-effort cleanup after it unpins. A missing tick,
 /// a sentinel, a node holding quantity, a pinned node, and a husk the active
 /// generation still needs are all left alone and return false.
-public(package) fun prune_if_unpinned(
+public(package) fun prune_node(
     tree: &mut StrikePayoutTree,
     tick: u64,
     pins: &VecMap<u64, u64>,
@@ -363,17 +363,17 @@ public(package) fun prune_if_unpinned(
     if (!tree.nodes.contains(tick) || pins.contains(&tick)) return false;
     let node = tree.nodes[tick];
     let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
-    if (!is_empty_node(node) || retains_snapshot(&node, snapshot_seq)) return false;
+    if (!empty_node(node) || snap_keeps(&node, snapshot_seq)) return false;
     tree.root = detach_tick(&mut tree.nodes, tree.root, tick);
     tree.node_count = tree.node_count - 1;
     true
 }
 
 /// Begin holding generation `snapshot_seq`'s snapshot: readable through
-/// `walk_linear_frozen` while live mutations continue. O(1) — `base` is copied
+/// `walk_frozen` while live mutations continue. O(1) — `base` is copied
 /// eagerly, nodes capture lazily on first mutation. Generations are flush
 /// ordinals, strictly increasing, so a stale activation is always superseded.
-public(package) fun activate_snapshot(tree: &mut StrikePayoutTree, snapshot_seq: u64) {
+public(package) fun snap_on(tree: &mut StrikePayoutTree, snapshot_seq: u64) {
     assert!(snapshot_seq > tree.snapshot_seq, ESnapshotSeqNotIncreasing);
     tree.snapshot_seq = snapshot_seq;
     tree.snapshot_active = true;
@@ -382,8 +382,8 @@ public(package) fun activate_snapshot(tree: &mut StrikePayoutTree, snapshot_seq:
 
 /// Stop holding the snapshot without walking the tree (trade-path discard of a
 /// stale generation); its husks stay until the next consumed generation's
-/// `release_snapshot`.
-public(package) fun deactivate_snapshot(tree: &mut StrikePayoutTree) {
+/// `snap_done`.
+public(package) fun snap_off(tree: &mut StrikePayoutTree) {
     tree.snapshot_active = false;
 }
 
@@ -391,10 +391,10 @@ public(package) fun deactivate_snapshot(tree: &mut StrikePayoutTree) {
 /// every live-zero node (husks — this generation's or a stale one's) that no
 /// waiting order pins. Runs in the valuation transaction, whose budget already
 /// covers every node.
-public(package) fun release_snapshot(tree: &mut StrikePayoutTree, pins: &VecMap<u64, u64>) {
+public(package) fun snap_done(tree: &mut StrikePayoutTree, pins: &VecMap<u64, u64>) {
     tree.snapshot_active = false;
     let mut husks = vector[];
-    collect_husks(&tree.nodes, tree.root, pins, &mut husks);
+    find_husks(&tree.nodes, tree.root, pins, &mut husks);
     husks.do!(|tick| {
         tree.root = detach_tick(&mut tree.nodes, tree.root, tick);
         tree.node_count = tree.node_count - 1;
@@ -413,17 +413,17 @@ fun apply_range(
     if (quantity == 0) return;
 
     if (lower_tick == 0) {
-        apply_net_delta(&mut tree.base, quantity, add);
-        tree.apply_boundary_delta(higher_tick, quantity, false, add, pins);
+        apply_net(&mut tree.base, quantity, add);
+        tree.apply_delta(higher_tick, quantity, false, add, pins);
     } else {
-        tree.apply_boundary_delta(lower_tick, quantity, true, add, pins);
+        tree.apply_delta(lower_tick, quantity, true, add, pins);
         if (higher_tick != constants::pos_inf_tick!()) {
-            tree.apply_boundary_delta(higher_tick, quantity, false, add, pins);
+            tree.apply_delta(higher_tick, quantity, false, add, pins);
         };
     };
 }
 
-fun apply_boundary_delta(
+fun apply_delta(
     tree: &mut StrikePayoutTree,
     tick: u64,
     quantity: u64,
@@ -476,23 +476,23 @@ fun apply_at(
     let mut node = nodes[root_tick];
 
     if (tick == root_tick) {
-        capture_snapshot_if_stale(&mut node, snapshot_seq);
+        capture(&mut node, snapshot_seq);
         if (is_start) {
-            apply_net_delta(&mut node.local_start, quantity, add);
+            apply_net(&mut node.local_start, quantity, add);
         } else {
-            apply_net_delta(&mut node.local_end, quantity, add);
+            apply_net(&mut node.local_end, quantity, add);
         };
         // An emptied node whose shadow the active generation still needs is
-        // retained as a live-zero husk; `release_snapshot` removes it once the
+        // retained as a live-zero husk; `snap_done` removes it once the
         // frozen walk has been read. A pinned node is kept for the waiting order
         // that will fill over it. The pin scan runs only once the node is empty.
         if (
-            is_empty_node(node)
-                && !retains_snapshot(&node, snapshot_seq)
+            empty_node(node)
+                && !snap_keeps(&node, snapshot_seq)
                 && !pins.contains(&root_tick)
         ) {
             let _removed = nodes.remove(root_tick);
-            return join_subtrees(nodes, node.left, node.right)
+            return join_trees(nodes, node.left, node.right)
         };
         resummarize(nodes, root_tick, node);
         return option::some(root_tick)
@@ -509,15 +509,15 @@ fun apply_at(
     option::some(rebalance(nodes, root_tick, node))
 }
 
-fun add_existing_boundary(tree: &mut StrikePayoutTree, tick: u64, quantity: u64, is_start: bool) {
+fun add_existing(tree: &mut StrikePayoutTree, tick: u64, quantity: u64, is_start: bool) {
     let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
-    apply_at_existing(&mut tree.nodes, tree.root, tick, quantity, is_start, snapshot_seq);
+    apply_exist(&mut tree.nodes, tree.root, tick, quantity, is_start, snapshot_seq);
 }
 
 /// `apply_at`'s add path over an existing node, with no node-creation branch.
 /// The shape never changes, so each node on the path only re-summarizes and no
 /// rotation is needed.
-fun apply_at_existing(
+fun apply_exist(
     nodes: &mut Table<u64, PayoutNode>,
     root: Option<u64>,
     tick: u64,
@@ -530,16 +530,16 @@ fun apply_at_existing(
     let mut node = nodes[root_tick];
 
     if (tick == root_tick) {
-        capture_snapshot_if_stale(&mut node, snapshot_seq);
+        capture(&mut node, snapshot_seq);
         if (is_start) {
-            apply_net_delta(&mut node.local_start, quantity, true);
+            apply_net(&mut node.local_start, quantity, true);
         } else {
-            apply_net_delta(&mut node.local_end, quantity, true);
+            apply_net(&mut node.local_end, quantity, true);
         };
     } else if (tick < root_tick) {
-        apply_at_existing(nodes, node.left, tick, quantity, is_start, snapshot_seq);
+        apply_exist(nodes, node.left, tick, quantity, is_start, snapshot_seq);
     } else {
-        apply_at_existing(nodes, node.right, tick, quantity, is_start, snapshot_seq);
+        apply_exist(nodes, node.right, tick, quantity, is_start, snapshot_seq);
     };
 
     resummarize(nodes, root_tick, node);
@@ -563,7 +563,7 @@ fun new_leaf(quantity: u64, is_start: bool, snapshot_seq: u64): PayoutNode {
         snapshot_local_start: 0,
         snapshot_local_end: 0,
         snapshot_seq,
-        summary: boundary_summary(start, end),
+        summary: bound_sum(start, end),
     }
 }
 
@@ -607,7 +607,7 @@ fun rotate_left(
 /// leftmost node of the right subtree — then rebalance the joined subtree. The
 /// successor keeps its own tick (the table is keyed by tick, so a node is never
 /// re-keyed) and inherits the removed node's children.
-fun join_subtrees(
+fun join_trees(
     nodes: &mut Table<u64, PayoutNode>,
     left: Option<u64>,
     right: Option<u64>,
@@ -624,7 +624,7 @@ fun join_subtrees(
 
 /// Detach the leftmost node of the subtree rooted at `tick`. Returns that node's
 /// tick and the rebalanced remainder. The detached node is left in the table for
-/// `join_subtrees` to relink — it is never orphaned, because the only caller
+/// `join_trees` to relink — it is never orphaned, because the only caller
 /// immediately reinstalls it.
 fun take_min(nodes: &mut Table<u64, PayoutNode>, tick: u64): (u64, Option<u64>) {
     let mut node = nodes[tick];
@@ -640,20 +640,20 @@ fun take_min(nodes: &mut Table<u64, PayoutNode>, tick: u64): (u64, Option<u64>) 
 /// child; an inside-heavy one needs its own rotation first so the taller
 /// grandchild ends up on the outside.
 fun rebalance(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode): u64 {
-    let left_height = subtree_height(nodes, node.left);
-    let right_height = subtree_height(nodes, node.right);
+    let left_height = tree_height(nodes, node.left);
+    let right_height = tree_height(nodes, node.right);
 
     if (left_height > right_height + 1) {
         let left_tick = *node.left.borrow();
         let left_node = nodes[left_tick];
-        if (subtree_height(nodes, left_node.right) > subtree_height(nodes, left_node.left)) {
+        if (tree_height(nodes, left_node.right) > tree_height(nodes, left_node.left)) {
             node.left = option::some(rotate_left(nodes, left_tick, left_node));
         };
         rotate_right(nodes, tick, node)
     } else if (right_height > left_height + 1) {
         let right_tick = *node.right.borrow();
         let right_node = nodes[right_tick];
-        if (subtree_height(nodes, right_node.left) > subtree_height(nodes, right_node.right)) {
+        if (tree_height(nodes, right_node.left) > tree_height(nodes, right_node.right)) {
             node.right = option::some(rotate_right(nodes, right_tick, right_node));
         };
         rotate_left(nodes, tick, node)
@@ -663,7 +663,7 @@ fun rebalance(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNod
     }
 }
 
-fun settlement_prefix_payout(
+fun prefix_pay(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     limit_tick: u64,
@@ -675,22 +675,22 @@ fun settlement_prefix_payout(
     // A boundary is active in the prefix iff `tick < limit_tick`
     // (`tick * tick_size < settlement`); otherwise exclude it and its right subtree.
     if (limit_tick <= tick) {
-        return settlement_prefix_payout(nodes, node.left, limit_tick, running)
+        return prefix_pay(nodes, node.left, limit_tick, running)
     };
 
     let mut running = running;
-    let left_summary = subtree_summary(nodes, node.left);
-    apply_net_delta(&mut running, left_summary.start, true);
-    apply_net_delta(&mut running, left_summary.end, false);
-    apply_net_delta(&mut running, node.local_start, true);
-    apply_net_delta(&mut running, node.local_end, false);
-    settlement_prefix_payout(nodes, node.right, limit_tick, running)
+    let left_summary = tree_sum(nodes, node.left);
+    apply_net(&mut running, left_summary.start, true);
+    apply_net(&mut running, left_summary.end, false);
+    apply_net(&mut running, node.local_start, true);
+    apply_net(&mut running, node.local_end, false);
+    prefix_pay(nodes, node.right, limit_tick, running)
 }
 
 /// Combine every boundary strictly inside `(lower, higher)`. Whole subtrees
 /// contained by the window return their stored summary, keeping the read
 /// logarithmic in tree height rather than scanning the payout surface.
-fun window_summary(
+fun window_sum(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     lower: u64,
@@ -699,21 +699,21 @@ fun window_summary(
     subtree_high: u64,
 ): PayoutSummary {
     if (root.is_none()) return zero_summary();
-    if (subtree_low >= lower && subtree_high <= higher) return subtree_summary(nodes, root);
+    if (subtree_low >= lower && subtree_high <= higher) return tree_sum(nodes, root);
 
     let tick = *root.borrow();
     let node = nodes[tick];
     if (tick <= lower) {
-        return window_summary(nodes, node.right, lower, higher, tick, subtree_high)
+        return window_sum(nodes, node.right, lower, higher, tick, subtree_high)
     };
     if (tick >= higher) {
-        return window_summary(nodes, node.left, lower, higher, subtree_low, tick)
+        return window_sum(nodes, node.left, lower, higher, subtree_low, tick)
     };
 
-    let left = window_summary(nodes, node.left, lower, higher, subtree_low, tick);
-    let right = window_summary(nodes, node.right, lower, higher, tick, subtree_high);
-    let boundary = boundary_summary(node.local_start, node.local_end);
-    combine_summaries(combine_summaries(left, boundary), right)
+    let left = window_sum(nodes, node.left, lower, higher, subtree_low, tick);
+    let right = window_sum(nodes, node.right, lower, higher, tick, subtree_high);
+    let boundary = bound_sum(node.local_start, node.local_end);
+    combine(combine(left, boundary), right)
 }
 
 /// Accumulate start and end boundary products separately during an in-order walk
@@ -732,7 +732,7 @@ fun window_summary(
 /// understate liability without aborting. A node whose selected terms are both
 /// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
 /// creation) — the view that owns the tick observes it.
-fun walk_linear_subtree(
+fun walk_tree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
@@ -744,7 +744,7 @@ fun walk_linear_subtree(
     let tick = *root.borrow();
     let node = nodes[tick];
 
-    let (left_start, left_end) = walk_linear_subtree(
+    let (left_start, left_end) = walk_tree(
         nodes,
         node.left,
         pricer,
@@ -778,7 +778,7 @@ fun walk_linear_subtree(
         };
     };
 
-    let (right_start, right_end) = walk_linear_subtree(
+    let (right_start, right_end) = walk_tree(
         nodes,
         node.right,
         pricer,
@@ -790,10 +790,10 @@ fun walk_linear_subtree(
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {
-    let (left, left_height) = subtree_facts(nodes, node.left);
-    let (right, right_height) = subtree_facts(nodes, node.right);
-    let boundary = boundary_summary(node.local_start, node.local_end);
-    node.summary = combine_summaries(combine_summaries(left, boundary), right);
+    let (left, left_height) = tree_facts(nodes, node.left);
+    let (right, right_height) = tree_facts(nodes, node.right);
+    let boundary = bound_sum(node.local_start, node.local_end);
+    node.summary = combine(combine(left, boundary), right);
     node.height = 1 + left_height.max(right_height);
     *nodes.borrow_mut(tick) = node;
 }
@@ -801,27 +801,27 @@ fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutN
 /// Summary and height of one child in a single table read. Every re-summarize
 /// needs both, and each child load is a dynamic-field access — reading the two
 /// fields separately doubled the loads on the hottest path in the module.
-fun subtree_facts(nodes: &Table<u64, PayoutNode>, root: Option<u64>): (PayoutSummary, u64) {
+fun tree_facts(nodes: &Table<u64, PayoutNode>, root: Option<u64>): (PayoutSummary, u64) {
     if (root.is_none()) return (zero_summary(), 0);
     let node = nodes[*root.borrow()];
     (node.summary, node.height)
 }
 
-fun subtree_summary(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSummary {
+fun tree_sum(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSummary {
     if (root.is_none()) return zero_summary();
     nodes[*root.borrow()].summary
 }
 
-fun subtree_height(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
+fun tree_height(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
     if (root.is_none()) return 0;
     nodes[*root.borrow()].height
 }
 
-fun boundary_summary(start: u64, end: u64): PayoutSummary {
+fun bound_sum(start: u64, end: u64): PayoutSummary {
     PayoutSummary {
         start,
         end,
-        max_payout_prefix_gain: positive_net_delta(start, end, 0),
+        max_payout_prefix_gain: pos_delta(start, end, 0),
     }
 }
 
@@ -833,8 +833,8 @@ fun zero_summary(): PayoutSummary {
     }
 }
 
-fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary {
-    let right_gain_after_left = positive_net_delta(
+fun combine(left: PayoutSummary, right: PayoutSummary): PayoutSummary {
+    let right_gain_after_left = pos_delta(
         left.start,
         left.end,
         right.max_payout_prefix_gain,
@@ -847,18 +847,18 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
     }
 }
 
-fun positive_net_delta(start: u64, end: u64, gain: u64): u64 {
+fun pos_delta(start: u64, end: u64, gain: u64): u64 {
     (start + gain).saturating_sub(end)
 }
 
-fun is_empty_node(node: PayoutNode): bool {
+fun empty_node(node: PayoutNode): bool {
     node.local_start == 0 && node.local_end == 0
 }
 
 /// Copy live terms into the shadow before the first mutation under the active
 /// generation; a node already stamped with it (captured, or created under it
 /// with the zero shadows that mean "not in the snapshot") is left alone.
-fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_seq: u64) {
+fun capture(node: &mut PayoutNode, snapshot_seq: u64) {
     if (snapshot_seq == 0 || node.snapshot_seq == snapshot_seq) return;
     node.snapshot_local_start = node.local_start;
     node.snapshot_local_end = node.local_end;
@@ -867,14 +867,14 @@ fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_seq: u64) {
 
 /// Whether the active generation still needs this node: a nonzero shadow the
 /// frozen walk has yet to read. A stale generation's shadow retains nothing.
-fun retains_snapshot(node: &PayoutNode, snapshot_seq: u64): bool {
+fun snap_keeps(node: &PayoutNode, snapshot_seq: u64): bool {
     snapshot_seq != 0
         && node.snapshot_seq == snapshot_seq
         && (node.snapshot_local_start != 0 || node.snapshot_local_end != 0)
 }
 
 /// Collect every live-zero tick (husks) that no waiting order pins, in order.
-fun collect_husks(
+fun find_husks(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pins: &VecMap<u64, u64>,
@@ -883,9 +883,9 @@ fun collect_husks(
     if (root.is_none()) return;
     let tick = *root.borrow();
     let node = nodes[tick];
-    collect_husks(nodes, node.left, pins, husks);
-    if (is_empty_node(node) && !pins.contains(&tick)) husks.push_back(tick);
-    collect_husks(nodes, node.right, pins, husks);
+    find_husks(nodes, node.left, pins, husks);
+    if (empty_node(node) && !pins.contains(&tick)) husks.push_back(tick);
+    find_husks(nodes, node.right, pins, husks);
 }
 
 /// Remove the husk at `tick`, rejoining and rebalancing as an emptying
@@ -895,7 +895,7 @@ fun detach_tick(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>, tick: u64
     let mut node = nodes[root_tick];
     if (tick == root_tick) {
         let _removed = nodes.remove(root_tick);
-        return join_subtrees(nodes, node.left, node.right)
+        return join_trees(nodes, node.left, node.right)
     };
     if (tick < root_tick) {
         node.left = detach_tick(nodes, node.left, tick);
@@ -905,7 +905,7 @@ fun detach_tick(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>, tick: u64
     option::some(rebalance(nodes, root_tick, node))
 }
 
-fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
+fun apply_net(value: &mut u64, delta: u64, add: bool) {
     if (add) {
         *value = *value + delta;
     } else {
@@ -986,8 +986,8 @@ fun assert_subtree_invariant(
     assert!(taller - left_height.min(right_height) <= 1);
     assert!(node.height == 1 + taller);
 
-    let boundary = boundary_summary(node.local_start, node.local_end);
-    let summary = combine_summaries(combine_summaries(left_summary, boundary), right_summary);
+    let boundary = bound_sum(node.local_start, node.local_end);
+    let summary = combine(combine(left_summary, boundary), right_summary);
     assert!(node.summary.start == summary.start);
     assert!(node.summary.end == summary.end);
     assert!(node.summary.max_payout_prefix_gain == summary.max_payout_prefix_gain);

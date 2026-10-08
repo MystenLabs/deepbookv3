@@ -323,7 +323,7 @@ public struct FeeIncentivesReturned has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun emit_expiry_cash_received(
+public(package) fun cash_recv(
     pool_vault_id: ID,
     expiry_market_id: ID,
     settlement_price: u64,
@@ -337,7 +337,7 @@ public(package) fun emit_expiry_cash_received(
     });
 }
 
-public(package) fun emit_expiry_cash_rebalanced(
+public(package) fun rebalanced(
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,
@@ -355,7 +355,7 @@ public(package) fun emit_expiry_cash_rebalanced(
     });
 }
 
-public(package) fun emit_expiry_profit_materialized(
+public(package) fun profit_made(
     pool_vault_id: ID,
     expiry_market_id: ID,
     lp_profit: u64,
@@ -375,7 +375,7 @@ public(package) fun emit_expiry_profit_materialized(
     });
 }
 
-public(package) fun emit_expiry_pnl(
+public(package) fun expiry_pnl(
     pool_vault_id: ID,
     expiry_market_id: ID,
     propbook_underlying_id: u32,
@@ -401,7 +401,7 @@ public(package) fun emit_expiry_pnl(
     });
 }
 
-public(package) fun emit_expiry_pnl_realized(
+public(package) fun pnl_realized(
     pool_vault_id: ID,
     expiry_market_id: ID,
     propbook_underlying_id: u32,
@@ -421,7 +421,7 @@ public(package) fun emit_expiry_pnl_realized(
     });
 }
 
-public(package) fun emit_supply_requested(
+public(package) fun supply_req(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -441,7 +441,7 @@ public(package) fun emit_supply_requested(
     });
 }
 
-public(package) fun emit_withdraw_requested(
+public(package) fun wd_req(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -461,7 +461,7 @@ public(package) fun emit_withdraw_requested(
     });
 }
 
-public(package) fun emit_request_cancelled(
+public(package) fun req_cancel(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -483,7 +483,7 @@ public(package) fun emit_request_cancelled(
     });
 }
 
-public(package) fun emit_request_limit_missed(
+public(package) fun limit_missed(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -509,7 +509,7 @@ public(package) fun emit_request_limit_missed(
     });
 }
 
-public(package) fun emit_supply_filled(
+public(package) fun supply_done(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -533,7 +533,7 @@ public(package) fun emit_supply_filled(
     });
 }
 
-public(package) fun emit_withdraw_filled(
+public(package) fun wd_done(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -557,7 +557,7 @@ public(package) fun emit_withdraw_filled(
     });
 }
 
-public(package) fun emit_flush_executed(
+public(package) fun flush_done(
     pool_vault_id: ID,
     epoch: u64,
     pool_value: u64,
@@ -599,7 +599,7 @@ public(package) fun emit_flush_executed(
     });
 }
 
-public(package) fun emit_flush_restarted(
+public(package) fun flush_redo(
     pool_vault_id: ID,
     expected_market_count: u64,
     valued_market_count: u64,
@@ -611,15 +611,15 @@ public(package) fun emit_flush_restarted(
     });
 }
 
-public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {
+public(package) fun cap_locked(pool_vault_id: ID, amount: u64) {
     event::emit(CapitalLocked { pool_vault_id, amount });
 }
 
-public(package) fun emit_usdc_added_to_plp(pool_vault_id: ID, contributor: address, amount: u64) {
+public(package) fun usdc_added(pool_vault_id: ID, contributor: address, amount: u64) {
     event::emit(UsdcAddedToPlp { pool_vault_id, contributor, amount });
 }
 
-public(package) fun emit_fee_incentives_sponsored(
+public(package) fun incent_given(
     pool_vault_id: ID,
     sponsor: address,
     amount: u64,
@@ -633,7 +633,7 @@ public(package) fun emit_fee_incentives_sponsored(
     });
 }
 
-public(package) fun emit_fee_incentives_withdrawn(
+public(package) fun incent_out(
     pool_vault_id: ID,
     amount: u64,
     reserve_after: u64,
@@ -641,7 +641,7 @@ public(package) fun emit_fee_incentives_withdrawn(
     event::emit(FeeIncentivesWithdrawn { pool_vault_id, amount, reserve_after });
 }
 
-public(package) fun emit_fee_incentive_lifetime_cap_snapshotted(
+public(package) fun cap_snapshot(
     pool_vault_id: ID,
     expiry_market_id: ID,
     fee_incentive_lifetime_cap: u64,
@@ -653,7 +653,7 @@ public(package) fun emit_fee_incentive_lifetime_cap_snapshotted(
     });
 }
 
-public(package) fun emit_fee_incentives_allocated(
+public(package) fun incent_alloc(
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,
@@ -671,7 +671,7 @@ public(package) fun emit_fee_incentives_allocated(
     });
 }
 
-public(package) fun emit_fee_incentives_returned(
+public(package) fun incent_back(
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,

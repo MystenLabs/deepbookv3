@@ -88,8 +88,8 @@ public fun config(
     inventory_impact_max_rate: u64,
 ): StrikeExposureConfig {
     let mut config = strike_exposure_config::new();
-    config.set_backing_buffer_lambda(backing_buffer_lambda);
-    config.set_inventory_impact_max_rate(inventory_impact_max_rate);
+    config.set_lambda(backing_buffer_lambda);
+    config.set_impact(inventory_impact_max_rate);
     config
 }
 

@@ -49,7 +49,7 @@ public(package) fun free_cash(cash: &ExpiryCash): u64 {
 }
 
 /// Abort unless current cash covers payout liability plus the impact escrow.
-public(package) fun assert_backing(cash: &ExpiryCash, payout_liability: u64) {
+public(package) fun chk_backing(cash: &ExpiryCash, payout_liability: u64) {
     assert!(cash.balance() >= cash.required_cash(payout_liability), EInsufficientCash);
 }
 
@@ -59,7 +59,7 @@ public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<USDC>) {
 }
 
 /// Release caller-approved surplus while preserving payout and escrow backing.
-public(package) fun release_surplus(
+public(package) fun free_surplus(
     cash: &mut ExpiryCash,
     amount: u64,
     payout_liability: u64,
@@ -73,26 +73,26 @@ public(package) fun release_surplus(
 ///
 /// The caller owns the surrounding liability transition and the post-payment
 /// backing check.
-public(package) fun pay_authorized(cash: &mut ExpiryCash, amount: u64): Balance<USDC> {
+public(package) fun pay_out(cash: &mut ExpiryCash, amount: u64): Balance<USDC> {
     assert!(cash.balance() >= amount, EInsufficientCash);
     cash.cash_balance.split(amount)
 }
 
 /// Reserve a charge already received with the mint payment. It remains part of
 /// `cash_balance`, but cannot be swept or counted in NAV while live.
-public(package) fun credit_inventory_impact_reserve(cash: &mut ExpiryCash, amount: u64) {
+public(package) fun add_impact(cash: &mut ExpiryCash, amount: u64) {
     cash.inventory_impact_reserve = cash.inventory_impact_reserve + amount;
 }
 
 /// Pay an inventory-impact rebate exclusively from its isolated escrow.
-public(package) fun pay_inventory_impact_rebate(cash: &mut ExpiryCash, amount: u64): Balance<USDC> {
+public(package) fun pay_rebate(cash: &mut ExpiryCash, amount: u64): Balance<USDC> {
     assert!(amount <= cash.inventory_impact_reserve, EInventoryImpactRebateExceedsReserve);
     cash.inventory_impact_reserve = cash.inventory_impact_reserve - amount;
-    cash.pay_authorized(amount)
+    cash.pay_out(amount)
 }
 
 /// Release the residual inventory-impact escrow after settlement, when no live
 /// close can earn another rebate. Its cash then becomes normal expiry surplus.
-public(package) fun release_inventory_impact_reserve(cash: &mut ExpiryCash) {
+public(package) fun free_impact(cash: &mut ExpiryCash) {
     cash.inventory_impact_reserve = 0;
 }

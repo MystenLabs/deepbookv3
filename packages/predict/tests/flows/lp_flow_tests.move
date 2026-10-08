@@ -257,7 +257,7 @@ fun flush_does_not_charge_the_supply_leg_at_the_shipped_default() {
 
 /// The supply rate must reach the drain from `ProtocolConfig`, not a compiled
 /// constant. The drain-level tests in `lp_book_tests` hand the rates to
-/// `new_flush_mark` by hand and so structurally cannot see a disconnected knob:
+/// `new_mark` by hand and so structurally cannot see a disconnected knob:
 /// a `finish_flush` that ignored config and froze zero passes all of them.
 #[test]
 fun flush_charges_a_configured_supply_fee() {

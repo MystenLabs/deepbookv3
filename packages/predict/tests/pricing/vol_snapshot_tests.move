@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// `pricing::load_vol_snapshot`, the volatility read a queued order takes at enqueue.
+/// `pricing::load_vol`, the volatility read a queued order takes at enqueue.
 ///
 /// The snapshot must hold exactly the raw inputs the oracle holds (narrowed, not
 /// rolled down), with the canonical Pyth source, and its t₀ Pricer must be the live
@@ -163,7 +163,7 @@ fun stale_pyth_spot_falls_back_to_the_block_scholes_forward() {
         helpers::default_svi_max_age_ms(),
     );
 
-    assert_eq!(t0_pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
+    assert_eq!(t0_pricer.pyth_ts(), DIVERGED_PYTH_SOURCE_MS);
     let on_block_scholes_forward = pricing::pricer_at(
         &snapshot,
         snapshot.bs_spot(),
@@ -192,7 +192,7 @@ fun unusable_pyth_spot_falls_back_with_the_zero_sentinel() {
 
     let (_, t0_pricer) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
 
-    assert_eq!(t0_pricer.pyth_spot_source_timestamp_ms(), NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS);
+    assert_eq!(t0_pricer.pyth_ts(), NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS);
     test_helpers::assert_within(
         t0_pricer.up_price(strike(test_constants::default_live_price())),
         ref_data::flow_fixture_atm_up(),
@@ -232,8 +232,8 @@ fun svi_one_ms_past_the_max_age_aborts() {
 fun svi_past_the_live_window_aborts_under_a_looser_policy_bound() {
     let (mut fx, mut oracle) = setup_live();
     let svi_window_ms = oracle_fixture::config(&oracle)
-        .pricing_config()
-        .block_scholes_svi_freshness_ms();
+        .pricing_cfg()
+        .svi_age_ms();
     let now = test_constants::live_source_timestamp_ms() + svi_window_ms + 1;
     fx.set_clock_for_testing(now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
@@ -348,7 +348,7 @@ fun stale_block_scholes_price_aborts() {
     let (mut fx, oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
     let (_, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());

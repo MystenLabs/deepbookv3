@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Delayed-execution paths of the payout tree: `ensure_node` creates a waiting
-/// order's zero leaves at enqueue, `insert_range_existing` fills over them at
+/// order's zero leaves at enqueue, `insert_exist` fills over them at
 /// resolve without ever creating a node, and pins keep those nodes alive through
-/// every deletion path (`remove_range`, `release_snapshot`, `prune_if_unpinned`).
+/// every deletion path (`remove_range`, `snap_done`, `prune_node`).
 ///
 /// Expected payouts are hand-derived from the `(lower, higher]` payoff: a
 /// settlement at `t * TICK_SIZE` pays every range whose lower tick is below `t`
@@ -63,7 +63,7 @@ fun ensure_node_inserts_one_zero_leaf_and_is_idempotent() {
     assert_eq!(tree.node_count(), 1);
     // A zero leaf carries no payout anywhere.
     assert_reserve_terms(&tree, 0, 0);
-    assert_eq!(tree.settled_payout_liability(settle_at(MIDDLE), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at(MIDDLE), TICK_SIZE), 0);
 
     assert!(!tree.ensure_node(LOWER));
     assert_eq!(tree.node_count(), 1);
@@ -93,7 +93,7 @@ fun ensure_node_on_a_live_boundary_changes_nothing() {
     assert!(!tree.ensure_node(HIGHER));
     assert_eq!(tree.node_count(), 2);
     assert_reserve_terms(&tree, Q, Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(MIDDLE), TICK_SIZE), Q);
+    assert_eq!(tree.settled_liab(settle_at(MIDDLE), TICK_SIZE), Q);
     tree.assert_tree_invariant_for_testing();
     destroy(tree);
 }
@@ -184,15 +184,15 @@ fun insert_range_existing_fills_zero_leaves_without_adding_nodes() {
     tree.ensure_node(LOWER);
     tree.ensure_node(HIGHER);
 
-    tree.insert_range_existing(LOWER, HIGHER, Q);
+    tree.insert_exist(LOWER, HIGHER, Q);
 
     assert_eq!(tree.node_count(), 2);
     assert_reserve_terms(&tree, Q, Q);
     // (10, 20] pays Q at 15 and at exactly 20; nothing at 10 or above 20.
-    assert_eq!(tree.settled_payout_liability(settle_at(LOWER), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at(MIDDLE), TICK_SIZE), Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(HIGHER), TICK_SIZE), Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(ABOVE_ALL), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at(LOWER), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at(MIDDLE), TICK_SIZE), Q);
+    assert_eq!(tree.settled_liab(settle_at(HIGHER), TICK_SIZE), Q);
+    assert_eq!(tree.settled_liab(settle_at(ABOVE_ALL), TICK_SIZE), 0);
     tree.assert_tree_invariant_for_testing();
     destroy(tree);
 }
@@ -203,12 +203,12 @@ fun insert_range_existing_with_an_open_lower_credits_the_base() {
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(HIGHER);
 
-    tree.insert_range_existing(0, HIGHER, Q);
+    tree.insert_exist(0, HIGHER, Q);
 
     assert_eq!(tree.node_count(), 1);
     assert_reserve_terms(&tree, Q, Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(LOWER), TICK_SIZE), Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(ABOVE_ALL), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at(LOWER), TICK_SIZE), Q);
+    assert_eq!(tree.settled_liab(settle_at(ABOVE_ALL), TICK_SIZE), 0);
     tree.assert_tree_invariant_for_testing();
     destroy(tree);
 }
@@ -219,12 +219,12 @@ fun insert_range_existing_with_an_open_higher_touches_one_node() {
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(LOWER);
 
-    tree.insert_range_existing(LOWER, constants::pos_inf_tick!(), Q);
+    tree.insert_exist(LOWER, constants::pos_inf_tick!(), Q);
 
     assert_eq!(tree.node_count(), 1);
     assert_reserve_terms(&tree, Q, Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(LOWER), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at(ABOVE_ALL), TICK_SIZE), Q);
+    assert_eq!(tree.settled_liab(settle_at(LOWER), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at(ABOVE_ALL), TICK_SIZE), Q);
     tree.assert_tree_invariant_for_testing();
     destroy(tree);
 }
@@ -237,13 +237,13 @@ fun insert_range_existing_stacks_onto_a_live_boundary() {
     tree.ensure_node(OTHER);
 
     // HIGHER is already the live end of (10, 20]; it also becomes the start of (20, 30].
-    tree.insert_range_existing(HIGHER, OTHER, Q2);
+    tree.insert_exist(HIGHER, OTHER, Q2);
 
     assert_eq!(tree.node_count(), 3);
     // Disjoint ranges: the point max is the larger order, the total is both.
     assert_reserve_terms(&tree, Q, Q + Q2);
-    assert_eq!(tree.settled_payout_liability(settle_at(MIDDLE), TICK_SIZE), Q);
-    assert_eq!(tree.settled_payout_liability(settle_at(OTHER), TICK_SIZE), Q2);
+    assert_eq!(tree.settled_liab(settle_at(MIDDLE), TICK_SIZE), Q);
+    assert_eq!(tree.settled_liab(settle_at(OTHER), TICK_SIZE), Q2);
     tree.assert_tree_invariant_for_testing();
     destroy(tree);
 }
@@ -255,7 +255,7 @@ fun insert_range_existing_with_zero_quantity_changes_nothing() {
     tree.ensure_node(LOWER);
     tree.ensure_node(HIGHER);
 
-    tree.insert_range_existing(LOWER, HIGHER, 0);
+    tree.insert_exist(LOWER, HIGHER, 0);
 
     assert_eq!(tree.node_count(), 2);
     assert_reserve_terms(&tree, 0, 0);
@@ -268,7 +268,7 @@ fun insert_range_existing_with_a_missing_higher_boundary_aborts() {
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(LOWER);
 
-    tree.insert_range_existing(LOWER, HIGHER, Q);
+    tree.insert_exist(LOWER, HIGHER, Q);
     abort 999
 }
 
@@ -277,7 +277,7 @@ fun insert_range_existing_on_an_empty_tree_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);
 
-    tree.insert_range_existing(LOWER, constants::pos_inf_tick!(), Q);
+    tree.insert_exist(LOWER, constants::pos_inf_tick!(), Q);
     abort 999
 }
 
@@ -289,7 +289,7 @@ fun insert_range_existing_over_the_whole_line_aborts() {
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(LOWER);
 
-    tree.insert_range_existing(0, constants::pos_inf_tick!(), Q);
+    tree.insert_exist(0, constants::pos_inf_tick!(), Q);
     abort 999
 }
 
@@ -311,9 +311,9 @@ fun a_pinned_boundary_survives_the_close_that_empties_it() {
     tree.assert_tree_invariant_for_testing();
 
     // The waiting order then fills over the kept node.
-    tree.insert_range_existing(LOWER, constants::pos_inf_tick!(), Q2);
+    tree.insert_exist(LOWER, constants::pos_inf_tick!(), Q2);
     assert_eq!(tree.node_count(), 1);
-    assert_eq!(tree.settled_payout_liability(settle_at(ABOVE_ALL), TICK_SIZE), Q2);
+    assert_eq!(tree.settled_liab(settle_at(ABOVE_ALL), TICK_SIZE), Q2);
     destroy(tree);
 }
 
@@ -341,8 +341,8 @@ fun a_pinned_zero_leaf_survives_release_snapshot() {
     tree.ensure_node(LOWER);
     tree.ensure_node(HIGHER);
 
-    tree.activate_snapshot(1);
-    tree.release_snapshot(&pins(vector[LOWER]));
+    tree.snap_on(1);
+    tree.snap_done(&pins(vector[LOWER]));
 
     // Release collects every live-zero node except the pinned one.
     assert_eq!(tree.node_count(), 1);
@@ -350,8 +350,8 @@ fun a_pinned_zero_leaf_survives_release_snapshot() {
     tree.assert_tree_invariant_for_testing();
 
     // Once the order finishes and unpins, the next release collects it.
-    tree.activate_snapshot(2);
-    tree.release_snapshot(&vec_map::empty());
+    tree.snap_on(2);
+    tree.snap_done(&vec_map::empty());
     assert_eq!(tree.node_count(), 0);
     destroy(tree);
 }
@@ -365,17 +365,17 @@ fun a_pinned_husk_survives_release_while_unpinned_husks_go() {
     tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
     snapshot_reference.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
 
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
     let pinned = pins(vector[RANGE_A_LOWER]);
     tree.remove_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A, &pinned);
     // Both kept: the lower one is pinned, the higher one is a husk the snapshot holds.
     assert_eq!(tree.node_count(), 2);
     assert_eq!(
-        tree.walk_linear_frozen(&pricer, tick_size(), 1),
+        tree.walk_frozen(&pricer, tick_size(), 1),
         snapshot_reference.walk_linear(&pricer, tick_size()),
     );
 
-    tree.release_snapshot(&pinned);
+    tree.snap_done(&pinned);
     assert_eq!(tree.node_count(), 1);
     assert!(tree.has_nodes(RANGE_A_LOWER, constants::pos_inf_tick!()));
     assert_eq!(tree.walk_linear(&pricer, tick_size()), 0);
@@ -395,9 +395,9 @@ fun prune_skips_missing_ticks_and_sentinels() {
     tree.ensure_node(LOWER);
     let none = vec_map::empty();
 
-    assert!(!tree.prune_if_unpinned(HIGHER, &none));
-    assert!(!tree.prune_if_unpinned(0, &none));
-    assert!(!tree.prune_if_unpinned(constants::pos_inf_tick!(), &none));
+    assert!(!tree.prune_node(HIGHER, &none));
+    assert!(!tree.prune_node(0, &none));
+    assert!(!tree.prune_node(constants::pos_inf_tick!(), &none));
     assert_eq!(tree.node_count(), 1);
     destroy(tree);
 }
@@ -408,7 +408,7 @@ fun prune_removes_an_empty_unpinned_node() {
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(LOWER);
 
-    assert!(tree.prune_if_unpinned(LOWER, &pins(vector[HIGHER])));
+    assert!(tree.prune_node(LOWER, &pins(vector[HIGHER])));
 
     assert_eq!(tree.node_count(), 0);
     assert!(!tree.has_nodes(LOWER, constants::pos_inf_tick!()));
@@ -422,7 +422,7 @@ fun prune_keeps_a_pinned_empty_node() {
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(LOWER);
 
-    assert!(!tree.prune_if_unpinned(LOWER, &pins(vector[LOWER])));
+    assert!(!tree.prune_node(LOWER, &pins(vector[LOWER])));
 
     assert_eq!(tree.node_count(), 1);
     assert!(tree.has_nodes(LOWER, constants::pos_inf_tick!()));
@@ -436,8 +436,8 @@ fun prune_keeps_a_node_that_holds_quantity() {
     tree.insert_range(LOWER, HIGHER, Q);
     let none = vec_map::empty();
 
-    assert!(!tree.prune_if_unpinned(LOWER, &none));
-    assert!(!tree.prune_if_unpinned(HIGHER, &none));
+    assert!(!tree.prune_node(LOWER, &none));
+    assert!(!tree.prune_node(HIGHER, &none));
 
     assert_eq!(tree.node_count(), 2);
     assert_reserve_terms(&tree, Q, Q);
@@ -449,10 +449,10 @@ fun prune_removes_a_zero_leaf_created_under_the_active_snapshot() {
     // Created after the instant with zero shadows, so the snapshot does not need it.
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
     tree.ensure_node(LOWER);
 
-    assert!(tree.prune_if_unpinned(LOWER, &vec_map::empty()));
+    assert!(tree.prune_node(LOWER, &vec_map::empty()));
     assert_eq!(tree.node_count(), 0);
     destroy(tree);
 }
@@ -463,9 +463,9 @@ fun prune_removes_an_empty_node_untouched_by_the_active_generation() {
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);
     tree.ensure_node(LOWER);
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
 
-    assert!(tree.prune_if_unpinned(LOWER, &vec_map::empty()));
+    assert!(tree.prune_node(LOWER, &vec_map::empty()));
     assert_eq!(tree.node_count(), 0);
     destroy(tree);
 }
@@ -475,14 +475,14 @@ fun prune_removes_a_stale_generations_husk() {
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);
     tree.insert_range(LOWER, HIGHER, Q);
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
     tree.remove_range(LOWER, HIGHER, Q, &vec_map::empty());
     assert_eq!(tree.node_count(), 2);
     // The flush aborted: generation 1 is discarded and its husks need nothing.
-    tree.deactivate_snapshot();
+    tree.snap_off();
 
-    assert!(tree.prune_if_unpinned(LOWER, &vec_map::empty()));
-    assert!(tree.prune_if_unpinned(HIGHER, &vec_map::empty()));
+    assert!(tree.prune_node(LOWER, &vec_map::empty()));
+    assert!(tree.prune_node(HIGHER, &vec_map::empty()));
     assert_eq!(tree.node_count(), 0);
     assert_eq!(tree.assert_tree_invariant_for_testing(), 0);
     destroy(tree);
@@ -497,7 +497,7 @@ fun prune_of_a_root_with_two_children_rejoins_the_survivors() {
     tree.ensure_node(HIGHER);
     tree.ensure_node(OTHER);
 
-    assert!(tree.prune_if_unpinned(HIGHER, &vec_map::empty()));
+    assert!(tree.prune_node(HIGHER, &vec_map::empty()));
 
     assert_eq!(tree.node_count(), 2);
     assert!(tree.has_nodes(LOWER, OTHER));
@@ -515,20 +515,20 @@ fun a_husk_the_snapshot_retains_is_never_pruned() {
     tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
     snapshot_reference.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
 
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
     tree.remove_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A, &vec_map::empty());
 
     // Unpinned and empty, but the frozen walk still owns their shadows.
-    assert!(!tree.prune_if_unpinned(RANGE_A_LOWER, &vec_map::empty()));
-    assert!(!tree.prune_if_unpinned(RANGE_A_HIGHER, &vec_map::empty()));
+    assert!(!tree.prune_node(RANGE_A_LOWER, &vec_map::empty()));
+    assert!(!tree.prune_node(RANGE_A_HIGHER, &vec_map::empty()));
     assert_eq!(tree.node_count(), 2);
     assert_eq!(
-        tree.walk_linear_frozen(&pricer, tick_size(), 1),
+        tree.walk_frozen(&pricer, tick_size(), 1),
         snapshot_reference.walk_linear(&pricer, tick_size()),
     );
 
     // Consuming the snapshot is what removes them.
-    tree.release_snapshot(&vec_map::empty());
+    tree.snap_done(&vec_map::empty());
     assert_eq!(tree.node_count(), 0);
 
     destroy(tree);
@@ -552,17 +552,17 @@ fun insert_range_existing_under_a_snapshot_captures_before_mutating() {
     tree.ensure_node(RANGE_C_HIGHER);
     snapshot_reference.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
 
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
     // Fills after the instant: one stacks on captured live nodes, one fills the
     // zero leaves.
-    tree.insert_range_existing(RANGE_A_LOWER, RANGE_A_HIGHER, Q_B);
-    tree.insert_range_existing(RANGE_C_LOWER, RANGE_C_HIGHER, Q_C);
+    tree.insert_exist(RANGE_A_LOWER, RANGE_A_HIGHER, Q_B);
+    tree.insert_exist(RANGE_C_LOWER, RANGE_C_HIGHER, Q_C);
     live_reference.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A + Q_B);
     live_reference.insert_range(RANGE_C_LOWER, RANGE_C_HIGHER, Q_C);
 
     assert_eq!(tree.node_count(), 4);
     assert_eq!(
-        tree.walk_linear_frozen(&pricer, tick_size(), 1),
+        tree.walk_frozen(&pricer, tick_size(), 1),
         snapshot_reference.walk_linear(&pricer, tick_size()),
     );
     assert_eq!(
@@ -587,15 +587,15 @@ fun a_zero_leaf_created_under_the_snapshot_stays_out_of_the_frozen_walk() {
     tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
     snapshot_reference.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
 
-    tree.activate_snapshot(1);
+    tree.snap_on(1);
     // Enqueue pins a new tick during the flush; resolve fills over it.
     assert!(tree.ensure_node(RANGE_B_HIGHER));
-    tree.insert_range_existing(RANGE_A_HIGHER, RANGE_B_HIGHER, Q_B);
+    tree.insert_exist(RANGE_A_HIGHER, RANGE_B_HIGHER, Q_B);
     live_reference.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
     live_reference.insert_range(RANGE_A_HIGHER, RANGE_B_HIGHER, Q_B);
 
     assert_eq!(
-        tree.walk_linear_frozen(&pricer, tick_size(), 1),
+        tree.walk_frozen(&pricer, tick_size(), 1),
         snapshot_reference.walk_linear(&pricer, tick_size()),
     );
     assert_eq!(
@@ -623,7 +623,7 @@ fun pins(ticks: vector<u64>): VecMap<u64, u64> {
 }
 
 fun assert_reserve_terms(tree: &StrikePayoutTree, expected_max: u64, expected_total: u64) {
-    let (max_payout, total_payout) = tree.payout_reserve_terms();
+    let (max_payout, total_payout) = tree.rsv_terms();
     assert_eq!(max_payout, expected_max);
     assert_eq!(total_payout, expected_total);
 }

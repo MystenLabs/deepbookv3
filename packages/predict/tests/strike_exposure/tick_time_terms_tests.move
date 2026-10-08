@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Exposure helpers a delayed-execution resolve uses: the non-aborting entry
-/// band predicates, `try_mint_terms` and its refund reasons, the post-trade
+/// band predicates, `try_terms` and its refund reasons, the post-trade
 /// liability reads behind resolve's no-cash check, the fill-time allocation that
 /// never creates a payout-tree node, and the non-aborting settled close.
 ///
@@ -60,11 +60,11 @@ const REASON_ADMISSION: u8 = 2;
 fun mint_probability_band_is_inclusive_at_both_ends() {
     let config = strike_exposure_config::new();
 
-    assert!(config.is_mint_probability_allowed(MIN_ENTRY_PROBABILITY));
-    assert!(!config.is_mint_probability_allowed(MIN_ENTRY_PROBABILITY - 1));
-    assert!(config.is_mint_probability_allowed(MAX_ENTRY_PROBABILITY));
-    assert!(!config.is_mint_probability_allowed(MAX_ENTRY_PROBABILITY + 1));
-    assert!(!config.is_mint_probability_allowed(0));
+    assert!(config.prob_ok(MIN_ENTRY_PROBABILITY));
+    assert!(!config.prob_ok(MIN_ENTRY_PROBABILITY - 1));
+    assert!(config.prob_ok(MAX_ENTRY_PROBABILITY));
+    assert!(!config.prob_ok(MAX_ENTRY_PROBABILITY + 1));
+    assert!(!config.prob_ok(0));
     destroy(config);
 }
 
@@ -78,16 +78,16 @@ fun range_band_checks_each_finite_leg_and_the_range() {
 
     // ATM to +inf: one finite leg near 1/2 and a range near 1/2.
     let atm_to_inf = range_price(&pricer, STRIKE, pos_inf());
-    assert!(config.is_range_mint_probability_allowed(&atm_to_inf));
+    assert!(config.range_ok(&atm_to_inf));
     // (90, 100]: the range is near 1/2 but the lower leg is near 1.
     let lower_leg_too_high = range_price(&pricer, LOWER_LEG_TICK, STRIKE);
-    assert!(!config.is_range_mint_probability_allowed(&lower_leg_too_high));
+    assert!(!config.range_ok(&lower_leg_too_high));
     // (100, 110]: the range is near 1/2 but the upper leg's complement is near 1.
     let higher_leg_too_high = range_price(&pricer, STRIKE, HIGHER_LEG_TICK);
-    assert!(!config.is_range_mint_probability_allowed(&higher_leg_too_high));
+    assert!(!config.range_ok(&higher_leg_too_high));
     // (110, +inf]: the range itself is near 0.
     let range_too_low = range_price(&pricer, HIGHER_LEG_TICK, pos_inf());
-    assert!(!config.is_range_mint_probability_allowed(&range_too_low));
+    assert!(!config.range_ok(&range_too_low));
 
     destroy(config);
     fixture::finish(fx, oracle, exposure);
@@ -115,7 +115,7 @@ fun try_mint_terms_matches_mint_terms_on_valid_inputs() {
 
     let expected_range = exposure.quote_mint_range(&pricer, STRIKE, pos_inf());
     let expected = exposure.mint_terms(expected_range, Q_A, Q_A);
-    let (terms, reason) = exposure.try_mint_terms(
+    let (terms, reason) = exposure.try_terms(
         exposure.quote_mint_range(&pricer, STRIKE, pos_inf()),
         Q_A,
         Q_A,
@@ -148,7 +148,7 @@ fun try_mint_terms_reports_limits_for_unusable_sizes() {
     ];
     cases.do!(|sizes| {
         let range = exposure.quote_mint_range(&pricer, STRIKE, pos_inf());
-        let (terms, reason) = exposure.try_mint_terms(range, sizes[0], sizes[1]);
+        let (terms, reason) = exposure.try_terms(range, sizes[0], sizes[1]);
         assert!(terms.is_none());
         assert_eq!(reason, REASON_LIMITS);
         assert_eq!(reason, constants::fill_reason_limits!());
@@ -166,7 +166,7 @@ fun try_mint_terms_reports_admission_below_the_minimum_premium() {
     let lot = constants::position_lot_size!();
 
     let range = exposure.quote_mint_range(&pricer, STRIKE, pos_inf());
-    let (terms, reason) = exposure.try_mint_terms(range, lot, lot);
+    let (terms, reason) = exposure.try_terms(range, lot, lot);
 
     assert!(terms.is_none());
     assert_eq!(reason, REASON_ADMISSION);
@@ -175,7 +175,7 @@ fun try_mint_terms_reports_admission_below_the_minimum_premium() {
 }
 
 /// The aborting path checks the premium floor before the size, so a zero size
-/// aborts on the premium there, while `try_mint_terms` reports it as a size
+/// aborts on the premium there, while `try_terms` reports it as a size
 /// (reason 1). Both reject the same input.
 #[test, expected_failure(abort_code = strike_exposure_config::EPremiumBelowMinimum)]
 fun mint_terms_aborts_on_a_zero_size() {
@@ -243,21 +243,21 @@ fun allocate_mint_order_existing_fills_over_ensured_nodes() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     // Placement creates the one finite boundary both ranges share.
-    exposure.ensure_mint_nodes(STRIKE, pos_inf());
-    assert_eq!(exposure.payout_node_count(), 1);
-    assert!(exposure.has_mint_nodes(STRIKE, pos_inf()));
-    assert!(exposure.has_mint_nodes(0, STRIKE));
+    exposure.ensure_nodes(STRIKE, pos_inf());
+    assert_eq!(exposure.tree_nodes(), 1);
+    assert!(exposure.nodes_exist(STRIKE, pos_inf()));
+    assert!(exposure.nodes_exist(0, STRIKE));
 
     let terms_b = exposure.quote_mint_terms(&pricer, STRIKE, pos_inf(), 0, Q_B, true);
-    let order_b = exposure.allocate_mint_order_existing(terms_b);
-    assert_eq!(order_b.id(), order::new_from_ticks(STRIKE, pos_inf(), Q_B, 0).id());
-    assert_eq!(exposure.payout_node_count(), 1);
+    let order_b = exposure.allocate(terms_b);
+    assert_eq!(order_b.id(), order::from_ticks(STRIKE, pos_inf(), Q_B, 0).id());
+    assert_eq!(exposure.tree_nodes(), 1);
     assert_eq!(exposure.payout_liability(), Q_B);
 
     let terms_a = exposure.quote_mint_terms(&pricer, 0, STRIKE, 0, Q_A, true);
-    let order_a = exposure.allocate_mint_order_existing(terms_a);
-    assert_eq!(order_a.id(), order::new_from_ticks(0, STRIKE, Q_A, 1).id());
-    assert_eq!(exposure.payout_node_count(), 1);
+    let order_a = exposure.allocate(terms_a);
+    assert_eq!(order_a.id(), order::from_ticks(0, STRIKE, Q_A, 1).id());
+    assert_eq!(exposure.tree_nodes(), 1);
     // M = 3e9, T = 4e9: 3e9 + 1e9 / 2.
     assert_eq!(exposure.payout_liability(), LIABILITY_A_B);
 
@@ -270,7 +270,7 @@ fun allocate_mint_order_existing_without_its_node_aborts() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     let terms = exposure.quote_mint_terms(&pricer, STRIKE, pos_inf(), 0, Q_B, true);
-    exposure.allocate_mint_order_existing(terms);
+    exposure.allocate(terms);
     abort 999
 }
 
@@ -279,10 +279,10 @@ fun allocate_mint_order_existing_with_terms_from_another_exposure_aborts() {
     let (mut fx, oracle, exposure) = fixture::setup(default_config(), IMPACT_SCALE);
     let mut other = fixture::other_exposure(&mut fx, default_config(), IMPACT_SCALE);
     let pricer = fx.load_pricer_bundle(&oracle);
-    other.ensure_mint_nodes(STRIKE, pos_inf());
+    other.ensure_nodes(STRIKE, pos_inf());
 
     let terms = exposure.quote_mint_terms(&pricer, STRIKE, pos_inf(), 0, Q_B, true);
-    other.allocate_mint_order_existing(terms);
+    other.allocate(terms);
     abort 999
 }
 
@@ -296,19 +296,19 @@ fun try_process_settled_close_pays_each_winner_once() {
     let order_b = mint(&mut exposure, &pricer, STRIKE, pos_inf(), Q_B);
 
     // Nothing to pay while the book is live.
-    assert!(exposure.try_process_settled_close(&order_a).is_none());
+    assert!(exposure.try_settled(&order_a).is_none());
 
-    exposure.record_settlement(SETTLEMENT_IN_A);
+    exposure.set_settled(SETTLEMENT_IN_A);
     assert_eq!(exposure.payout_liability(), Q_A);
 
     // B lost: it pays zero and leaves the liability alone.
-    assert_eq!(exposure.try_process_settled_close(&order_b), option::some(0));
+    assert_eq!(exposure.try_settled(&order_b), option::some(0));
     assert_eq!(exposure.payout_liability(), Q_A);
     // A won its full quantity.
-    assert_eq!(exposure.try_process_settled_close(&order_a), option::some(Q_A));
+    assert_eq!(exposure.try_settled(&order_a), option::some(Q_A));
     assert_eq!(exposure.payout_liability(), 0);
     // Paying A again would underflow the settled liability: skipped, unchanged.
-    assert!(exposure.try_process_settled_close(&order_a).is_none());
+    assert!(exposure.try_settled(&order_a).is_none());
     assert_eq!(exposure.payout_liability(), 0);
 
     fixture::finish(fx, oracle, exposure);
@@ -326,7 +326,7 @@ fun mint_and_check(
     expected_liability: u64,
 ) {
     let range = exposure.quote_mint_range(pricer, lower_tick, higher_tick);
-    assert_eq!(exposure.mint_liability_after(&range, quantity), expected_liability);
+    assert_eq!(exposure.liab_minted(&range, quantity), expected_liability);
     let terms = exposure.mint_terms(range, quantity, quantity);
     exposure.allocate_mint_order(terms);
     assert_eq!(exposure.payout_liability(), expected_liability);
@@ -342,11 +342,11 @@ fun close_and_check(
     expected_liability: u64,
 ): Option<Order> {
     assert_eq!(
-        exposure.close_liability_after(order.lower_tick(), order.higher_tick(), close_quantity),
+        exposure.liab_closed(order.lower_tick(), order.higher_tick(), close_quantity),
         expected_liability,
     );
     let terms = exposure.quote_live_close(pricer, order, close_quantity);
-    let survivor = exposure.process_live_close(terms, &vec_map::empty());
+    let survivor = exposure.apply_close(terms, &vec_map::empty());
     assert_eq!(exposure.payout_liability(), expected_liability);
     survivor
 }

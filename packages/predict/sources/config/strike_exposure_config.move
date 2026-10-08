@@ -56,11 +56,11 @@ public(package) fun min_fee(config: &StrikeExposureConfig): u64 {
     config.min_fee
 }
 
-public(package) fun min_entry_probability(config: &StrikeExposureConfig): u64 {
+public(package) fun min_prob(config: &StrikeExposureConfig): u64 {
     config.min_entry_probability
 }
 
-public(package) fun max_entry_probability(config: &StrikeExposureConfig): u64 {
+public(package) fun max_prob(config: &StrikeExposureConfig): u64 {
     config.max_entry_probability
 }
 
@@ -87,11 +87,11 @@ public(package) fun trading_fee(
 ): u64 {
     let lower_fee = price
         .lower_up()
-        .map!(|p| config.leg_trading_fee(expiry_ms, p, quantity, timestamp_ms))
+        .map!(|p| config.leg_fee(expiry_ms, p, quantity, timestamp_ms))
         .get_with_default(0);
     let higher_fee = price
         .higher_up()
-        .map!(|p| config.leg_trading_fee(expiry_ms, p, quantity, timestamp_ms))
+        .map!(|p| config.leg_fee(expiry_ms, p, quantity, timestamp_ms))
         .get_with_default(0);
     lower_fee + higher_fee
 }
@@ -99,7 +99,7 @@ public(package) fun trading_fee(
 /// Non-aborting policy half of `assert_mint_probability_policy`: whether
 /// `entry_probability` lies inside the inclusive entry band. The assert calls
 /// this, so the rule lives in one place.
-public(package) fun is_mint_probability_allowed(
+public(package) fun prob_ok(
     config: &StrikeExposureConfig,
     entry_probability: u64,
 ): bool {
@@ -110,16 +110,16 @@ public(package) fun is_mint_probability_allowed(
 /// Non-aborting policy half of `assert_range_mint_probability_policy`: the
 /// entry band applied to the actual lower-ABOVE and upper-BELOW legs and to
 /// their combined range. An infinite boundary has no leg to check.
-public(package) fun is_range_mint_probability_allowed(
+public(package) fun range_ok(
     config: &StrikeExposureConfig,
     price: &RangePrice,
 ): bool {
-    price.lower_up().map!(|p| config.is_mint_probability_allowed(p)).get_with_default(true)
+    price.lower_up().map!(|p| config.prob_ok(p)).get_with_default(true)
         && price
             .higher_up()
-            .map!(|p| config.is_mint_probability_allowed(math::float_scaling!() - p))
+            .map!(|p| config.prob_ok(math::float_scaling!() - p))
             .get_with_default(true)
-        && config.is_mint_probability_allowed(price.probability())
+        && config.prob_ok(price.probability())
 }
 
 /// Apply entry policy to the actual lower-ABOVE and upper-BELOW legs and to
@@ -129,7 +129,7 @@ public(package) fun assert_range_mint_probability_policy(
     config: &StrikeExposureConfig,
     price: &RangePrice,
 ) {
-    assert!(config.is_range_mint_probability_allowed(price), EEntryProbabilityOutOfBounds);
+    assert!(config.range_ok(price), EEntryProbabilityOutOfBounds);
 }
 
 /// Assert entry-probability policy without deriving quantity-dependent mint
@@ -141,7 +141,7 @@ public(package) fun assert_mint_probability_policy(
     config: &StrikeExposureConfig,
     entry_probability: u64,
 ) {
-    assert!(config.is_mint_probability_allowed(entry_probability), EEntryProbabilityOutOfBounds);
+    assert!(config.prob_ok(entry_probability), EEntryProbabilityOutOfBounds);
 }
 
 /// Assert entry-probability and premium policy; return the premium. The holder
@@ -186,45 +186,45 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
     }
 }
 
-public(package) fun set_backing_buffer_lambda(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_backing_buffer_lambda(value);
+public(package) fun set_lambda(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_lambda(value);
     config.backing_buffer_lambda = value;
 }
 
 public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_base_fee(value);
+    config_constants::chk_base_fee(value);
     config.base_fee = value;
 }
 
 public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_min_fee(value);
+    config_constants::chk_min_fee(value);
     config.min_fee = value;
 }
 
-public(package) fun set_min_entry_probability(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_min_entry_probability(value);
+public(package) fun set_min_prob(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_min_prob(value);
     assert!(value < config.max_entry_probability, EInvalidEntryProbabilityBound);
     config.min_entry_probability = value;
 }
 
-public(package) fun set_max_entry_probability(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_max_entry_probability(value);
+public(package) fun set_max_prob(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_max_prob(value);
     assert!(value > config.min_entry_probability, EInvalidEntryProbabilityBound);
     config.max_entry_probability = value;
 }
 
-public(package) fun set_expiry_fee_window_ms(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_expiry_fee_window_ms(value);
+public(package) fun set_fee_win(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_fee_win(value);
     config.expiry_fee_window_ms = value;
 }
 
-public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_expiry_fee_max_multiplier(value);
+public(package) fun set_fee_mult(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_fee_mult(value);
     config.expiry_fee_max_multiplier = value;
 }
 
-public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_inventory_impact_max_rate(value);
+public(package) fun set_impact(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_impact(value);
     config.inventory_impact_max_rate = value;
 }
 
@@ -232,20 +232,20 @@ public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureCon
 ///
 /// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
 /// liveness before this helper derives `expiry_ms - timestamp_ms`.
-fun leg_trading_fee(
+fun leg_fee(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
     probability: u64,
     quantity: u64,
     timestamp_ms: u64,
 ): u64 {
-    let raw_fee = config.raw_bernoulli_fee_rate(probability);
+    let raw_fee = config.bern_rate(probability);
     let base = raw_fee.max(config.min_fee);
-    let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
+    let multiplier = config.fee_mult(expiry_ms - timestamp_ms);
     math::mul_down(math::mul_down(base, multiplier), quantity)
 }
 
-fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {
+fun bern_rate(config: &StrikeExposureConfig, probability: u64): u64 {
     // RangePrice fields are private to pricing; its digital probabilities are clamped to [0, 1].
     assert!(probability <= math::float_scaling!(), EInvalidFeeProbability);
     if (probability == 0 || probability == math::float_scaling!()) return 0;
@@ -257,7 +257,7 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
 }
 
 /// Linear ramp that scales the trade fee up as expiry approaches.
-fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
+fun fee_mult(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
     // = (max_multiplier - 1) * elapsed / window, round down; the trader keeps the ramp dust.

@@ -285,7 +285,7 @@ fun redeem_live_exactly_at_the_window_succeeds() {
     // seeded Pyth spot.
     age_pyth_spot(&mut fx, &mut market, PYTH_WINDOW_MS);
     assert_eq!(
-        fx.load_pricer_bundle(&market).pyth_spot_source_timestamp_ms(),
+        fx.load_pricer_bundle(&market).pyth_ts(),
         test_constants::live_source_timestamp_ms(),
     );
 
@@ -392,7 +392,7 @@ fun mint_exactly_at_the_window_succeeds() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    assert_eq!(helpers::config(&market).pricing_config().pyth_spot_freshness_ms(), PYTH_WINDOW_MS);
+    assert_eq!(helpers::config(&market).pricing_cfg().pyth_age_ms(), PYTH_WINDOW_MS);
     // Age == window: the bound is inclusive, so the load still anchors on Pyth.
     age_pyth_spot(&mut fx, &mut market, PYTH_WINDOW_MS);
     let order = fx.mint_bundle(
@@ -643,7 +643,7 @@ fun deselected_pyth_ignores_an_unseeded_feed() {
         test_constants::now_ms() + 1,
     );
     assert_eq!(
-        fx.load_pricer_bundle(&market).pyth_spot_source_timestamp_ms(),
+        fx.load_pricer_bundle(&market).pyth_ts(),
         NO_PYTH_OBSERVATION_MS,
     );
 
@@ -684,7 +684,7 @@ fun a_new_pyth_push_restores_live_trading() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    assert_eq!(fx.load_pricer_bundle(&market).pyth_spot_source_timestamp_ms(), pushed_at_ms);
+    assert_eq!(fx.load_pricer_bundle(&market).pyth_ts(), pushed_at_ms);
 
     let remainder = fx.redeem_live_bundle(&mut market, &mut account, order, QUANTITY);
     assert!(remainder.is_none());
