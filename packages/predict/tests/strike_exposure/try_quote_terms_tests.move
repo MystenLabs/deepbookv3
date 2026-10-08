@@ -15,7 +15,6 @@ module deepbook_predict::try_quote_terms_tests;
 use deepbook_predict::{
     constants,
     order::{Self, Order},
-    order_queue,
     pricing::{Self, Pricer},
     strike_exposure::StrikeExposure,
     strike_exposure_config::{Self, StrikeExposureConfig},
@@ -126,7 +125,7 @@ fun a_zero_size_reports_limits() {
     assert!(exact_terms.is_none());
     assert_eq!(budget_reason, REASON_LIMITS);
     assert_eq!(exact_reason, REASON_LIMITS);
-    assert_eq!(budget_reason, order_queue::reason_limits());
+    assert_eq!(budget_reason, constants::fill_reason_limits!());
     fixture::finish(fx, oracle, exposure);
 }
 
@@ -284,7 +283,7 @@ fun assert_admission_refund(
     );
     assert!(terms.is_none());
     assert_eq!(reason, REASON_ADMISSION);
-    assert_eq!(reason, order_queue::reason_admission());
+    assert_eq!(reason, constants::fill_reason_admission!());
 }
 
 fun mint(

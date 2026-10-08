@@ -16,7 +16,6 @@ module deepbook_predict::tick_time_terms_tests;
 use deepbook_predict::{
     constants,
     order::{Self, Order},
-    order_queue,
     pricing::{Pricer, RangePrice},
     range_codec,
     strike_exposure::{Self, StrikeExposure},
@@ -138,7 +137,7 @@ fun try_mint_terms_reports_limits_for_unusable_sizes() {
     let (mut fx, oracle, exposure) = fixture::setup(default_config(), IMPACT_SCALE);
     let pricer = fx.load_pricer_bundle(&oracle);
     let lot = constants::position_lot_size!();
-    let one_lot_past_the_id_field = (order::max_quantity_lots() + 1) * lot;
+    let one_lot_past_the_id_field = (order::max_quantity_lots!() + 1) * lot;
 
     // Zero size, below the minimum, not a whole lot, and too many lots to encode.
     let cases = vector[
@@ -152,7 +151,7 @@ fun try_mint_terms_reports_limits_for_unusable_sizes() {
         let (terms, reason) = exposure.try_mint_terms(range, sizes[0], sizes[1]);
         assert!(terms.is_none());
         assert_eq!(reason, REASON_LIMITS);
-        assert_eq!(reason, order_queue::reason_limits());
+        assert_eq!(reason, constants::fill_reason_limits!());
     });
 
     fixture::finish(fx, oracle, exposure);
@@ -171,7 +170,7 @@ fun try_mint_terms_reports_admission_below_the_minimum_premium() {
 
     assert!(terms.is_none());
     assert_eq!(reason, REASON_ADMISSION);
-    assert_eq!(reason, order_queue::reason_admission());
+    assert_eq!(reason, constants::fill_reason_admission!());
     fixture::finish(fx, oracle, exposure);
 }
 
