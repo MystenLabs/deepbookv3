@@ -53,6 +53,7 @@ LOCAL_CLOSURE = [
     "account",
     "propbook",
     "token",
+    "predict_math",
     "predict",
 ]
 

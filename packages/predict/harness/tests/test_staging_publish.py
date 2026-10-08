@@ -230,6 +230,24 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertFalse((root / "Move.lock").exists())
         self.assertEqual(canonical.read_bytes(), before)
 
+    def test_consumer_rewrite_accepts_the_math_library_without_block_scholes(self) -> None:
+        canonical = config.PACKAGES_DIR / "predict_math" / "Move.toml"
+        before = canonical.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "Move.toml"
+            manifest.write_bytes(before)
+            publish.rewrite_consumer(
+                manifest, root / "pyth", "0x11", root / "wormhole", "0x22",
+                root / "bs_oracle", "0x33", root / "bs_sid", "0x44",
+            )
+            rewritten = staging._manifest(manifest)
+            self.assertEqual(rewritten["dependencies"]["pyth_lazer"], {"local": str(root / "pyth")})
+            self.assertEqual(rewritten["dep-replacements"]["testnet"]["wormhole"]["original-id"], "0x22")
+            self.assertNotIn("bs_oracle", rewritten["dependencies"])
+            self.assertNotIn("bs_oracle", rewritten["dep-replacements"]["testnet"])
+        self.assertEqual(canonical.read_bytes(), before)
+
     def test_publication_order_is_topological(self) -> None:
         order = publish.publication_order()
         positions = {name: index for index, name in enumerate(order)}

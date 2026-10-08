@@ -26,6 +26,7 @@ PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
     "bs_oracle": (),
     "bs_sid": (),
     "propbook": ("fixed_math", "wormhole", "pyth_lazer", "bs_oracle", "bs_sid"),
+    "predict_math": ("fixed_math", "wormhole", "pyth_lazer"),
     "predict": (
         "token",
         "usdc",
@@ -35,6 +36,7 @@ PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
         "pyth_lazer",
         "bs_oracle",
         "propbook",
+        "predict_math",
     ),
 }
 
@@ -152,7 +154,9 @@ def rewrite_consumer(
     bs_sid_id: str,
     build_env: str = config.BUILD_ENV,
 ) -> None:
-    """Point a staged Propbook/Predict manifest at staged oracle packages."""
+    """Point a staged Propbook, Predict, or Predict-math manifest at staged oracle
+    packages. The math library has no Block Scholes dependency, so `bs_oracle`,
+    like `bs_sid`, is rewritten only where the manifest declares it."""
     text = toml_path.read_text()
     text = _replace_first(
         r"(?m)^pyth_lazer = \{ (?:git|local)[^}]*\}",
@@ -160,12 +164,14 @@ def rewrite_consumer(
         text,
         "pyth_lazer dependency",
     )
-    text = _replace_first(
-        r"bs_oracle = \{ git[^}]*\}",
-        f'bs_oracle = {{ local = "{bs_oracle_local}" }}',
-        text,
-        "bs_oracle dependency",
-    )
+    has_bs_oracle = bool(re.search(r"(?m)^bs_oracle\s*=\s*\{\s*git", text))
+    if has_bs_oracle:
+        text = _replace_first(
+            r"bs_oracle = \{ git[^}]*\}",
+            f'bs_oracle = {{ local = "{bs_oracle_local}" }}',
+            text,
+            "bs_oracle dependency",
+        )
     has_bs_sid = bool(re.search(r"(?m)^bs_sid\s*=\s*\{\s*git", text))
     if has_bs_sid:
         text = _replace_first(
@@ -183,9 +189,12 @@ def rewrite_consumer(
         f'published-at = "{pyth_lazer_id}", original-id = "{pyth_lazer_id}" }}\n'
         f'wormhole = {{ local = "{wormhole_local}", '
         f'published-at = "{wormhole_id}", original-id = "{wormhole_id}" }}\n'
-        f'bs_oracle = {{ local = "{bs_oracle_local}", '
-        f'published-at = "{bs_oracle_id}", original-id = "{bs_oracle_id}" }}\n'
     )
+    if has_bs_oracle:
+        replacements += (
+            f'bs_oracle = {{ local = "{bs_oracle_local}", '
+            f'published-at = "{bs_oracle_id}", original-id = "{bs_oracle_id}" }}\n'
+        )
     if has_bs_sid:
         replacements += (
             f'bs_sid = {{ local = "{bs_sid_local}", '
@@ -324,7 +333,7 @@ def publish_closure(
         elif name in {"bs_oracle", "bs_sid"}:
             rewrite_block_scholes_package(paths[name] / "Move.toml")
             staging.validate_workspace(workspace)
-        elif name in {"propbook", "predict"}:
+        elif name in {"propbook", "predict_math", "predict"}:
             rewrite_consumer(
                 paths[name] / "Move.toml",
                 paths["pyth_lazer"],
