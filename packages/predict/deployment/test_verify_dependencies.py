@@ -44,6 +44,20 @@ class DependencyVerificationTests(unittest.TestCase):
             self.assertEqual(replacements["testnet"]["token"], {"local": "../../vendor/deep", "override": True})
             self.assertEqual(replacements["mainnet"]["token"], {"local": "../../vendor/deep", "override": True})
 
+    def test_every_fresh_publication_root_is_a_local_sessions_dependency(self):
+        # Sessions reaches the order-flow companion and the pricing-math library through
+        # local paths. Both are fresh publications with no publication record, so each must
+        # be a publication root rather than a dependency verified against the chain.
+        root = Path(__file__).resolve().parents[3]
+        for name in ("deepbook_predict_math", "deepbook_predict_orders"):
+            self.assertIn(name, verifier.NEW_PACKAGES)
+        self.assertEqual(set(verifier.NEW_PATHS), verifier.NEW_PACKAGES)
+        for name, path in verifier.NEW_PATHS.items():
+            manifest = verifier.read_toml(root / path / "Move.toml")
+            self.assertEqual(manifest["package"]["name"], name)
+        sessions = verifier.read_toml(root / "packages/sessions/Move.toml")["dependencies"]
+        self.assertEqual(sessions["deepbook_predict_orders"], {"local": "../predict_orders"})
+
     def test_reused_testnet_usdc_is_verified_instead_of_skipped(self):
         lock = {"deepbook_sessions": {"source": {"local": "."}, "deps": {"usdc": "usdc"}},
                 "usdc": {"source": {"local": "../usdc"}, "deps": {}}}
