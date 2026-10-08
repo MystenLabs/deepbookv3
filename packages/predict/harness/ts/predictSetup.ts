@@ -1,6 +1,6 @@
 // Shared Predict-layer bring-up on an oracle-ready localnet: oracle feeds + trusted
-// signer + cadence config + the lifecycle and pool-valuation caps, then create markets
-// and bootstrap the pool.
+// signer + cadence config + the lifecycle and pool-valuation caps + the delayed-execution
+// policy and flush-operator grant, then create markets and bootstrap the pool.
 
 import { existsSync, readFileSync } from "node:fs";
 
@@ -10,6 +10,7 @@ import { requiredEnv } from "./runnerConfig.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  addFlushOperatorTx,
   addSettledRedeemKeeperTx,
   address,
   bareFlushTx,
@@ -18,11 +19,14 @@ import {
   createExpiryMarketTx,
   deriveAccountWrapperId,
   executeAndWait,
+  initDelayedExecutionPolicyTx,
   lockCapitalTx,
   mintLifecycleCapTx,
   mintPoolValuationCapTx,
   objectExists,
   type OracleFeedIds,
+  readDelayedExecutionPolicyInitialized,
+  readIsFlushOperator,
   readPlpTotalSupply,
   readSupplyRequestsPending,
   registerUnderlyingAndCreateFeedsTx,
@@ -86,7 +90,21 @@ export async function setupFeedsAndConfig(
   for (const cadenceId of cadenceIds) {
     await executeAndWait(setCadenceConfigTx({ cadenceId, ...CADENCES[cadenceId] }), `cadence-${cadenceId}`);
   }
+  await ensureDelayedExecution();
   return { feeds, lifecycleCapId, poolValuationCapId };
+}
+
+// A fresh publish starts past the delayed-execution cutover, so traders can only enqueue,
+// and enqueue/commit/resolve need the policy. `finish_flush` admits only allowlisted flush
+// operators, and this signer sends every flush (bootstrap included). Both writes abort when
+// repeated, so each is read first: setup stays idempotent across a re-attach.
+export async function ensureDelayedExecution(): Promise<void> {
+  if (!(await readDelayedExecutionPolicyInitialized())) {
+    await executeAndWait(initDelayedExecutionPolicyTx(), "delayed-execution-policy");
+  }
+  if (!(await readIsFlushOperator(address))) {
+    await executeAndWait(addFlushOperatorTx(address), "flush-operator");
+  }
 }
 
 // Create one cadence market. Reads NO oracle (absolute ticks need no grid centering),

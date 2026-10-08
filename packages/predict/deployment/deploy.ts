@@ -302,6 +302,9 @@ export const CADENCES: readonly CadenceSpec[] = [
     },
 ] as const;
 
+// A fresh Sessions publish starts its watermark at `session_config::current_version!()`.
+export const EXPECTED_SESSIONS_VERSION_WATERMARK = "3";
+
 export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     usePythSpotForForward: true,
     pythSpotFreshnessMs: "2000",
@@ -327,7 +330,9 @@ export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     maxEntryProbability: "990000000",
     expiryFeeWindowMs: "86400000",
     expiryFeeMaxMultiplier: "1000000000",
-    versionWatermark: "1",
+    // A fresh publish starts the watermark at `constants::current_version!()`,
+    // which is past the delayed-execution cutover: only queued trading is open.
+    versionWatermark: "4",
     tradingPaused: false,
     frozen: false,
     valuationInProgress: false,
@@ -629,6 +634,8 @@ const FIXED_TRANSACTION_STEPS = [
     "bind_pyth_to_underlying",
     "register_predict_underlying",
     "set_cadence_configs",
+    "init_delayed_execution_policy",
+    "add_deployer_flush_operator",
     "create_deployer_account",
     "bootstrap_pool",
 ] as const;
@@ -641,7 +648,12 @@ export function plannedTransactionSteps(): string[] {
                 ["finalize_usdc_currency_registration", "mint_deployer_usdc"].includes(step)
             )
                 return false;
-            return NETWORK !== "mainnet" || step !== "create_deployer_account";
+            // Mainnet's lock-only bootstrap runs no flush, so neither the deployer
+            // account nor its flush-operator grant exists there.
+            return (
+                NETWORK !== "mainnet" ||
+                !["create_deployer_account", "add_deployer_flush_operator"].includes(step)
+            );
         }),
         ...CADENCES.flatMap((cadence) =>
             Array.from(
@@ -3891,6 +3903,66 @@ async function ensureCadences(runtime: Runtime): Promise<void> {
     writeState(result);
 }
 
+async function delayedExecutionPolicyInitialized(runtime: Runtime): Promise<boolean> {
+    const result = runtime.result;
+    const tx = new Transaction();
+    call(tx, target(result, "predict", "protocol_config", "delayed_execution_policy"), [
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+    ]);
+    // `Option<DelayedExecutionPolicy>`: a leading 1 byte is `some`.
+    return returnBytes(await devInspect(runtime, "read_delayed_execution_policy", tx))[0] === 1;
+}
+
+async function isFlushOperator(runtime: Runtime, operator: string): Promise<boolean> {
+    const result = runtime.result;
+    return inspectBool(
+        runtime,
+        "is_flush_operator",
+        target(result, "predict", "protocol_config", "is_flush_operator"),
+        (tx) => [
+            tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+            tx.pure.address(operator),
+        ],
+    );
+}
+
+function addFlushOperatorCall(result: DeploymentResult, tx: Transaction, operator: string): void {
+    call(tx, target(result, "predict", "protocol_config", "add_flush_operator"), [
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+        tx.object(capId(result, "predict", "admin::AdminCap")),
+        tx.pure.address(operator),
+        tx.object(CLOCK_ID),
+    ]);
+}
+
+// Queued trading needs the delayed-execution policy: until it exists, enqueue, commit,
+// and resolve abort. `finish_flush` admits only allowlisted flush operators, so the
+// Testnet deployer, which completes the bootstrap flush, is added first.
+async function ensureDelayedExecution(runtime: Runtime): Promise<void> {
+    const result = runtime.result;
+    if (!(await delayedExecutionPolicyInitialized(runtime))) {
+        const tx = new Transaction();
+        call(tx, target(result, "predict", "protocol_config", "init_delayed_execution_policy"), [
+            tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+            tx.object(capId(result, "predict", "admin::AdminCap")),
+            tx.object(CLOCK_ID),
+        ]);
+        await executeTransaction(runtime, "init_delayed_execution_policy", tx);
+        if (!(await delayedExecutionPolicyInitialized(runtime))) {
+            throw new Error("delayed-execution policy did not read back as initialized");
+        }
+    }
+    if (NETWORK === "mainnet") return;
+    if (!(await isFlushOperator(runtime, DEPLOYER))) {
+        const tx = new Transaction();
+        addFlushOperatorCall(result, tx, DEPLOYER);
+        await executeTransaction(runtime, "add_deployer_flush_operator", tx);
+        if (!(await isFlushOperator(runtime, DEPLOYER))) {
+            throw new Error("deployer flush-operator grant did not read back true");
+        }
+    }
+}
+
 async function ensureAccountWrapper(runtime: Runtime): Promise<string> {
     const result = runtime.result;
     const registry = sharedId(result, "account", "account_registry::AccountRegistry");
@@ -4638,8 +4710,13 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     );
     const sessionsConfigFields = sessionsSnapshot.value;
     sharedObjects.sessions!["session_config::SessionsConfig"] = sessionsSnapshot.evidence;
-    if (stringField(sessionsConfigFields, "version_watermark") !== "1") {
-        throw new Error("SessionsConfig version watermark is not 1");
+    if (
+        stringField(sessionsConfigFields, "version_watermark") !==
+        EXPECTED_SESSIONS_VERSION_WATERMARK
+    ) {
+        throw new Error(
+            `SessionsConfig version watermark is not ${EXPECTED_SESSIONS_VERSION_WATERMARK}`,
+        );
     }
     const accountWrapper =
         NETWORK === "mainnet"
@@ -4674,6 +4751,12 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         throw new Error("bootstrap supply is not attributed to the deployment account");
     }
     if (NETWORK === "mainnet") await ensureLockedCapital(runtime, true);
+    if (!(await delayedExecutionPolicyInitialized(runtime))) {
+        throw new Error("delayed-execution policy is not initialized");
+    }
+    if (NETWORK === "testnet" && !(await isFlushOperator(runtime, DEPLOYER))) {
+        throw new Error("Testnet deployer is not a flush operator");
+    }
     const lifecycleCap = await objectEvidence(
         runtime,
         result.wiring.lifecycleCap.id,
@@ -4928,6 +5011,7 @@ const deploymentOperations = {
     ensureOracleObjects,
     ensureUnderlyingRegistered,
     ensureCadences,
+    ensureDelayedExecution,
     ensureAccountWrapper,
     ensureBootstrap,
     ensureMarkets,
@@ -5000,7 +5084,14 @@ async function verifyOperationalCapAllowlists(runtime: Runtime): Promise<void> {
     );
 }
 
-export function capIssuanceTransaction(result: DeploymentResult, recipient: string): Transaction {
+// The pool-valuation cap starts flushes, and `finish_flush` admits only allowlisted
+// flush operators, so the handoff also grants the recipient that role unless it already
+// holds it (re-adding an operator aborts).
+export function capIssuanceTransaction(
+    result: DeploymentResult,
+    recipient: string,
+    grantFlushOperator: boolean,
+): Transaction {
     assertCapsIssuanceReady(result, recipient);
     const tx = new Transaction();
     const lifecycle = tx.object(
@@ -5021,11 +5112,13 @@ export function capIssuanceTransaction(result: DeploymentResult, recipient: stri
             [`${packageId(result, "predict")}::${type}`],
         );
     }
+    if (grantFlushOperator) addFlushOperatorCall(result, tx, recipient);
     return tx;
 }
 
 const capIssuanceOperations = {
     executeTransaction,
+    isFlushOperator,
     objectEvidence,
     verifyOperationalCapAllowlists,
     writeState,
@@ -5040,12 +5133,16 @@ export async function issueOperationalCaps(
     assertCapsIssuanceReady(result, recipient);
     const label = `issue_operational_caps_${recipient}`;
     await ops.verifyOperationalCapAllowlists(runtime);
+    const grantFlushOperator = !(await ops.isFlushOperator(runtime, recipient));
     // executeTransaction returns the original receipt on recovery without rebuilding or signing.
     const receipt = await ops.executeTransaction(
         runtime,
         label,
-        capIssuanceTransaction(result, recipient),
+        capIssuanceTransaction(result, recipient, grantFlushOperator),
     );
+    if (!(await ops.isFlushOperator(runtime, recipient))) {
+        throw new Error("cap recipient is not a flush operator after the handoff");
+    }
     const lifecycleCap = requiredObjectId(result.wiring.lifecycleCap.id, "setup lifecycle cap");
     const poolValuationCap = requiredObjectId(result.wiring.valuationCap.id, "setup valuation cap");
     const owner = partyOwnerLabel(recipient);
@@ -5115,6 +5212,7 @@ export async function executeDeployment(
         await ops.ensureOracleObjects(runtime);
         await ops.ensureUnderlyingRegistered(runtime);
         await ops.ensureCadences(runtime);
+        await ops.ensureDelayedExecution(runtime);
         const wrapper = NETWORK === "testnet" ? await ops.ensureAccountWrapper(runtime) : "";
         await ops.ensureBootstrap(runtime, valuationCap, wrapper);
         await ops.ensureMarkets(runtime, lifecycleCap);

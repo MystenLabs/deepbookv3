@@ -9,7 +9,8 @@ const SCALE = 1_000_000_000n;
 const ADVERSARIAL_FRACTION = 0.2;
 
 // A deliberately-rejectable mint to exercise the admission + slippage guards. A guard abort
-// is the expected outcome; a wrongly-accepted probe is traced as a guard gap.
+// at enqueue, or a limits refund at τ, is the expected outcome; only a fill is a wrongly
+// accepted probe, traced as a guard gap.
 async function adversarialProbe(ctx: StrategyCtx, market: Mkt, direction: "UP" | "DN"): Promise<null> {
   const mode = ctx.pick(["tight-max-cost", "tight-max-probability"]);
   const p = ctx.rand(0.25, 0.7);
@@ -21,8 +22,9 @@ async function adversarialProbe(ctx: StrategyCtx, market: Mkt, direction: "UP" |
   if (mode === "tight-max-cost") maxCost = r.maxCost / 3n;
   else maxProbability = r.maxProbability1e9 / 3n;
   try {
-    await ctx.submitMint(market, { strike1e9: BigInt(Math.round(r.strikeUsd)) * SCALE, isUp: direction === "UP", quantity: r.quantity, maxCost, maxProbability });
-    ctx.trace({ type: "adversarial-accepted", mode, market: market.id.slice(0, 10) });
+    const { outcome } = await ctx.submitMint(market, { strike1e9: BigInt(Math.round(r.strikeUsd)) * SCALE, isUp: direction === "UP", quantity: r.quantity, maxCost, maxProbability });
+    if (outcome.status === "filled") ctx.trace({ type: "adversarial-accepted", mode, market: market.id.slice(0, 10) });
+    else ctx.trace({ type: "adversarial-rejected", mode, outcome: outcome.status, reason: outcome.status === "refunded" ? outcome.reason : undefined });
   } catch (e) {
     ctx.trace({ type: "fail", adversarial: mode, tag: errorTag(e) });
   }

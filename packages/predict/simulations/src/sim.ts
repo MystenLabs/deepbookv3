@@ -12,10 +12,10 @@ import {
     writeJson,
 } from "./shared.js";
 import {
-    POOL_VAULT_ID, PROTOCOL_CONFIG_ID, address, bareFlushTx, mintRangeTicks,
+    POOL_VAULT_ID, PROTOCOL_CONFIG_ID, addFlushOperatorTx, address, bareFlushTx, mintRangeTicks,
     bindFeedsToUnderlyingTx, clockTimestampMs, createAccountTx, createExpiryMarketTx,
     depositToAccountTx, deriveAccountWrapperId, execute, executeAndWait,
-    finalizeUsdcCurrencyRegistrationTx, keeperSettleTx, lockCapitalTx,
+    finalizeUsdcCurrencyRegistrationTx, initDelayedExecutionPolicyTx, keeperSettleTx, lockCapitalTx,
     addSettledRedeemKeeperTx, mintLifecycleCapTx, mintPoolValuationCapTx, readPredictEconomicState,
     rebalanceExpiryCashTx, redeemSettledTx, refreshOracleAndFlushTxs,
     refreshOracleAndMintTxs, refreshOracleAndRedeemTxs,
@@ -219,6 +219,13 @@ function oracleParams(value: OracleRefreshData) {
     return { spot: value.spot, forward: value.forward, svi: { a: value.a, aNegative: value.aNegative, b: value.b, rho: value.rho, rhoNegative: value.rhoNegative, m: value.m, mNegative: value.mNegative, sigma: value.sigma } };
 }
 
+// The scenario and its Python replay model immediate fills (`mint_exact_quantity`,
+// `redeem_live`, and settled redeems of account-held positions). A fresh publish starts past
+// the delayed-execution cutover, where those mint and live-close rows abort
+// `EDelayedExecutionRequired` (expiry_market:13) and an account holds no position to redeem.
+// Porting the scenario, this executor, and `python_replay.py` to enqueue -> commit -> resolve,
+// with fills priced at the committed tick, is open work; until then a parity run fails at the
+// first mint row.
 async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): Promise<ExecutionReceipt> {
     const common = { expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, bsSviStoreId: state.bsSviStoreId };
     if (row.action === "mint") return execute(() => refreshOracleAndMintTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row), strike: row.strike, isUp: row.isUp, higherStrike: row.higherStrike, quantity: row.quantity, tickSize: BigInt(state.tickSize) }), `scenario_${row.step}_mint`);
@@ -237,7 +244,9 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): 
     if (row.action === "rebalance_expiry_cash") return execute(() => rebalanceExpiryCashTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, expiryMarketId: state.expiryMarketId }), `scenario_${row.step}_rebalance_expiry_cash`);
     if (row.action === "settle") {
         while ((await clockTimestampMs()) < BigInt(state.expiryMs)) await new Promise((resolve) => setTimeout(resolve, 100));
-        return execute(() => keeperSettleTx({ pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, expiryMs: BigInt(state.expiryMs), price: row.settlementPrice, marketId: state.expiryMarketId, poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId }), `scenario_${row.step}_settle`);
+        // The scenario never enqueues, so the market has no queue and one try_settle settles
+        // and completes it; the sweep follows in the same PTB.
+        return execute(() => keeperSettleTx({ pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, expiryMs: BigInt(state.expiryMs), price: row.settlementPrice, marketId: state.expiryMarketId, poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, sweep: true }), `scenario_${row.step}_settle`);
     }
     const orderId = aliases.orderIds.get(row.orderRef);
     if (!orderId) throw new Error(`unknown order_ref ${row.orderRef}`);
@@ -289,6 +298,9 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     const accountWrapperId = deriveAccountWrapperId(address);
     await executeAndWait(createAccountTx(), "create_account");
     await executeAndWait(depositToAccountTx(accountWrapperId, integer(config.capital.manager_seed, "scenario config.capital.manager_seed")), "fund_simulation_account");
+    await executeAndWait(initDelayedExecutionPolicyTx(), "init_delayed_execution_policy");
+    // `finish_flush` admits only allowlisted flush operators; this address sends every flush.
+    await executeAndWait(addFlushOperatorTx(address), "add_flush_operator");
     await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "bootstrap_lock_capital");
     await executeAndWait(requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: accountWrapperId, amount: integer(config.capital.vault_seed, "scenario config.capital.vault_seed") }), "bootstrap_request_supply");
     await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }), "bootstrap_flush");
