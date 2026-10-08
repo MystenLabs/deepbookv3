@@ -30,11 +30,6 @@ public struct OrderFlow() has drop;
 
 // === Public-Package Functions ===
 
-/// Whether Predict currently allowlists this companion.
-public(package) fun is_enabled(config: &ProtocolConfig): bool {
-    config.is_order_flow<OrderFlow>()
-}
-
 public(package) fun admit_mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,

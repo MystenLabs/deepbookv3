@@ -149,8 +149,8 @@ public struct MarketPayoutsCompleted has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted by desk creation and every policy setter, with the complete
-/// post-state.
+/// Emitted by every policy setter, with the complete post-state. The desk's
+/// `init` emits none: the launch policy is the desk's state at publish.
 public struct DelayedExecutionPolicyUpdated has copy, drop, store {
     desk_id: ID,
     policy: DelayedExecutionPolicy,

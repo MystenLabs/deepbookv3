@@ -31,7 +31,7 @@ use deepbook_sessions::{
     sessions::{Self as sessions, SessionsApp}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{accumulator::AccumulatorRoot, test_scenario::return_shared};
+use sui::{accumulator::AccumulatorRoot, test_scenario::{most_recent_id_shared, return_shared}};
 use usdc::usdc::USDC;
 
 const SESSION: address = @0x5E5510;
@@ -491,14 +491,14 @@ fun setup(): QueueSessionFixture {
     destroy(sessions_admin_cap);
     predict.scenario_mut().next_tx(test_constants::admin());
     let mut market = predict.take_market_bundle(market_id);
-    let desk_id = {
+    {
         let (admin_cap, clock, ctx) = predict.admin_parts();
-        let config = predict_helpers::config_mut(&mut market);
-        config.set_order_flow<OrderFlow>(admin_cap, true, clock);
-        desk::create_and_share(admin_cap, config, clock, ctx)
+        predict_helpers::config_mut(&mut market).set_order_flow<OrderFlow>(admin_cap, true, clock);
+        desk::init_for_testing(ctx);
     };
     predict_helpers::return_market_bundle(market);
     predict.scenario_mut().next_tx(test_constants::admin());
+    let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
     let mut desk = predict.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
     let market = predict.take_market_bundle(market_id);
     let queue_id = {

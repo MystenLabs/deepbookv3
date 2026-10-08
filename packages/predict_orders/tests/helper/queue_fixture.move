@@ -31,7 +31,7 @@ use deepbook_predict_orders::{
     queue::{Self, MarketQueue, TestUpdate}
 };
 use std::unit_test::assert_eq;
-use sui::{clock, test_scenario::return_shared};
+use sui::{clock, test_scenario::{most_recent_id_shared, return_shared}};
 use usdc::usdc::USDC;
 
 const CHANNEL_200MS: u8 = 3;
@@ -109,8 +109,9 @@ public fun new_with_other_market(): (QueueTest, ID) {
     (from_fixture(fx, expiry_id, trader), other)
 }
 
-/// Cross the cutover, allowlist `OrderFlow`, create the desk with the fixture
-/// delay, and create the market's queue. Returns in `trader`'s transaction.
+/// Cross the cutover, allowlist `OrderFlow`, run the desk's `init`, set the
+/// fixture delay, and create the market's queue. Returns in `trader`'s
+/// transaction.
 public fun from_fixture(fx: Fixture, expiry_id: ID, trader: Trader): QueueTest {
     assemble(fx, expiry_id, trader, true)
 }
@@ -143,14 +144,14 @@ fun assemble(mut fx: Fixture, expiry_id: ID, trader: Trader, cross_cutover: bool
         fx.scenario_mut().next_tx(test_constants::admin());
     };
     let mut market = fx.take_market_bundle(expiry_id);
-    let desk_id = {
+    {
         let (admin_cap, clock, ctx) = fx.admin_parts();
-        let config = helpers::config_mut(&mut market);
-        config.set_order_flow<OrderFlow>(admin_cap, true, clock);
-        desk::create_and_share(admin_cap, config, clock, ctx)
+        helpers::config_mut(&mut market).set_order_flow<OrderFlow>(admin_cap, true, clock);
+        desk::init_for_testing(ctx);
     };
     helpers::return_market_bundle(market);
     fx.scenario_mut().next_tx(test_constants::admin());
+    let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
     let mut desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
     let market = fx.take_market_bundle(expiry_id);
     let queue_id = {
@@ -241,20 +242,18 @@ public fun with_market(q: QueueTest, expiry_id: ID): QueueTest {
     take(fx, expiry_id, trader, desk_id, queue_id)
 }
 
-/// Create a second desk and continue in a new transaction holding it in place
-/// of the queue's own, for the binding checks.
+/// Share a second desk, which only a test can build, and continue in a new
+/// transaction holding it in place of the queue's own, for the binding checks.
 public fun with_new_desk(q: QueueTest): QueueTest {
     let QueueTest { fx, expiry_id, trader, queue_id, market, account, desk, queue, .. } = q;
     let mut fx = fx;
     helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
     return_shared(desk);
     return_shared(queue);
-    let desk_id = {
-        let (admin_cap, clock, ctx) = fx.admin_parts();
-        desk::create_and_share(admin_cap, helpers::config(&market), clock, ctx)
-    };
-    helpers::return_market_bundle(market);
+    desk::init_for_testing(fx.scenario_mut().ctx());
     fx.scenario_mut().next_tx(trader.owner());
+    let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
     take(fx, expiry_id, trader, desk_id, queue_id)
 }
 

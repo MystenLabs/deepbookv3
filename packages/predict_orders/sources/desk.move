@@ -4,27 +4,31 @@
 /// The order-flow companion's shared `OrderDesk`: the delayed-execution policy
 /// every market queue runs under, and the companion's version floor.
 ///
+/// One desk per deployment: `init` creates and shares it when the package is
+/// published, and nothing else builds one. Each market's `MarketQueue` sits at
+/// an ID derived from the desk and the market (`queue::create_and_share`), so a
+/// single desk gives each market exactly one queue, and with it one per-account
+/// cap, stuck gate, policy, and version floor. The desk exists before Predict
+/// allowlists this package's witness; until `protocol_config::set_order_flow`
+/// does, Predict's admission, commit, and fill primitives refuse the companion.
+///
 /// Predict's `AdminCap` administers the desk. Its setters check the desk floor
 /// and refuse while Predict is frozen, through the public
 /// `protocol_config::frozen`; the policy cannot move funds, and every Predict
-/// invariant holds inside Predict's primitives whatever it says. The desk also
-/// anchors each market's `MarketQueue` at an ID derived from the desk and the
-/// market (`queue::create_and_share`). Only queue creation takes the desk
-/// mutably, so trading never serializes on it.
+/// invariant holds inside Predict's primitives whatever it says. Only queue
+/// creation takes the desk mutably, so trading never serializes on it.
 module deepbook_predict_orders::desk;
 
 use deepbook_predict::{admin::AdminCap, protocol_config::ProtocolConfig};
 use deepbook_predict_orders::{
     delayed_execution_config::{Self, DelayedExecutionPolicy},
-    order_flow,
     queue_events
 };
 use sui::clock::Clock;
 
-const EOrderFlowDisabled: u64 = 0;
-const EPackageVersionDisabled: u64 = 1;
-const EVersionWatermarkNotAdvanced: u64 = 2;
-const EProtocolFrozen: u64 = 3;
+const EPackageVersionDisabled: u64 = 0;
+const EVersionWatermarkNotAdvanced: u64 = 1;
+const EProtocolFrozen: u64 = 2;
 
 /// The companion's compiled version, compared against the desk floor.
 public macro fun current_version(): u64 { 1 }
@@ -37,6 +41,19 @@ public struct OrderDesk has key {
     /// `bump_version_watermark` advances it to the running `current_version!()`,
     /// retiring older companion code.
     version_watermark: u64,
+}
+
+/// Create and share the deployment's one desk at publish, with the launch
+/// policy and the launch floor. Emits no `DelayedExecutionPolicyUpdated`:
+/// `init` has no `Clock` for its `onchain_timestamp_ms`, and the launch policy
+/// is the desk's state in the publish transaction. Every setter emits the
+/// complete policy from then on.
+fun init(ctx: &mut TxContext) {
+    transfer::share_object(OrderDesk {
+        id: object::new(ctx),
+        policy: delayed_execution_config::new(),
+        version_watermark: current_version!(),
+    });
 }
 
 // === Public Functions ===
@@ -54,27 +71,6 @@ public fun policy(desk: &OrderDesk): DelayedExecutionPolicy {
 /// Return the desk's version floor, for SDK and devInspect reads.
 public fun version_watermark(desk: &OrderDesk): u64 {
     desk.version_watermark
-}
-
-/// Create and share a desk seeded with the launch policy, and emit it. Aborts
-/// `EOrderFlowDisabled` until Predict allowlists this package's witness, so a
-/// desk is never created for a companion Predict refuses.
-public fun create_and_share(
-    _admin_cap: &AdminCap,
-    config: &ProtocolConfig,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): ID {
-    assert!(order_flow::is_enabled(config), EOrderFlowDisabled);
-    let desk = OrderDesk {
-        id: object::new(ctx),
-        policy: delayed_execution_config::new(),
-        version_watermark: current_version!(),
-    };
-    let desk_id = desk.id();
-    queue_events::emit_policy_updated(desk_id, desk.policy, clock.timestamp_ms());
-    transfer::share_object(desk);
-    desk_id
 }
 
 /// Set every timing field and the Pyth channel in one call, so the relational
@@ -186,4 +182,13 @@ public(package) fun uid_mut(desk: &mut OrderDesk): &mut UID {
 fun assert_admin_allowed(desk: &OrderDesk, config: &ProtocolConfig) {
     desk.assert_version();
     assert!(!config.frozen(), EProtocolFrozen);
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+/// Run `init`: create and share a desk at the launch policy. Calling it again
+/// shares another desk, which only the wrong-desk binding tests want.
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(ctx);
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// The `OrderDesk` and its delayed-execution policy on a real shared Predict
-/// `ProtocolConfig`: desk creation and its witness gate, the timing, limits, and
+/// `ProtocolConfig`: the desk `init` shares at publish, the timing, limits, and
 /// order-fee setters, and the version floor. Defaults and bounds are the spec's
 /// literals, never read back from `delayed_execution_config`. Each setter is
 /// checked for its gates, every single-value bound on both sides, the relational
@@ -24,7 +24,7 @@ use deepbook_predict_orders::{
     queue_events
 };
 use std::{bcs, unit_test::assert_eq};
-use sui::{event, test_scenario::return_shared};
+use sui::{event, test_scenario::{most_recent_id_shared, return_shared}};
 
 const EVENT_TIMESTAMP_MS: u64 = 1_750_000_000_000;
 const ONE_EVENT: u64 = 1;
@@ -146,39 +146,25 @@ public struct ExpectedPolicyUpdated has copy, drop {
 
 // === Creation ===
 
+/// `init` shares the desk at the spec defaults and the launch floor. It emits
+/// no policy event, having no `Clock` to stamp one with, and needs no
+/// allowlisting: Predict's witness gate binds at admission, not here.
 #[test]
-fun create_writes_spec_defaults_and_emits_them() {
-    let mut fx = allowlisted_fixture();
-    let desk_id = {
-        let config = take_config(&mut fx);
-        let (admin_cap, clock, ctx) = fx.admin_parts();
-        let desk_id = desk::create_and_share(admin_cap, &config, clock, ctx);
-        return_shared(config);
-        desk_id
-    };
-    assert_last_policy_event(
-        ONE_EVENT,
-        desk_id,
-        default_timing(),
-        default_limits(),
-        DEFAULT_ORDER_FEE,
-    );
+fun init_shares_the_desk_at_the_spec_defaults() {
+    let mut fx = helpers::setup_market_default();
+    let config = take_config(&mut fx);
+    assert!(!config.is_order_flow<OrderFlow>());
+    return_shared(config);
+    desk::init_for_testing(fx.scenario_mut().ctx());
+    assert!(event::events_by_type<queue_events::DelayedExecutionPolicyUpdated>().is_empty());
     fx.scenario_mut().next_tx(test_constants::admin());
+    let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
     let desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
     assert_eq!(desk.id(), desk_id);
     assert_eq!(desk.version_watermark(), LAUNCH_VERSION);
     assert_policy(&desk, default_timing(), default_limits(), DEFAULT_ORDER_FEE);
     return_shared(desk);
     fx.finish();
-}
-
-#[test, expected_failure(abort_code = desk::EOrderFlowDisabled)]
-fun create_before_the_witness_is_allowlisted_aborts() {
-    let mut fx = helpers::setup_market_default();
-    let config = take_config(&mut fx);
-    let (admin_cap, clock, ctx) = fx.admin_parts();
-    desk::create_and_share(admin_cap, &config, clock, ctx);
-    abort 999
 }
 
 // === Gates ===
@@ -232,14 +218,14 @@ fun setters_run_during_open_valuation_and_with_the_witness_removed() {
     fx.cutover();
     fx.set_clock_for_testing(EVENT_TIMESTAMP_MS);
     let mut market = fx.take_market_bundle(expiry_id);
-    let desk_id = {
+    {
         let (admin_cap, clock, ctx) = fx.admin_parts();
-        let config = helpers::config_mut(&mut market);
-        config.set_order_flow<OrderFlow>(admin_cap, true, clock);
-        desk::create_and_share(admin_cap, config, clock, ctx)
+        helpers::config_mut(&mut market).set_order_flow<OrderFlow>(admin_cap, true, clock);
+        desk::init_for_testing(ctx);
     };
     helpers::return_market_bundle(market);
     fx.scenario_mut().next_tx(test_constants::admin());
+    let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
     let mut desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
     let mut market = fx.take_market_bundle(expiry_id);
     helpers::begin_val(&mut market);
@@ -779,15 +765,9 @@ fun allowlisted_fixture(): Fixture {
 /// transaction, so the events read later are the setters' own.
 fun new_desk(): (Fixture, OrderDesk, ProtocolConfig) {
     let mut fx = allowlisted_fixture();
-    let desk_id = {
-        let config = take_config(&mut fx);
-        let (admin_cap, clock, ctx) = fx.admin_parts();
-        let desk_id = desk::create_and_share(admin_cap, &config, clock, ctx);
-        return_shared(config);
-        desk_id
-    };
+    desk::init_for_testing(fx.scenario_mut().ctx());
     fx.scenario_mut().next_tx(test_constants::admin());
-    let desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
+    let desk = fx.scenario_mut().take_shared<OrderDesk>();
     let config = take_config(&mut fx);
     (fx, desk, config)
 }
