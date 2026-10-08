@@ -5,6 +5,7 @@
 module deepbook_predict::config_events;
 
 use deepbook_predict::{
+    delayed_execution_config::DelayedExecutionPolicy,
     ewma_config::EwmaConfig,
     pricing_config::PricingConfig,
     strike_exposure_config::StrikeExposureConfig
@@ -87,6 +88,21 @@ public struct ProtocolFrozenUpdated has copy, drop, store {
 public struct SettledRedeemKeeperUpdated has copy, drop, store {
     keeper: address,
     allowed: bool,
+}
+
+/// Emitted by every delayed-execution policy write (initialization and each
+/// setter) with the complete post-state.
+public struct DelayedExecutionPolicyUpdated has copy, drop, store {
+    policy: DelayedExecutionPolicy,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when admin adds (`added = true`) or removes (`added = false`) an
+/// address allowed to call `plp::finish_flush`.
+public struct FlushOperatorUpdated has copy, drop, store {
+    operator: address,
+    added: bool,
+    onchain_timestamp_ms: u64,
 }
 
 /// Emitted when a new expiry market is created, with its cadence terms and
@@ -255,6 +271,21 @@ public(package) fun emit_protocol_frozen_updated(protocol_config_id: ID, frozen:
 
 public(package) fun emit_settled_redeem_keeper_updated(keeper: address, allowed: bool) {
     event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
+}
+
+public(package) fun emit_delayed_execution_policy_updated(
+    policy: &DelayedExecutionPolicy,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(DelayedExecutionPolicyUpdated { policy: *policy, onchain_timestamp_ms });
+}
+
+public(package) fun emit_flush_operator_updated(
+    operator: address,
+    added: bool,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(FlushOperatorUpdated { operator, added, onchain_timestamp_ms });
 }
 
 public(package) fun emit_market_created(

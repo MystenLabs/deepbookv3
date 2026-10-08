@@ -4,13 +4,15 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the fee-incentive
-/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
-/// protocol-wide emergency freeze, the allowlist of keepers that may redeem settled
-/// orders without owner auth, and the full-pool valuation in-flight state (flag +
-/// flush ordinal, held across the transactions a flush spans; keeper/config flows
-/// gate on it, trading flows read it only to discard stale stamps lazily). Flow
-/// modules decide which gates apply before they mutate expiry, oracle, pool, or
-/// account state.
+/// subsidy, live-target, and lifetime-cap rates, the delayed-execution policy, the
+/// trading pause gate, the protocol-wide emergency freeze, the version watermark
+/// (reaching `current_version!()` is also the delayed-execution cutover), the
+/// allowlists of keepers that may redeem settled orders without owner auth and of
+/// operators that may finish an LP flush, and the full-pool valuation in-flight
+/// state (flag + flush ordinal, held across the transactions a flush spans;
+/// keeper/config flows gate on it, trading flows read it only to discard stale
+/// stamps lazily). Flow modules decide which gates apply before they mutate expiry,
+/// oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -18,6 +20,7 @@ use deepbook_predict::{
     config_constants,
     config_events,
     constants,
+    delayed_execution_config::{Self, DelayedExecutionPolicy},
     ewma_config::{Self, EwmaConfig},
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
@@ -39,6 +42,15 @@ const ESnapshotInProgress: u64 = 6;
 const ETradeWindowClosed: u64 = 7;
 const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
 const ESettledRedeemKeeperNotFound: u64 = 9;
+const EPolicyNotInitialized: u64 = 10;
+const EPolicyAlreadyInitialized: u64 = 11;
+const EInvalidDelayedExecutionTiming: u64 = 12;
+const EInvalidDelayedExecutionLimits: u64 = 13;
+const EFlushOperatorAlreadyAdded: u64 = 14;
+const EFlushOperatorNotFound: u64 = 15;
+const ENotFlushOperator: u64 = 16;
+const ECutoverNotReached: u64 = 17;
+const EUnsupportedPythChannel: u64 = 18;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -144,6 +156,17 @@ public struct FeeIncentiveLiveTargetRateKey() has copy, drop, store;
 /// the fixed share earlier package versions used.
 public struct FeeIncentiveLifetimeCapRateKey() has copy, drop, store;
 
+/// Dynamic-field key on `ProtocolConfig` for the `DelayedExecutionPolicy`. The
+/// policy arrived after deploy, so it lives off the struct layout. It is absent
+/// until `init_delayed_execution_policy` runs, and every queue flow that reads it
+/// aborts `EPolicyNotInitialized` until then.
+public struct DelayedExecutionPolicyKey() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of flush
+/// operators allowed to call `plp::finish_flush`. An absent field is an empty set,
+/// which rejects every caller.
+public struct FlushOperatorsKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -214,6 +237,29 @@ public fun fee_incentive_lifetime_cap_rate(config: &ProtocolConfig): u64 {
 /// failed quote.
 public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
     config.no_trade_window_ms
+}
+
+/// Return the delayed-execution policy, or `none` before
+/// `init_delayed_execution_policy` runs. For SDK and devInspect reads.
+public fun delayed_execution_policy(config: &ProtocolConfig): Option<DelayedExecutionPolicy> {
+    if (!config.id.exists_(DelayedExecutionPolicyKey())) return option::none();
+    let policy: &DelayedExecutionPolicy = config.id.borrow(DelayedExecutionPolicyKey());
+    option::some(*policy)
+}
+
+/// Whether `operator` may call `plp::finish_flush`. For SDK, keeper, and
+/// devInspect reads; `finish_flush` gates through `assert_flush_operator`.
+public fun is_flush_operator(config: &ProtocolConfig, operator: address): bool {
+    let key = FlushOperatorsKey();
+    if (!config.id.exists_(key)) return false;
+    let operators: &VecSet<address> = config.id.borrow(key);
+    operators.contains(&operator)
+}
+
+/// Return the runtime version floor. For SDK, keeper, and devInspect reads: the
+/// delayed-execution cutover is reached once it equals `current_version!()`.
+public fun version_watermark(config: &ProtocolConfig): u64 {
+    config.version_watermark
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -546,6 +592,143 @@ public fun remove_settled_redeem_keeper(
     config_events::emit_settled_redeem_keeper_updated(keeper, false);
 }
 
+/// Write the delayed-execution policy with its compiled defaults. Admin-only and
+/// version-gated; aborts if the policy already exists. Not gated on an open LP
+/// valuation, so a stalled flush cannot block it. Until it runs, enqueue,
+/// commit, and resolve abort `EPolicyNotInitialized`.
+public fun init_delayed_execution_policy(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    clock: &Clock,
+) {
+    config.assert_version();
+    assert!(!config.id.exists_(DelayedExecutionPolicyKey()), EPolicyAlreadyInitialized);
+    let policy = delayed_execution_config::new();
+    config.id.add(DelayedExecutionPolicyKey(), policy);
+    config_events::emit_delayed_execution_policy_updated(&policy, clock.timestamp_ms());
+}
+
+/// Set every delayed-execution timing field and the Pyth channel in one call, so
+/// the relational order `pyth_price_buffer_ms < stuck_threshold_ms <=
+/// gap_wait_ms < stall_timeout_ms` is checked on the final state and an admin
+/// never passes through an invalid intermediate one. Each value must also sit in
+/// its `config_constants` bound, the channel must be a fixed-rate Lazer channel
+/// (`EUnsupportedPythChannel`), the buffer must be `0` or exactly one tick of it,
+/// and the stuck threshold at least one tick (`EInvalidDelayedExecutionTiming`).
+///
+/// Waiting orders keep the τ, deadline, and channel stored at enqueue, so a new
+/// delay, stall timeout, or channel only reaches new orders. Commit reads the
+/// buffer and gap wait when it runs, so they also apply to waiting cohorts.
+/// Admin-only and version-gated; not gated on an open LP valuation.
+public fun set_delayed_execution_timing(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    delay_ms: u64,
+    stall_timeout_ms: u64,
+    stuck_threshold_ms: u64,
+    gap_wait_ms: u64,
+    pyth_price_buffer_ms: u64,
+    pyth_channel: u8,
+    svi_max_age_ms: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    let mut policy = *config.policy();
+    policy.set_timing(
+        delay_ms,
+        stall_timeout_ms,
+        stuck_threshold_ms,
+        gap_wait_ms,
+        pyth_price_buffer_ms,
+        pyth_channel,
+        svi_max_age_ms,
+    );
+    assert_delayed_execution_timing(&policy);
+    config.store_policy(policy, clock);
+}
+
+/// Set the queue capacities, the per-account cap, the minimum early sell, and
+/// the two `try_settle` batch sizes. Each value must sit in its
+/// `config_constants` bound, and the per-account cap may not exceed the smaller
+/// capacity (`EInvalidDelayedExecutionLimits`). Lowering a capacity below the
+/// current pending count only blocks new orders. Admin-only and version-gated;
+/// not gated on an open LP valuation.
+public fun set_delayed_execution_limits(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    mint_capacity: u64,
+    sell_capacity: u64,
+    per_account_cap: u64,
+    min_sell_quantity: u64,
+    settle_refund_batch: u64,
+    settle_payout_batch: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    let mut policy = *config.policy();
+    policy.set_limits(
+        mint_capacity,
+        sell_capacity,
+        per_account_cap,
+        min_sell_quantity,
+        settle_refund_batch,
+        settle_payout_batch,
+    );
+    assert!(per_account_cap <= mint_capacity.min(sell_capacity), EInvalidDelayedExecutionLimits);
+    config.store_policy(policy, clock);
+}
+
+/// Set the flat fee charged per queued order, in USDC base units, up to the
+/// `config_constants` cap of 1 USDC. Applies to orders placed after the call;
+/// waiting orders keep the fee they paid. Admin-only and version-gated; not
+/// gated on an open LP valuation.
+public fun set_order_fee(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    order_fee: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    let mut policy = *config.policy();
+    policy.set_order_fee(order_fee);
+    config.store_policy(policy, clock);
+}
+
+/// Allow `operator` to call `plp::finish_flush`. Admin-only and version-gated;
+/// aborts if `operator` is already allowed. Not gated on an open LP valuation,
+/// so an admin can always add an operator to finish a stuck flush.
+public fun add_flush_operator(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    operator: address,
+    clock: &Clock,
+) {
+    config.assert_version();
+    if (!config.id.exists_(FlushOperatorsKey())) {
+        config.id.add(FlushOperatorsKey(), vec_set::empty<address>());
+    };
+    let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
+    assert!(!operators.contains(&operator), EFlushOperatorAlreadyAdded);
+    operators.insert(operator);
+    config_events::emit_flush_operator_updated(operator, true, clock.timestamp_ms());
+}
+
+/// Revoke `operator`'s access to `plp::finish_flush`. Admin-only. Bypasses the
+/// version gate, like `remove_settled_redeem_keeper`, so revocation stays
+/// available under the emergency freeze and from a package version below the
+/// runtime floor. Aborts if `operator` is not allowed.
+public fun remove_flush_operator(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    operator: address,
+    clock: &Clock,
+) {
+    assert!(config.is_flush_operator(operator), EFlushOperatorNotFound);
+    let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
+    operators.remove(&operator);
+    config_events::emit_flush_operator_updated(operator, false, clock.timestamp_ms());
+}
+
 /// Advance the version floor to this package's compiled-in `current_version!()`.
 ///
 /// The floor cannot be set above the executing package's version. This function
@@ -758,6 +941,34 @@ public(package) fun is_settled_redeem_keeper(config: &ProtocolConfig, keeper: ad
     keepers.contains(&keeper)
 }
 
+/// Return the delayed-execution policy. Aborts `EPolicyNotInitialized` before
+/// `init_delayed_execution_policy` runs.
+public(package) fun policy(config: &ProtocolConfig): &DelayedExecutionPolicy {
+    assert!(config.id.exists_(DelayedExecutionPolicyKey()), EPolicyNotInitialized);
+    config.id.borrow(DelayedExecutionPolicyKey())
+}
+
+/// Abort unless the transaction sender is a flush operator. An absent allowlist
+/// rejects everyone.
+public(package) fun assert_flush_operator(config: &ProtocolConfig, ctx: &TxContext) {
+    assert!(config.is_flush_operator(ctx.sender()), ENotFlushOperator);
+}
+
+/// Abort until the watermark has reached this package's `current_version!()`,
+/// which retires every older package version. Queued placement waits for it, so
+/// no older package that knows nothing about the queue can run while an order
+/// waits.
+public(package) fun assert_cutover_reached(config: &ProtocolConfig) {
+    assert!(config.version_watermark >= constants::current_version!(), ECutoverNotReached);
+}
+
+/// Abort only when the running package version is below the watermark floor.
+/// Unlike `assert_version`, it ignores the emergency freeze, so refunds, admin
+/// refunds, and cleanup stay available while frozen.
+public(package) fun assert_version_floor(config: &ProtocolConfig) {
+    assert!(constants::current_version!() >= config.version_watermark, EPackageVersionDisabled);
+}
+
 /// Abort unless the protocol is operational: not emergency-frozen, and the
 /// running package version is at or above the watermark floor.
 ///
@@ -881,6 +1092,35 @@ fun emit_fee_incentive_allocation_rates_updated(config: &ProtocolConfig, clock: 
     );
 }
 
+/// Abort unless the timing fields fit the policy channel and each other: the
+/// buffer is `0` or exactly one tick, so a backup tick can only be the next
+/// update after τ; the stuck threshold spans at least one tick; and `buffer <
+/// stuck <= gap < stall`, where `gap < stall` leaves commit room to take a
+/// backup tick before the deadline refund. The channel check comes first
+/// because the tick size is only defined for a supported channel.
+fun assert_delayed_execution_timing(policy: &DelayedExecutionPolicy) {
+    let channel = policy.pyth_channel();
+    assert!(delayed_execution_config::is_supported_channel(channel), EUnsupportedPythChannel);
+    let tick_ms = delayed_execution_config::channel_tick_ms(channel);
+    let buffer_ms = policy.pyth_price_buffer_ms();
+    let stuck_ms = policy.stuck_threshold_ms();
+    let gap_ms = policy.gap_wait_ms();
+    assert!(buffer_ms == 0 || buffer_ms == tick_ms, EInvalidDelayedExecutionTiming);
+    assert!(stuck_ms >= tick_ms, EInvalidDelayedExecutionTiming);
+    assert!(
+        buffer_ms < stuck_ms && stuck_ms <= gap_ms && gap_ms < policy.stall_timeout_ms(),
+        EInvalidDelayedExecutionTiming,
+    );
+}
+
+/// Replace the stored policy with a fully validated one and emit its complete
+/// post-state.
+fun store_policy(config: &mut ProtocolConfig, policy: DelayedExecutionPolicy, clock: &Clock) {
+    let stored: &mut DelayedExecutionPolicy = config.id.borrow_mut(DelayedExecutionPolicyKey());
+    *stored = policy;
+    config_events::emit_delayed_execution_policy_updated(&policy, clock.timestamp_ms());
+}
+
 /// Read a `u64` knob made tunable after deploy and stored in a dynamic field, or
 /// `default` when it has never been set.
 fun u64_field_or<K: copy + drop + store>(config: &ProtocolConfig, key: K, default: u64): u64 {
@@ -917,4 +1157,13 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         snapshot_in_progress: false,
         flush_seq: 0,
     }
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+/// Seed the version floor, so tests can model the window between a package
+/// upgrade and its `bump_version_watermark`.
+public fun set_version_watermark_for_testing(config: &mut ProtocolConfig, version_watermark: u64) {
+    config.version_watermark = version_watermark;
 }

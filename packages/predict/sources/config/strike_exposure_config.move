@@ -94,15 +94,39 @@ public(package) fun trading_fee(
     lower_fee + higher_fee
 }
 
+/// Non-aborting policy half of `assert_mint_probability_policy`: whether
+/// `entry_probability` lies inside the inclusive entry band. The assert calls
+/// this, so the rule lives in one place.
+public(package) fun is_mint_probability_allowed(
+    config: &StrikeExposureConfig,
+    entry_probability: u64,
+): bool {
+    entry_probability >= config.min_entry_probability
+        && entry_probability <= config.max_entry_probability
+}
+
+/// Non-aborting policy half of `assert_range_mint_probability_policy`: the
+/// entry band applied to the actual lower-ABOVE and upper-BELOW legs and to
+/// their combined range. An infinite boundary has no leg to check.
+public(package) fun is_range_mint_probability_allowed(
+    config: &StrikeExposureConfig,
+    price: &RangePrice,
+): bool {
+    price.lower_up().map!(|p| config.is_mint_probability_allowed(p)).get_with_default(true)
+        && price
+            .higher_up()
+            .map!(|p| config.is_mint_probability_allowed(math::float_scaling!() - p))
+            .get_with_default(true)
+        && config.is_mint_probability_allowed(price.probability())
+}
+
 /// Apply entry policy to the actual lower-ABOVE and upper-BELOW legs and to
 /// their combined range. This is mint-only; tail positions remain closable.
 public(package) fun assert_range_mint_probability_policy(
     config: &StrikeExposureConfig,
     price: &RangePrice,
 ) {
-    price.lower_up().do!(|p| config.assert_mint_probability_policy(p));
-    price.higher_up().do!(|p| config.assert_mint_probability_policy(math::float_scaling!() - p));
-    config.assert_mint_probability_policy(price.probability());
+    assert!(config.is_range_mint_probability_allowed(price), EEntryProbabilityOutOfBounds);
 }
 
 /// Assert entry-probability policy without deriving quantity-dependent mint
@@ -113,11 +137,7 @@ public(package) fun assert_mint_probability_policy(
     config: &StrikeExposureConfig,
     entry_probability: u64,
 ) {
-    assert!(
-        entry_probability >= config.min_entry_probability
-            && entry_probability <= config.max_entry_probability,
-        EEntryProbabilityOutOfBounds,
-    );
+    assert!(config.is_mint_probability_allowed(entry_probability), EEntryProbabilityOutOfBounds);
 }
 
 /// Assert entry-probability and premium policy; return the premium. The holder

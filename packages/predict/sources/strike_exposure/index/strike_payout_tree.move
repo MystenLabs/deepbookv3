@@ -35,17 +35,24 @@
 /// immediately before its first mutation under that generation (an untouched node
 /// is its own snapshot), and `walk_linear_frozen` prices the tree exactly as it
 /// stood at the snapshot instant through the same walk the live read uses.
+///
+/// Delayed execution adds pins: a waiting order's boundary ticks, passed in as
+/// `pins` (tick -> count of waiting orders; a key is present only while its
+/// count is positive). Enqueue creates the nodes up front (`ensure_node`), no
+/// deletion path removes a pinned node, and a resolve fill inserts over existing
+/// nodes only (`insert_range_existing`), so the keeper never creates a node.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};
 use fixed_math::math;
-use sui::table::{Self, Table};
+use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
 const EInsufficientPayoutQuantity: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
 const ENonMonotonePrice: u64 = 2;
 const EStaleValuationSnapshot: u64 = 3;
 const ESnapshotSeqNotIncreasing: u64 = 4;
+const ENodeMissing: u64 = 5;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -176,6 +183,19 @@ public(package) fun settled_payout_liability(
     )
 }
 
+/// Return the number of finite boundary nodes, pinned zero nodes included. The
+/// keeper sizes resolve batches from it.
+public(package) fun node_count(tree: &StrikePayoutTree): u64 {
+    tree.node_count
+}
+
+/// Whether both finite boundaries of `(lower_tick, higher_tick]` exist as nodes.
+/// The open-lower sentinel `0` and `pos_inf_tick` need no node.
+public(package) fun has_nodes(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): bool {
+    (lower_tick == 0 || tree.nodes.contains(lower_tick))
+        && (higher_tick == constants::pos_inf_tick!() || tree.nodes.contains(higher_tick))
+}
+
 /// Value the quantity-weighted linear liability by pricing each distinct boundary
 /// once.
 ///
@@ -268,17 +288,84 @@ public(package) fun insert_range(
         EMaxPayoutTreeNodes,
     );
 
-    tree.apply_range(lower_tick, higher_tick, quantity, true);
+    // An insert never empties a node, so no pin can matter here.
+    tree.apply_range(lower_tick, higher_tick, quantity, true, &vec_map::empty());
 }
 
-/// Remove interval payout quantity for the order tick range `(lower_tick, higher_tick]`.
-public(package) fun remove_range(
+/// Ensure a finite boundary node exists at `tick`, inserting a zero leaf if
+/// missing. Returns whether it inserted one. Skips `0` and `pos_inf_tick`; a new
+/// node is counted against the node cap (`EMaxPayoutTreeNodes`).
+///
+/// The zero leaf goes through the ordinary AVL insert, which never prunes, and
+/// is stamped like any post-snapshot creation: zero shadows under an active
+/// generation, so the frozen walk excludes it. Only a pin keeps it alive past
+/// the next emptying mutation or `release_snapshot`.
+public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
+    if (tick == 0 || tick == constants::pos_inf_tick!() || tree.nodes.contains(tick)) {
+        return false
+    };
+    assert!(tree.node_count + 1 <= constants::max_payout_tree_nodes!(), EMaxPayoutTreeNodes);
+    tree.apply_boundary_delta(tick, 0, true, true, &vec_map::empty());
+    true
+}
+
+/// Insert interval payout quantity over boundaries that already exist, so a
+/// resolve fill never creates a node. Aborts `ENodeMissing` as a backstop; the
+/// caller checks `has_nodes` first.
+///
+/// Mirrors `insert_range` over a path with no node-creation branch, so no keeper
+/// path reaches `table::add`. Each touched node still captures its shadow
+/// before the mutation (RP-29).
+public(package) fun insert_range_existing(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
 ) {
-    tree.apply_range(lower_tick, higher_tick, quantity, false);
+    assert!(tree.has_nodes(lower_tick, higher_tick), ENodeMissing);
+    if (quantity == 0) return;
+
+    if (lower_tick == 0) {
+        apply_net_delta(&mut tree.base, quantity, true);
+        tree.add_existing_boundary(higher_tick, quantity, false);
+    } else {
+        tree.add_existing_boundary(lower_tick, quantity, true);
+        if (higher_tick != constants::pos_inf_tick!()) {
+            tree.add_existing_boundary(higher_tick, quantity, false);
+        };
+    };
+}
+
+/// Remove interval payout quantity for the order tick range `(lower_tick, higher_tick]`.
+/// A boundary a waiting order pins (`pins`, tick -> count) survives emptying.
+public(package) fun remove_range(
+    tree: &mut StrikePayoutTree,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    pins: &VecMap<u64, u64>,
+) {
+    tree.apply_range(lower_tick, higher_tick, quantity, false, pins);
+}
+
+/// Detach the node at `tick` only if it is empty, unpinned, and not retained by
+/// the active snapshot. Returns whether it detached one; never aborts.
+///
+/// The refund routine's best-effort cleanup after it unpins. A missing tick,
+/// a sentinel, a node holding quantity, a pinned node, and a husk the active
+/// generation still needs are all left alone and return false.
+public(package) fun prune_if_unpinned(
+    tree: &mut StrikePayoutTree,
+    tick: u64,
+    pins: &VecMap<u64, u64>,
+): bool {
+    if (!tree.nodes.contains(tick) || pins.contains(&tick)) return false;
+    let node = tree.nodes[tick];
+    let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
+    if (!is_empty_node(node) || retains_snapshot(&node, snapshot_seq)) return false;
+    tree.root = detach_tick(&mut tree.nodes, tree.root, tick);
+    tree.node_count = tree.node_count - 1;
+    true
 }
 
 /// Begin holding generation `snapshot_seq`'s snapshot: readable through
@@ -300,12 +387,13 @@ public(package) fun deactivate_snapshot(tree: &mut StrikePayoutTree) {
 }
 
 /// Consume the snapshot after its frozen walk was read: deactivate, then remove
-/// every live-zero node (husks — this generation's or a stale one's). Runs in
-/// the valuation transaction, whose budget already covers every node.
-public(package) fun release_snapshot(tree: &mut StrikePayoutTree) {
+/// every live-zero node (husks — this generation's or a stale one's) that no
+/// waiting order pins. Runs in the valuation transaction, whose budget already
+/// covers every node.
+public(package) fun release_snapshot(tree: &mut StrikePayoutTree, pins: &VecMap<u64, u64>) {
     tree.snapshot_active = false;
     let mut husks = vector[];
-    collect_husks(&tree.nodes, tree.root, &mut husks);
+    collect_husks(&tree.nodes, tree.root, pins, &mut husks);
     husks.do!(|tick| {
         tree.root = detach_tick(&mut tree.nodes, tree.root, tick);
         tree.node_count = tree.node_count - 1;
@@ -318,17 +406,18 @@ fun apply_range(
     higher_tick: u64,
     quantity: u64,
     add: bool,
+    pins: &VecMap<u64, u64>,
 ) {
     // Skip a fully-zero delta; index any order with nonzero quantity.
     if (quantity == 0) return;
 
     if (lower_tick == 0) {
         apply_net_delta(&mut tree.base, quantity, add);
-        tree.apply_boundary_delta(higher_tick, quantity, false, add);
+        tree.apply_boundary_delta(higher_tick, quantity, false, add, pins);
     } else {
-        tree.apply_boundary_delta(lower_tick, quantity, true, add);
+        tree.apply_boundary_delta(lower_tick, quantity, true, add, pins);
         if (higher_tick != constants::pos_inf_tick!()) {
-            tree.apply_boundary_delta(higher_tick, quantity, false, add);
+            tree.apply_boundary_delta(higher_tick, quantity, false, add, pins);
         };
     };
 }
@@ -339,6 +428,7 @@ fun apply_boundary_delta(
     quantity: u64,
     is_start: bool,
     add: bool,
+    pins: &VecMap<u64, u64>,
 ) {
     let had_node = tree.nodes.contains(tick);
     // 0 encodes "no active snapshot": active generations are flush ordinals,
@@ -352,6 +442,7 @@ fun apply_boundary_delta(
         is_start,
         add,
         snapshot_seq,
+        pins,
     );
     tree.root = new_root;
 
@@ -371,6 +462,7 @@ fun apply_at(
     is_start: bool,
     add: bool,
     snapshot_seq: u64,
+    pins: &VecMap<u64, u64>,
 ): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutQuantity);
@@ -391,8 +483,13 @@ fun apply_at(
         };
         // An emptied node whose shadow the active generation still needs is
         // retained as a live-zero husk; `release_snapshot` removes it once the
-        // frozen walk has been read.
-        if (is_empty_node(node) && !retains_snapshot(&node, snapshot_seq)) {
+        // frozen walk has been read. A pinned node is kept for the waiting order
+        // that will fill over it. The pin scan runs only once the node is empty.
+        if (
+            is_empty_node(node)
+                && !retains_snapshot(&node, snapshot_seq)
+                && !pins.contains(&root_tick)
+        ) {
             let _removed = nodes.remove(root_tick);
             return join_subtrees(nodes, node.left, node.right)
         };
@@ -403,12 +500,48 @@ fun apply_at(
     // The descent is a plain BST insert; every structural decision is deferred to
     // `rebalance` on the way back up, which reads only measured heights.
     if (tick < root_tick) {
-        node.left = apply_at(nodes, node.left, tick, quantity, is_start, add, snapshot_seq);
+        node.left = apply_at(nodes, node.left, tick, quantity, is_start, add, snapshot_seq, pins);
     } else {
-        node.right = apply_at(nodes, node.right, tick, quantity, is_start, add, snapshot_seq);
+        node.right = apply_at(nodes, node.right, tick, quantity, is_start, add, snapshot_seq, pins);
     };
 
     option::some(rebalance(nodes, root_tick, node))
+}
+
+fun add_existing_boundary(tree: &mut StrikePayoutTree, tick: u64, quantity: u64, is_start: bool) {
+    let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
+    apply_at_existing(&mut tree.nodes, tree.root, tick, quantity, is_start, snapshot_seq);
+}
+
+/// `apply_at`'s add path over an existing node, with no node-creation branch.
+/// The shape never changes, so each node on the path only re-summarizes and no
+/// rotation is needed.
+fun apply_at_existing(
+    nodes: &mut Table<u64, PayoutNode>,
+    root: Option<u64>,
+    tick: u64,
+    quantity: u64,
+    is_start: bool,
+    snapshot_seq: u64,
+) {
+    assert!(root.is_some(), ENodeMissing);
+    let root_tick = *root.borrow();
+    let mut node = nodes[root_tick];
+
+    if (tick == root_tick) {
+        capture_snapshot_if_stale(&mut node, snapshot_seq);
+        if (is_start) {
+            apply_net_delta(&mut node.local_start, quantity, true);
+        } else {
+            apply_net_delta(&mut node.local_end, quantity, true);
+        };
+    } else if (tick < root_tick) {
+        apply_at_existing(nodes, node.left, tick, quantity, is_start, snapshot_seq);
+    } else {
+        apply_at_existing(nodes, node.right, tick, quantity, is_start, snapshot_seq);
+    };
+
+    resummarize(nodes, root_tick, node);
 }
 
 fun new_leaf(quantity: u64, is_start: bool, snapshot_seq: u64): PayoutNode {
@@ -739,13 +872,19 @@ fun retains_snapshot(node: &PayoutNode, snapshot_seq: u64): bool {
         && (node.snapshot_local_start != 0 || node.snapshot_local_end != 0)
 }
 
-/// Collect every live-zero tick (husks) in order.
-fun collect_husks(nodes: &Table<u64, PayoutNode>, root: Option<u64>, husks: &mut vector<u64>) {
+/// Collect every live-zero tick (husks) that no waiting order pins, in order.
+fun collect_husks(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    pins: &VecMap<u64, u64>,
+    husks: &mut vector<u64>,
+) {
     if (root.is_none()) return;
-    let node = nodes[*root.borrow()];
-    collect_husks(nodes, node.left, husks);
-    if (is_empty_node(node)) husks.push_back(*root.borrow());
-    collect_husks(nodes, node.right, husks);
+    let tick = *root.borrow();
+    let node = nodes[tick];
+    collect_husks(nodes, node.left, pins, husks);
+    if (is_empty_node(node) && !pins.contains(&tick)) husks.push_back(tick);
+    collect_husks(nodes, node.right, pins, husks);
 }
 
 /// Remove the husk at `tick`, rejoining and rebalancing as an emptying

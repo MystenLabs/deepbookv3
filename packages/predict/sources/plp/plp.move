@@ -148,10 +148,8 @@ public struct PoolValuation has drop, store {
     /// Clock time the flush was started, for the stuck-flush deadline.
     started_at_ms: u64,
     /// Drain budgets committed at start (the cap owner's choice), bounding how many
-    /// requests each queue processes at finish. Committing them here — not at finish —
-    /// is what lets `finish_flush` run permissionless: a stranger may complete a flush
-    /// but only ever drains at these budgets, so completion can help LPs, never starve
-    /// them by finishing with a zero budget.
+    /// requests each queue processes at finish. `finish_flush` takes no budget, so the
+    /// flush operator who completes it drains at exactly these.
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     /// Each LP queue's `next_index` at the snapshot instant: the drain fills only
@@ -496,12 +494,17 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
 /// Because queueing is permissionless and a refunded request returns its escrow in the
 /// same transaction, an operator should bound both budgets in production rather than
 /// rely on queue length staying small — see RP-12.
+///
+/// Only an allowlisted flush operator may call it (`protocol_config::ENotFlushOperator`).
+/// Fills move idle cash, so restricting who completes a flush keeps idle predictable
+/// for the keeper that funds markets for queued orders.
 public fun finish_flush(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    config.assert_flush_operator(ctx);
     config.assert_version();
     config.assert_valuation_in_progress();
     // Hard staleness bound: a flush older than the window cannot fill queued LP
@@ -607,6 +610,9 @@ public fun finish_flush(
 /// three per-market cases — initial funding of a freshly registered (unfunded)
 /// market, ongoing live rebalance/surplus-sweep toward target, and the
 /// settled-market sweep (deactivate, return all free cash, materialize profit).
+/// The live target covers the market's queued orders' cash need
+/// (`expiry_market::waiting_cash_need`), so the keeper calls this after each
+/// enqueue to fund those orders' fills, and a sweep never takes that cash back.
 /// Call `expiry_market::try_settle` first in the same PTB when settlement may be due.
 /// An expired unsettled market is a no-op until that transition succeeds.
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
@@ -1156,27 +1162,34 @@ fun sync_fee_incentives(
     );
 }
 
-/// Current cash, the target cash to hold, and the upper sweep band for one expiry.
+/// The target cash to hold and the upper sweep band for one expiry.
 ///
-/// `target_cash` adds one buffer above the expiry-cash required backing and
-/// `sweep_threshold_cash` adds two, both floored at the per-expiry initial cash
-/// target. Below target the pool tops up to target; above the sweep band it
-/// returns the excess over target.
+/// `target_cash` is the largest of one buffer above the expiry-cash required
+/// backing, the per-expiry initial cash target, and required backing plus the
+/// queued orders' cash need. `sweep_threshold_cash` is the largest of two buffers
+/// above required, the initial cash target, and `target_cash`. Below target the
+/// pool tops up to target; above the sweep band it returns the excess over target,
+/// so a sweep never leaves less than required plus the queued need. The band is
+/// floored at the target because a queued need above two buffers lifts the target
+/// over the other band terms, and a band under the target would sweep a market
+/// holding exactly its target by zero.
 fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
     let required_cash = market.required_cash();
     let target_buffer = math::mul_down(required_cash, constants::expiry_rebalance_pct!());
-    let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
-    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
-        initial_expiry_cash,
-    );
+    let target_cash = (required_cash + target_buffer)
+        .max(initial_expiry_cash)
+        .max(required_cash + market.waiting_cash_need());
+    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer)
+        .max(initial_expiry_cash)
+        .max(target_cash);
     (target_cash, sweep_threshold_cash)
 }
 
 /// Settled-market sweep: deactivate the expiry, return its free cash to idle,
-/// report the expiry's lifetime PnL, materialize its terminal profit, and return
-/// unused fee incentives to the pool reserve. Idempotent — a settled market already
-/// swept returns zero cash, emits nothing, and recognizes no further profit, so a
-/// second pass is a no-op.
+/// report the expiry's lifetime PnL and its change since the last report,
+/// materialize its terminal profit, and return unused fee incentives to the pool
+/// reserve. Idempotent — a settled market already swept returns zero cash, emits
+/// nothing, and recognizes no further profit, so a second pass is a no-op.
 fun sweep_settled_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -1195,6 +1208,8 @@ fun sweep_settled_expiry(
             market.settlement_price(),
             returned_cash_amount,
         );
+        let sent_to_expiry = vault.expiry_accounting.sent_to_expiry(expiry_market_id);
+        let received_from_expiry = vault.expiry_accounting.received_from_expiry(expiry_market_id);
         vault_events::emit_expiry_pnl(
             vault.id(),
             expiry_market_id,
@@ -1202,8 +1217,27 @@ fun sweep_settled_expiry(
             market.reference_tick_source_timestamp_ms(),
             market.expiry(),
             market.settlement_price(),
-            vault.expiry_accounting.sent_to_expiry(expiry_market_id),
-            vault.expiry_accounting.received_from_expiry(expiry_market_id),
+            sent_to_expiry,
+            received_from_expiry,
+        );
+        // Pool cash reaches an expiry only through the live top-up, and
+        // `record_sent_to_expiry` refuses it once the first settled sweep has started
+        // terminal accounting. So `sent_to_expiry` is final from that sweep on: it
+        // realizes the lifetime result, and each later sweep realizes exactly the cash
+        // it returned.
+        let (in_profit, realized_amount) = if (deactivated) {
+            (received_from_expiry >= sent_to_expiry, received_from_expiry.diff(sent_to_expiry))
+        } else {
+            (true, returned_cash_amount)
+        };
+        vault_events::emit_expiry_pnl_realized(
+            vault.id(),
+            expiry_market_id,
+            market.propbook_underlying_id(),
+            market.expiry(),
+            market.settlement_price(),
+            in_profit,
+            realized_amount,
         );
     };
     vault.materialize_expiry_profit(config, expiry_market_id);
@@ -1307,10 +1341,6 @@ fun discard_valuation_internal(vault: &mut PoolVault, config: &mut ProtocolConfi
         valuation.valued_expiry_markets.length(),
     );
 }
-
-// (assert_valuation_starter removed: value_expiry and finish_flush are
-// permissionless; the drain budgets are committed at start, so completion can
-// only help LPs.)
 
 /// Abort while the atomic snapshot stage is still open (start → seal, one
 /// transaction, so only the flush-starter's own PTB can compose this state): an

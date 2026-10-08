@@ -69,6 +69,29 @@ public struct ExpiryPnl has copy, drop, store {
     amount: u64,
 }
 
+/// Emitted with every `ExpiryPnl`. Each emission carries only the change in the pool's
+/// gross realized result on the expiry since that expiry's previous emission, as a sign
+/// flag and magnitude. So the signed sum of all `ExpiryPnlRealized` events, over all
+/// expiries, equals the sum of each expiry's latest `ExpiryPnl`, with no per-expiry
+/// dedup. The first emission comes on the expiry's first settled sweep and carries the
+/// lifetime result, `received_from_expiry - sent_to_expiry`, which may be a loss.
+/// Break-even reports a zero profit. A later emission carries the extra cash a later
+/// sweep returned, so it is always a profit: a settled expiry is never sent pool cash
+/// again. Like `ExpiryPnl`, the figure is gross. It is before the protocol/LP split and
+/// includes the sponsor fee subsidies mints moved into expiry cash. Subtract the
+/// expiry's `OrderMinted.fee_incentive_subsidy` total to isolate the trading result.
+public struct ExpiryPnlRealized has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    settlement_price: u64,
+    /// False only for a loss, which only an expiry's first emission can report.
+    in_profit: bool,
+    /// Magnitude of the change in the gross realized result since the previous emission.
+    amount: u64,
+}
+
 /// Emitted when an LP queues a supply request: `amount` USDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
 /// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
@@ -373,6 +396,26 @@ public(package) fun emit_expiry_pnl(
         settlement_price,
         sent_to_expiry,
         received_from_expiry,
+        in_profit,
+        amount,
+    });
+}
+
+public(package) fun emit_expiry_pnl_realized(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    settlement_price: u64,
+    in_profit: bool,
+    amount: u64,
+) {
+    event::emit(ExpiryPnlRealized {
+        pool_vault_id,
+        expiry_market_id,
+        propbook_underlying_id,
+        expiry,
+        settlement_price,
         in_profit,
         amount,
     });
