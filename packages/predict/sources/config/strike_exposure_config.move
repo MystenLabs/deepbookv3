@@ -10,6 +10,7 @@
 module deepbook_predict::strike_exposure_config;
 
 use deepbook_predict::{config_constants, pricing::RangePrice};
+use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 
 #[allow(unused_const)]
@@ -228,7 +229,9 @@ public(package) fun set_impact(config: &mut StrikeExposureConfig, value: u64) {
     config.inventory_impact_max_rate = value;
 }
 
-/// Return one finite boundary's fee, rounding down so the trader keeps sub-unit dust.
+/// Return one finite boundary's fee, rounding down so the trader keeps sub-unit dust:
+/// `deepbook_predict_math::math::leg_fee` over this config's Bernoulli fee curve, minimum
+/// fee, and expiry ramp.
 ///
 /// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
 /// liveness before this helper derives `expiry_ms - timestamp_ms`.
@@ -239,32 +242,15 @@ fun leg_fee(
     quantity: u64,
     timestamp_ms: u64,
 ): u64 {
-    let raw_fee = config.bern_rate(probability);
-    let base = raw_fee.max(config.min_fee);
-    let multiplier = config.fee_mult(expiry_ms - timestamp_ms);
-    math::mul_down(math::mul_down(base, multiplier), quantity)
-}
-
-fun bern_rate(config: &StrikeExposureConfig, probability: u64): u64 {
     // RangePrice fields are private to pricing; its digital probabilities are clamped to [0, 1].
     assert!(probability <= math::float_scaling!(), EInvalidFeeProbability);
-    if (probability == 0 || probability == math::float_scaling!()) return 0;
-
-    let complement = math::float_scaling!() - probability;
-    let variance = math::mul_down(probability, complement);
-    let bernoulli_factor = math::sqrt_down(variance);
-    math::mul_down(config.base_fee, bernoulli_factor)
-}
-
-/// Linear ramp that scales the trade fee up as expiry approaches.
-fun fee_mult(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
-    if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
-
-    // = (max_multiplier - 1) * elapsed / window, round down; the trader keeps the ramp dust.
-    let ramp = math::mul_div_down(
-        config.expiry_fee_max_multiplier - math::float_scaling!(),
-        config.expiry_fee_window_ms - time_to_expiry_ms,
+    pmath::leg_fee(
+        config.base_fee,
+        config.min_fee,
         config.expiry_fee_window_ms,
-    );
-    math::float_scaling!() + ramp
+        config.expiry_fee_max_multiplier,
+        probability,
+        quantity,
+        expiry_ms - timestamp_ms,
+    )
 }

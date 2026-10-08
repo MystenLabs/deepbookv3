@@ -22,6 +22,7 @@
 module deepbook_predict::pricing;
 
 use deepbook_predict::{pricing_config::PricingConfig, range_codec::Strike};
+use deepbook_predict_math::math as pmath;
 use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},
@@ -150,8 +151,13 @@ public struct VolSnapshot has copy, drop, store {
     svi_source_timestamp_ms: u64,
 }
 
+// The digital's undefined points. `deepbook_predict_math::math::digital` reports
+// these codes and `up_price` / `range_price` abort with them here.
+#[allow(unused_const)]
 const EZeroForward: u64 = 0;
+#[allow(unused_const)]
 const ECannotBeNegative: u64 = 1;
+#[allow(unused_const)]
 const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesPriceStale: u64 = 4;
@@ -189,21 +195,14 @@ const EPythForwardRequired: u64 = 19;
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
 /// tightly enough that Predict's fixed-point pricing math remains live and
-/// meaningful.
+/// meaningful. The SVI bounds live with the math in
+/// `deepbook_predict_math::math::inputs_ok`, which mirrors these two.
 macro fun max_pricing_basis_factor(): u64 { 100 }
 
 // Co-designed with the basis factor: forward <= factor * spot (envelope) and
 // spot <= u64::max / factor, so the re-anchored forward spot * bs_forward /
 // bs_spot <= factor * spot can't overflow u64.
 macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
-
-// 1e-5, the floor Block Scholes recommends: SSVI surfaces narrow `sigma` toward
-// expiry, so one-minute slices commonly sit below 1e-3. Any positive floor keeps
-// the smile root `sqrt((k - m)^2 + sigma^2)` nonzero, so the skew slope's
-// `(k - m) / root` division is safe at the smile vertex.
-macro fun min_svi_sigma(): u64 { 10_000 }
-
-macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
 
@@ -298,25 +297,6 @@ public(package) fun thaw(frozen: &FrozenPricer): Pricer {
         block_scholes_forward_source_timestamp_ms: frozen.block_scholes_forward_source_timestamp_ms,
         block_scholes_svi_source_timestamp_ms: frozen.block_scholes_svi_source_timestamp_ms,
     }
-}
-
-/// Scale one 1e9-scaled SVI magnitude down by the fraction of anchored time
-/// remaining, returning it at 1e18.
-///
-/// The roll-down result is kept at 1e18 because the fraction is applied to values
-/// that are themselves tiny on short-dated surfaces: a 1e9 floor here costs up to
-/// a whole raw unit of `a`, and a short-dated `a` is only about ten raw units, so
-/// the truncation alone moves the digital by percent-scale amounts. At 1e18 the
-/// same floor is a billionth of that.
-///
-/// The `u256` intermediate keeps the product exact for any `expiry_ms` rather than
-/// relying on a bound on the anchored horizon. The result is at most
-/// `value * 1e9 < 2^64 * 1e9`, so narrowing to `u128` never truncates.
-public(package) fun roll_down(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
-    let scaled =
-        (value as u256) * (math::float_scaling!() as u256) * (remaining_ms as u256)
-        / (anchor_tte_ms as u256);
-    scaled as u128
 }
 
 /// Validate the current live pricing boundary and snapshot oracle inputs for
@@ -463,7 +443,10 @@ public(package) fun pricer_at(
         generation_ms,
         tick_ms,
     );
-    if (!has_min_var(&pricer.svi)) return option::none();
+    let svi = &pricer.svi;
+    if (!pmath::var_positive(svi.a_magnitude, svi.a_is_negative, svi.b, svi.rho, svi.sigma)) {
+        return option::none()
+    };
     option::some(pricer)
 }
 
@@ -836,9 +819,9 @@ fun roll_svi(snapshot: &VolSnapshot, expiry_ms: u64, priced_at_ms: u64): Pricing
     let anchor_tte_ms = expiry_ms - snapshot.svi_source_timestamp_ms;
     let a = snapshot.svi_a;
     PricingSVI {
-        a_magnitude: roll_down(a.magnitude(), remaining_ms, anchor_tte_ms),
+        a_magnitude: pmath::roll_down(a.magnitude(), remaining_ms, anchor_tte_ms),
         a_is_negative: a.is_negative(),
-        b: roll_down(snapshot.svi_b, remaining_ms, anchor_tte_ms),
+        b: pmath::roll_down(snapshot.svi_b, remaining_ms, anchor_tte_ms),
         rho: snapshot.svi_rho,
         m: snapshot.svi_m,
         sigma: snapshot.svi_sigma,
@@ -850,65 +833,18 @@ fun is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
     source_timestamp_ms > 0 && source_timestamp_ms <= now && now - source_timestamp_ms <= max_age_ms
 }
 
+/// Abort unless raw Block Scholes inputs fit Predict's pricing-safe envelope
+/// (`EBlockScholesInputsInvalid`) and the raw SVI tuple's minimum total
+/// variance is positive (`EBlockScholesMinVarianceInvalid`).
 fun chk_inputs(spot: u64, forward: u64, svi: &RawSVI) {
-    assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
-    assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
-    // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
-    // without an overflowing multiplication.
-    assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
-    // `a` carries no bound of its own: only total variance has to be positive,
-    // which the minimum-variance check below owns, and every downstream use of
-    // `a` fits its provider width (`roll_down`, `total_var`).
-    assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
-    assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
-    assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(
-        svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
+        pmath::inputs_ok(spot, forward, svi.b(), svi.rho(), svi.m(), svi.sigma()),
         EBlockScholesInputsInvalid,
     );
-    chk_min_var(svi);
-}
-
-fun chk_min_var(svi: &RawSVI) {
-    let min_variance_increment = min_var_inc(svi);
-    let a = svi.a();
-    // `a + min_variance_increment > 0`, compared rather than summed: `a` reaches
-    // `u64::MAX`, where the sum would leave `u64`.
-    let min_total_var_positive = if (a.is_negative()) {
-        min_variance_increment > a.magnitude()
-    } else {
-        a.magnitude() > 0 || min_variance_increment > 0
-    };
-    assert!(min_total_var_positive, EBlockScholesMinVarianceInvalid);
-}
-
-// SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
-// `x = k - m`. This returns the smallest possible non-`a` part over all strikes:
-// `b * sigma * sqrt(1 - rho^2)`, or 0 at the `|rho| == 1` boundary.
-fun min_var_inc(svi: &RawSVI): u64 {
-    math::mul_down(svi.b(), smile_inner(svi.rho(), svi.sigma()))
-}
-
-/// Whether a rolled surface's minimum total variance over all strikes is positive,
-/// at the 1e18 the rolled `a` and `b` are carried in. The load gate proves this for
-/// the raw tuple; `pricer_at` re-proves it after rolling to a tick.
-fun has_min_var(svi: &PricingSVI): bool {
-    total_var(
-        svi.a_magnitude,
-        svi.a_is_negative,
-        svi.b,
-        smile_inner(svi.rho, svi.sigma),
-    ).is_some()
-}
-
-/// The smallest SVI inner term `rho*x + sqrt(x^2 + sigma^2)` over all `x`:
-/// `sigma * sqrt(1 - rho^2)` at 1e9, or 0 at the `|rho| == 1` boundary.
-fun smile_inner(rho: I64, sigma: u64): u64 {
-    let rho_mag = rho.magnitude();
-    if (rho_mag == math::float_scaling!()) return 0;
-
-    let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
-    math::mul_down(sigma, math::sqrt_down(one_minus_rho_squared))
+    assert!(
+        pmath::raw_var_ok(svi.a(), svi.b(), svi.rho(), svi.sigma()),
+        EBlockScholesMinVarianceInvalid,
+    );
 }
 
 /// Evaluate `range_price` without aborting: the boundary prices, or `none` with the
@@ -941,144 +877,16 @@ fun eval_range(
 fun eval_up(svi: &PricingSVI, forward: u64, strike: Strike): (Option<u64>, u64) {
     if (strike.is_neg_inf()) return (option::some(math::float_scaling!()), 0);
     if (strike.is_pos_inf()) return (option::some(0), 0);
-    evaluate_nd2(svi, forward, strike.value())
-}
-
-/// Binary pricing from SVI total variance:
-/// - k = ln(strike / forward)
-/// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
-/// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-/// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-///
-/// Returns `none` with `EZeroForward`, `ECannotBeNegative`, or `ENonPositiveVariance`
-/// where the formula is undefined, so the aborting and non-aborting reads share one
-/// evaluation and their bits cannot drift.
-fun evaluate_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): (Option<u64>, u64) {
-    if (forward == 0) return (option::none(), EZeroForward);
-
-    // Log-moneyness as a DIFFERENCE of logarithms, never as `ln` of a fixed-point
-    // ratio. Forming `strike * 1e9 / forward` first destroys exactly the tails it
-    // is asked about: the quotient floors to zero once `strike` is a billionth of
-    // `forward` and leaves `u64` once it is 1.8e10 times it, and just inside those
-    // limits it survives as a handful of raw units carrying tens of percent of
-    // truncation error. That is why this used to short-circuit to the digital
-    // limits 1 and 0 there — a saturation that is only true when total variance is
-    // small, and silently wrong when it is not, on a value the mint's entry
-    // probability and the NAV mark both consume.
-    //
-    // `ln` is defined across the whole positive `u64` domain, so the difference is
-    // well-conditioned over every representable pair: `|k| <= 44.4` against the
-    // `[-20.72, +23.64]` the ratio form could reach, at a relative error of 1e-7 per
-    // term rather than a relative error that grows without bound as the tail
-    // deepens. No strike needs a special case, and no surface has to be restricted
-    // to keep a shortcut honest.
-    let k = math::ln(strike).sub(&math::ln(forward));
-    let m = svi_params.m;
-    let k_minus_m = k.sub(&m);
-    // The smile root `sqrt((k - m)^2 + sigma^2)` is taken from a 1e18 input: both
-    // squares are exact `u128` products of 1e9 values, and `sqrt_u128_down` returns
-    // the 1e9-scaled root. Squaring at 1e9 instead floors each square to a whole raw
-    // unit, which erases `sigma^2` once `sigma` is below ~3.2e-5 and leaves a
-    // short-dated smile's vertex with percent-scale error in `w` and `w'`.
-    // `|k - m| <= 44.4 + 100` and `sigma <= 100`, so the input stays under 3.1e22
-    // and the root fits `u64`.
-    let k_minus_m_magnitude = k_minus_m.magnitude() as u128;
-    let sigma = svi_params.sigma as u128;
-    let sq = math::sqrt_u128_down(k_minus_m_magnitude * k_minus_m_magnitude + sigma * sigma) as u64;
-    let sq_i64 = i64::from_u64(sq);
-
-    let rho = svi_params.rho;
-    let rho_km = rho.mul_scaled(&k_minus_m);
-    let inner = rho_km.add(&sq_i64);
-    // Non-negative for |rho| <= 1, and exactly so in fixed point: the floored root
-    // is at least `|k - m|`, and the floored `rho * (k - m)` is at most that in
-    // magnitude. The check is a backstop.
-    if (inner.is_negative()) return (option::none(), ECannotBeNegative);
-
-    let b = svi_params.b;
-    let total_var = total_var(
-        svi_params.a_magnitude,
-        svi_params.a_is_negative,
-        b,
-        inner.magnitude(),
-    );
-    if (total_var.is_none()) return (option::none(), ENonPositiveVariance);
-    let (sqrt_var, d2) = sqrt_var_d2(total_var.destroy_some(), &k);
-
-    let slope_ratio = k_minus_m.div_scaled(&sq_i64);
-    let slope = rho.add(&slope_ratio);
-    // `b` is at 1e18 and `slope` at 1e9, so the product comes back down by 1e18
-    // to leave `w'` at 1e9. `b <= max_svi_input * 1e9` and `|slope| <= 2e9`
-    // (`|rho| <= 1e9` and `|k - m| <= sq`), so the u128 product and the u64
-    // narrowing both fit.
-    let scale = math::float_scaling!() as u128;
-    let w_prime_magnitude = (b * (slope.magnitude() as u128) / (scale * scale)) as u64;
-    let nd2 = math::normal_cdf(&d2);
-    if (w_prime_magnitude == 0) return (option::some(nd2), 0);
-
-    let correction_magnitude = math::mul_div_down(
-        math::normal_pdf(&d2),
-        w_prime_magnitude,
-        2 * sqrt_var,
-    );
-    let correction = i64::from_parts(correction_magnitude, slope.is_negative());
-    let adjusted = i64::from_u64(nd2).sub(&correction);
-    let price = if (adjusted.is_negative()) {
-        0
-    } else if (adjusted.magnitude() > math::float_scaling!()) {
-        math::float_scaling!()
-    } else {
-        adjusted.magnitude()
-    };
-    (option::some(price), 0)
-}
-
-/// Total variance `w = a + b * inner`, carried at `u128` / 1e18, or `none` when
-/// `w <= 0`, which pricing cannot price because it divides by `sqrt(w)`.
-///
-/// `a_magnitude` and `b` arrive already rolled down and already at 1e18, so the
-/// whole variance assembly stays in that domain: narrowing either back to 1e9
-/// discards the entire low-variance signal, because a five-minute surface has
-/// `w ~ 1e-8` — about ten raw units at 1e9. `inner` is 1e9-scaled, so `b * inner`
-/// comes back down by 1e9 to land at 1e18.
-fun total_var(a_magnitude: u128, a_is_negative: bool, b: u128, inner: u64): Option<u128> {
-    let increment = b * (inner as u128) / (math::float_scaling!() as u128);
-    if (a_is_negative) {
-        if (increment > a_magnitude) option::some(increment - a_magnitude) else option::none()
-    } else if (increment + a_magnitude > 0) {
-        option::some(increment + a_magnitude)
-    } else {
-        option::none()
-    }
-}
-
-/// `sqrt(w)` and `d2` for a positive total variance `w` at 1e18. `sqrt_u128_down`
-/// of a 1e18 value is its 1e9-scaled root, so `sqrt(w)` returns at the scale the
-/// rest of the formula reads. Returns `(sqrt(w), d2)`.
-fun sqrt_var_d2(total_var: u128, k: &I64): (u64, I64) {
-    let scale = math::float_scaling!() as u128;
-    let sqrt_var = math::sqrt_u128_down(total_var) as u64;
-
-    // d2 = -(k + w/2) / sqrt(w). The numerator stays at 1e18 and the divisor is
-    // the 1e9-scaled root, so the quotient lands at 1e9 with its sign tracked by
-    // hand — I64 cannot hold either operand at 1e18.
-    let k_scaled = (k.magnitude() as u128) * scale;
-    let half_var = total_var / 2;
-    let (numerator, numerator_negative) = if (!k.is_negative()) {
-        (k_scaled + half_var, false)
-    } else if (half_var >= k_scaled) {
-        (half_var - k_scaled, false)
-    } else {
-        (k_scaled - half_var, true)
-    };
-    // `normal_cdf` / `normal_pdf` saturate beyond |x| > 8, so cap the magnitude
-    // there: the quotient grows without bound as w -> 0 and would otherwise
-    // overflow the u64 cast.
-    let saturation = 8 * scale + 1;
-    let d2_magnitude = numerator / (sqrt_var as u128);
-    let d2_magnitude = if (d2_magnitude > saturation) saturation else d2_magnitude;
-
-    (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
+    pmath::digital(
+        svi.a_magnitude,
+        svi.a_is_negative,
+        svi.b,
+        svi.rho,
+        svi.m,
+        svi.sigma,
+        forward,
+        strike.value(),
+    )
 }
 
 /// Scalar-input view of `total_var` and `sqrt_var_d2` for the unit
@@ -1095,9 +903,15 @@ public(package) fun variance_sqrt_and_d2_for_testing(
     inner: u64,
     k: &I64,
 ): (u64, I64) {
-    let total_var = total_var(a_magnitude, a_is_negative, b, inner);
+    let total_var = pmath::total_var_for_testing(a_magnitude, a_is_negative, b, inner);
     assert!(total_var.is_some(), ENonPositiveVariance);
-    sqrt_var_d2(total_var.destroy_some(), k)
+    pmath::sqrt_var_d2_for_testing(total_var.destroy_some(), k)
+}
+
+/// The library roll-down, for the unit tests that pin it.
+#[test_only]
+public(package) fun roll_down(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
+    pmath::roll_down(value, remaining_ms, anchor_tte_ms)
 }
 
 // Field reads for tests; production reads a snapshot through BCS.

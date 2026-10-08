@@ -38,7 +38,7 @@ use deepbook_predict::{
     range_codec,
     strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure}
 };
-use deepbook_predict_math::lazer_price::{Self, LazerPrice};
+use deepbook_predict_math::{lazer_price::{Self, LazerPrice}, math as pmath};
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -1024,22 +1024,16 @@ public fun admit_mint<W: drop>(
         clock.timestamp_ms(),
     );
     assert!(reason == 0, EOrderFailsLimits);
-    // A fill pays at least `p = min_entry_probability` per contract into market
-    // cash. Exact quantity: `ceil(quantity * (1 - p)) + 1`. Budget `b`:
-    // `ceil((b + 1) * (1 / p - 1)) + 1`, where the `+ 1` covers premiums rounding
-    // down, which lets a fill buy up to `1 / p` raw units more than `b / p`. A
-    // premium-budget fill buys no more than `max_premium` allows, so a large
-    // budget does not inflate its need.
+    // A fill pays at least `min_entry_probability` per contract into market
+    // cash (`pmath::need_qty` and `need_budget`). A premium-budget fill buys no
+    // more than `max_premium` allows, so a large budget does not inflate its need.
     let p = market.strike_exposure.min_prob();
     let cash_need = if (kind == constants::mint_kind_exact_quantity!()) {
-        math::mul_div_up(quantity, math::float_scaling!() - p, math::float_scaling!()) + 1
+        pmath::need_qty(quantity, p)
+    } else if (kind == constants::mint_kind_exact_amount!()) {
+        pmath::need_budget(max_premium.min(budget), p)
     } else {
-        let b = if (kind == constants::mint_kind_exact_amount!()) {
-            max_premium.min(budget)
-        } else {
-            budget
-        };
-        math::mul_div_up(b + 1, math::float_scaling!() - p, p) + 1
+        pmath::need_budget(budget, p)
     };
     // Only this order's own need, against cash above required cash: one that
     // misses at its tick never touches cash, and the fill checks cash again.
@@ -1164,12 +1158,10 @@ public fun admit_sell<W: drop>(
         clock.timestamp_ms(),
     );
     assert!(reason == 0, EOrderFailsLimits);
-    let cash_need =
-        math::mul_div_up(
-            close_quantity,
-            math::float_scaling!() - market.strike_exposure.backing_buffer_lambda(),
-            math::float_scaling!(),
-        ) + 1;
+    let cash_need = pmath::need_sell(
+        close_quantity,
+        market.strike_exposure.backing_buffer_lambda(),
+    );
     let ledger = market.ledger_mut();
     ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
     // Canonical open already zeroes the mint limits, the budget, the subsidy,
@@ -2984,8 +2976,11 @@ fun ewma_penalty(
 
 fun bldr_fee_amt(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
-        math::mul_down(fee_amount, constants::builder_fee_multiplier!()).min(
-            math::mul_down(quantity, constants::max_builder_fee_rate!()),
+        pmath::builder_fee(
+            fee_amount,
+            quantity,
+            constants::builder_fee_multiplier!(),
+            constants::max_builder_fee_rate!(),
         )
     } else {
         0

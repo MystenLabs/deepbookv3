@@ -19,6 +19,7 @@ use deepbook_predict::{
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
+use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 use sui::vec_map::VecMap;
 
@@ -596,18 +597,12 @@ public(package) fun try_quote_mint_terms(
 /// exact; the search domain is the lot cap, so an oversized budget saturates
 /// instead of aborting.
 public(package) fun qty_for_prem(range: &MintRange, max_premium: u64): u64 {
-    let lot = constants::position_lot_size!();
-    let mut lo = 0;
-    let mut hi = order::max_quantity_lots!();
-    while (lo < hi) {
-        let mid = (lo + hi + 1) / 2;
-        if (range.range_prem(mid * lot) <= max_premium) {
-            lo = mid
-        } else {
-            hi = mid - 1
-        }
-    };
-    lo * lot
+    pmath::max_qty(
+        range.price.probability(),
+        max_premium,
+        constants::position_lot_size!(),
+        order::max_quantity_lots!(),
+    )
 }
 
 /// Admit a quantity over a quoted range: require it to meet `min_quantity`, run
@@ -899,25 +894,11 @@ fun admitted_range_price(
 }
 
 fun pot_for_liab(exposure: &StrikeExposure, liability: u64): u64 {
-    let max_rate = exposure.config.inventory_impact_max_rate();
-    if (max_rate == 0 || liability == 0) return 0;
-
-    let scale = exposure.inventory_impact_scale;
-    let capped_liability = liability.min(scale);
-    let utilization = math::mul_div_down(
-        capped_liability,
-        math::float_scaling!(),
-        scale,
-    );
-    let marginal_rate = math::mul_down(max_rate, utilization);
-    let potential_at_capped_liability =
-        math::mul_down(
-        marginal_rate,
-        capped_liability,
-    ) / 2;
-    if (liability <= scale) return potential_at_capped_liability;
-
-    potential_at_capped_liability + math::mul_down(max_rate, liability - scale)
+    pmath::potential(
+        exposure.config.inventory_impact_max_rate(),
+        exposure.inventory_impact_scale,
+        liability,
+    )
 }
 
 /// Return the live liability for full point-max and total payout terms. Trade
