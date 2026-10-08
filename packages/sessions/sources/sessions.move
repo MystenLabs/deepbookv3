@@ -15,6 +15,11 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig
 };
 use deepbook_sessions::session_config::{Self, SessionsConfig};
+use propbook::{
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use std::internal::permit;
 use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, VecMap}};
 
@@ -219,6 +224,8 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
 }
 
 /// Mint an exact Predict position quantity for an Account with an active session.
+/// Aborts through Predict once its delayed-execution cutover is reached; use
+/// `enqueue_exact_quantity` after it.
 public fun mint_exact_quantity(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -253,6 +260,8 @@ public fun mint_exact_quantity(
 }
 
 /// Mint a budget-sized Predict position for an Account with an active session.
+/// Aborts through Predict once its delayed-execution cutover is reached; use
+/// `enqueue_exact_amount` after it.
 public fun mint_exact_amount(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -287,7 +296,8 @@ public fun mint_exact_amount(
 }
 
 /// Mint a Predict position sized to an all-in cost for an Account with an active
-/// session.
+/// session. Aborts through Predict once its delayed-execution cutover is reached;
+/// use `enqueue_exact_cost` after it.
 public fun mint_exact_cost(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -319,7 +329,9 @@ public fun mint_exact_cost(
     )
 }
 
-/// Redeem a live Predict order for an Account with an active session.
+/// Redeem a live Predict order for an Account with an active session. Aborts
+/// through Predict once its delayed-execution cutover is reached. Early sells
+/// then go through `enqueue_redeem_open`.
 public fun redeem_live(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -369,6 +381,166 @@ public fun redeem_settled(
         auth,
         config,
         order_id,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue an exact-quantity Predict mint for an Account with an active session.
+/// Returns the queue record ID.
+public fun enqueue_exact_quantity(
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    market.enqueue_exact_quantity(
+        wrapper,
+        auth,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue a premium-budget Predict mint for an Account with an active session.
+/// Returns the queue record ID.
+public fun enqueue_exact_amount(
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    market.enqueue_exact_amount(
+        wrapper,
+        auth,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        max_cost,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue an all-in-budget Predict mint for an Account with an active session.
+/// Returns the queue record ID.
+public fun enqueue_exact_cost(
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    market.enqueue_exact_cost(
+        wrapper,
+        auth,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue an early sell of an Open Predict queue record for an Account with an
+/// active session. Returns the new queue record ID.
+public fun enqueue_redeem_open(
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    market.enqueue_redeem_open(
+        wrapper,
+        auth,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
         root,
         clock,
         ctx,
