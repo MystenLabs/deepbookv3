@@ -170,13 +170,15 @@ public struct RedeemQuote has copy, drop {
 /// `stage` is a `constants::receipt_stage_*` code: a mint admitted, an open
 /// position, or a sell of that position admitted. Admission writes the parties,
 /// request, timing, snapshot, and escrow terms; `commit` the price and the
-/// reserved subsidy; a mint fill the position. Every move into the open stage
-/// zeroes the request, timing, escrow, and price fields, and a sell admission
-/// rewrites the open receipt in place, so a sell cannot detach from its
-/// position and nothing from one stage reaches the next. `order_id` encodes the
-/// held quantity, so a sell refund restores it whole and a partial close leaves
-/// the remainder. `budget` caps a mint's all-in cost, and a fill requires
-/// escrow of at least `budget + order_fee + subsidy_reserved`.
+/// reserved subsidy; a mint fill the position. Every transition writes every
+/// field group (`to_open` for the open stage): the open stage keeps the parties,
+/// range, last snapshot, and position and zeroes the kind, request, timing,
+/// channel, escrow, and price, and a sell admission rewrites that open receipt
+/// in place, so a sell cannot detach from its position and nothing from one
+/// stage reaches the next. A sell refund restores the open position whole and a
+/// partial close leaves `held_quantity` less the closed quantity. `budget` caps
+/// a mint's all-in cost, and a fill requires escrow of at least `budget +
+/// order_fee + subsidy_reserved`.
 public struct OrderReceipt has store {
     expiry_market_id: ID,
     stage: u8,
@@ -202,6 +204,8 @@ public struct OrderReceipt has store {
     tau_ms: u64,
     /// At or past it the order is refunded, never filled.
     deadline_ms: u64,
+    /// The Lazer channel τ was planned on; the committed price must come from it.
+    channel: u8,
     vol: VolSnapshot,
     budget: u64,
     order_fee: u64,
@@ -224,6 +228,10 @@ public struct OrderReceipt has store {
     /// Stable economic-position handle, constant across partial closes.
     root_id: u256,
     opened_at_ms: u64,
+    /// The open position's size, the quantity `order_id` names. The request's
+    /// `quantity` is the mint or close quantity, so a sell admission never
+    /// overwrites the size it closes.
+    held_quantity: u64,
 }
 
 /// Dynamic-field key of a market's `OrderFlowLedger` under its UID.
@@ -938,13 +946,15 @@ public fun try_settle(
 /// order_fee` from the account and escrows it. `budget` caps the fill's all-in
 /// cost; the companion sets it to `min(max_cost, balance - order_fee)`, and to
 /// at most `quantity` for an exact-quantity mint. The order prices at a Pyth
-/// price generated at or after `tau_ms` and must fill before `deadline_ms`.
+/// price on Lazer channel `channel`, generated at or after `tau_ms`, and must
+/// fill before `deadline_ms`.
 ///
 /// Aborts unless `W` is allowlisted, the version and cutover gates pass, trading
 /// and this market's mints are unpaused, and the snapshot stage is closed. The
-/// timing must fit (`EInvalidOrderTiming`): `tau_ms` at most
-/// `constants::order_flow_tick_ms!()` before now and before `deadline_ms`, τ
-/// before the no-trade window, and the deadline at least
+/// timing must fit (`EInvalidOrderTiming`): `channel` a supported fixed-rate
+/// channel (`constants::lazer_channel_*`), `tau_ms` on its grid, at most one of
+/// its ticks before now, and before `deadline_ms`, τ before the no-trade window,
+/// and the deadline at least
 /// `constants::deadline_expiry_margin_ms!()` before expiry. Then
 /// `svi_max_age_ms` must be within `constants::max_svi_max_age_ms!()` and `kind`
 /// a mint kind (`EInvalidOrderTerms`), the volatility snapshot must load,
@@ -972,6 +982,7 @@ public fun admit_mint<W: drop>(
     budget: u64,
     order_fee: u64,
     svi_max_age_ms: u64,
+    channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
@@ -986,6 +997,7 @@ public fun admit_mint<W: drop>(
         bs_values,
         bs_svi,
         svi_max_age_ms,
+        channel,
         tau_ms,
         deadline_ms,
         clock,
@@ -1061,6 +1073,7 @@ public fun admit_mint<W: drop>(
         min_proceeds: zero,
         tau_ms,
         deadline_ms,
+        channel,
         vol,
         budget,
         order_fee,
@@ -1076,6 +1089,7 @@ public fun admit_mint<W: drop>(
         order_id: (zero as u256),
         root_id: (zero as u256),
         opened_at_ms: zero,
+        held_quantity: zero,
     }
 }
 
@@ -1110,6 +1124,7 @@ public fun admit_sell<W: drop>(
     min_proceeds: u64,
     order_fee: u64,
     svi_max_age_ms: u64,
+    channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
@@ -1124,18 +1139,23 @@ public fun admit_sell<W: drop>(
         bs_values,
         bs_svi,
         svi_max_age_ms,
+        channel,
         tau_ms,
         deadline_ms,
         clock,
         ctx,
     );
     assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
+    // Canonical open: every move into the open stage goes through `to_open`,
+    // and the position's size is the one its order ID names.
     assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
+    let held = order::from_id(receipt.order_id);
+    assert!(held.quantity() == receipt.held_quantity, EWrongStage);
     assert!(receipt.account_id == account.account_id(), ENotRecordOwner);
     let builder_code_id = predict_account::builder_code_id(account);
     let (_, _, reason) = market.price_close(
         &pricer,
-        &order::from_id(receipt.order_id),
+        &held,
         close_quantity,
         min_probability,
         min_proceeds,
@@ -1151,18 +1171,21 @@ public fun admit_sell<W: drop>(
         ) + 1;
     let ledger = market.ledger_mut();
     ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
-    // The receipt is canonical open (`to_open`), so the price, budget, and
-    // subsidy fields are already zero and only the sell's own fields change.
-    // `order_id` keeps the held position, so a refund restores it whole.
+    // Canonical open already zeroes the mint limits, the budget, the subsidy,
+    // and the price, so only the sell column is written. The position group
+    // stays, so a refund restores it whole.
     receipt.stage = constants::receipt_stage_sell!();
     receipt.kind = constants::order_kind_sell!();
     receipt.owner = account.owner();
+    receipt.referrer_account_id = account.referrer_account_id();
+    receipt.referrer_receive_address = account.referrer_receive_address();
     receipt.builder_code_id = builder_code_id;
     receipt.quantity = close_quantity;
     receipt.min_probability = min_probability;
     receipt.min_proceeds = min_proceeds;
     receipt.tau_ms = tau_ms;
     receipt.deadline_ms = deadline_ms;
+    receipt.channel = channel;
     receipt.vol = vol;
     receipt.order_fee = order_fee;
     receipt.cash_need = cash_need;
@@ -1177,7 +1200,8 @@ public fun admit_sell<W: drop>(
 /// sell returns a zero balance.
 ///
 /// Predict does not decode Lazer, so it bounds what it stores: `τ <= generation
-/// <= tick <= τ + order_flow_tick_ms`, the tick at or before now, and the spot
+/// <= tick <= τ + one tick of the receipt's channel`, the tick at or before now,
+/// and the spot
 /// pricing-safe and within 10% of the order's own Block Scholes spot
 /// (`EPriceOutOfBounds`). Aborts unless `W` is allowlisted, the version gate
 /// passes, the receipt is this market's (`EWrongMarket`), admitted with no price
@@ -2228,6 +2252,7 @@ fun admit_gates(
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
     svi_max_age_ms: u64,
+    channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
@@ -2242,10 +2267,14 @@ fun admit_gates(
     config.chk_no_snap();
     market.reconcile(config);
     let expiry = market.expiry;
-    // A deadline at least the margin before expiry means no admitted order can
-    // fill once the market expires, so settlement never waits for the queue.
+    // τ sits on a supported channel's grid and at most one of its ticks before
+    // now. A deadline at least the margin before expiry means no admitted order
+    // can fill once the market expires, so settlement never waits for the queue.
+    let tick_ms = constants::lazer_tick_ms!(channel);
     assert!(
-        clock.timestamp_ms() <= tau_ms + constants::order_flow_tick_ms!()
+        (channel == constants::lazer_channel_50ms!() || channel == constants::lazer_channel_200ms!())
+            && tau_ms % tick_ms == 0
+            && clock.timestamp_ms() <= tau_ms + tick_ms
             && tau_ms < deadline_ms
             && tau_ms + config.no_trade_window_ms() < expiry
             && deadline_ms + constants::deadline_expiry_margin_ms!() <= expiry,
@@ -2386,6 +2415,7 @@ fun fill_mint(
     receipt.order_id = order_id;
     receipt.root_id = order_id;
     receipt.opened_at_ms = tick_ms;
+    receipt.held_quantity = quote.quantity;
     (0, quote, referral_fee)
 }
 
@@ -2468,12 +2498,13 @@ fun fill_close(
     let remainder = replacement_order_id.is_some();
     if (remainder) {
         receipt.order_id = replacement_order_id.destroy_some();
+        receipt.held_quantity = receipt.held_quantity - close_quantity;
     };
     (0, remainder, quote)
 }
 
 /// The bounds `commit` puts on a companion-reported price, which Predict does
-/// not decode: `τ <= generation <= tick <= τ + order_flow_tick_ms`, the tick at
+/// not decode: `τ <= generation <= tick <= τ + one channel tick`, the tick at
 /// or before now, and a pricing-safe spot within 10% of the order's own Block
 /// Scholes spot. The one place these checks live, so a verified-price input can
 /// replace them.
@@ -2487,7 +2518,7 @@ fun chk_price(
     assert!(
         receipt.tau_ms * 1000 <= generation_us
             && generation_us <= tick_ms * 1000
-            && tick_ms <= receipt.tau_ms + constants::order_flow_tick_ms!()
+            && tick_ms <= receipt.tau_ms + constants::lazer_tick_ms!(receipt.channel)
             && tick_ms <= now_ms
             && receipt.vol.can_commit(spot),
         EPriceOutOfBounds,
@@ -2520,41 +2551,43 @@ fun reopen(receipt: OrderReceipt): Option<OrderReceipt> {
     option::some(to_open(receipt))
 }
 
-/// The canonical open stage: the position (`order_id`, which also encodes its
-/// remaining quantity, `root_id`, and `opened_at_ms`), the parties, the kind,
-/// and the last snapshot stay, and every request, timing, escrow, and price
-/// field is zero. Every move into the open stage goes through here, so nothing
-/// from an earlier stage reaches the next sell, and `admit_sell` can rely on
-/// the stage alone.
+/// The canonical open stage: the parties, the range, the last snapshot, and
+/// the position (`order_id`, `root_id`, `opened_at_ms`, `held_quantity`) stay,
+/// and the kind and every request, timing, channel, escrow, and price field is
+/// zero. Every move into the open stage goes through here, after the unwind
+/// accounting has read the fields it clears, so nothing from an earlier stage
+/// reaches the next sell.
 fun to_open(receipt: OrderReceipt): OrderReceipt {
     let OrderReceipt {
         expiry_market_id,
-        kind,
         account_id,
         owner,
         receive_address,
         referrer_account_id,
         referrer_receive_address,
         builder_code_id,
+        lower_tick,
+        higher_tick,
         vol,
         order_id,
         root_id,
         opened_at_ms,
+        held_quantity,
         ..
     } = receipt;
     let zero = 0;
     OrderReceipt {
         expiry_market_id,
         stage: constants::receipt_stage_open!(),
-        kind,
+        kind: (zero as u8),
         account_id,
         owner,
         receive_address,
         referrer_account_id,
         referrer_receive_address,
         builder_code_id,
-        lower_tick: zero,
-        higher_tick: zero,
+        lower_tick,
+        higher_tick,
         quantity: zero,
         max_premium: zero,
         min_quantity: zero,
@@ -2563,6 +2596,7 @@ fun to_open(receipt: OrderReceipt): OrderReceipt {
         min_proceeds: zero,
         tau_ms: zero,
         deadline_ms: zero,
+        channel: (zero as u8),
         vol,
         budget: zero,
         order_fee: zero,
@@ -2576,6 +2610,7 @@ fun to_open(receipt: OrderReceipt): OrderReceipt {
         order_id,
         root_id,
         opened_at_ms,
+        held_quantity,
     }
 }
 

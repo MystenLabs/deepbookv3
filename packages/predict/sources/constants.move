@@ -201,9 +201,17 @@ public macro fun receipt_stage_open(): u8 { 2 }
 /// `OrderReceipt` stage: an early sell of the open position admitted and not yet filled or released.
 public macro fun receipt_stage_sell(): u8 { 3 }
 
-/// One tick of the slowest Pyth Lazer channel an order prices on (`fixed_rate@200ms`). Admission
-/// refuses a τ more than this before now, and commit accepts a price stamped at most this after τ.
-public macro fun order_flow_tick_ms(): u64 { 200 }
+/// Pyth Lazer channel id of `fixed_rate@50ms`, a channel an order may be planned on.
+public macro fun lazer_channel_50ms(): u8 { 2 }
+
+/// Pyth Lazer channel id of `fixed_rate@200ms`, a channel an order may be planned on.
+public macro fun lazer_channel_200ms(): u8 { 3 }
+
+/// Tick period of a supported Lazer channel, in ms. τ sits on this grid, admission refuses a τ
+/// more than one tick before now, and commit accepts the update at τ or one tick later.
+public macro fun lazer_tick_ms($channel: u8): u64 {
+    if ($channel == lazer_channel_50ms!()) 50 else 200
+}
 
 /// Every admitted order's deadline falls at least this long before expiry, so no admitted order
 /// can fill once its market expires.
