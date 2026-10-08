@@ -149,6 +149,7 @@ fun normalize_spot_caps_at_the_pricing_safe_ceiling() {
 // === from_parts ===
 
 const FEED_ID: u32 = 1;
+const OTHER_FEED_ID: u32 = 2;
 const CHANNEL_200MS: u8 = 3;
 const ENVELOPE_US: u64 = 121_000_000;
 const GENERATION_US: u64 = 120_950_000;
@@ -232,4 +233,18 @@ fun from_parts_aborts_on_a_generation_after_the_envelope() {
         option::some(i16::new(EXPONENT_NEG_8, true)),
         option::some(option::some(ENVELOPE_US + 1)),
     );
+}
+
+// === feed_index ===
+
+#[test]
+fun feed_index_finds_the_requested_feed() {
+    assert_eq!(lazer_price::feed_index(&vector[OTHER_FEED_ID, FEED_ID], FEED_ID), 1);
+}
+
+/// An update without the requested feed means the caller passed the wrong
+/// update, as v4's commit decided.
+#[test, expected_failure(abort_code = lazer_price::EFeedMissing)]
+fun feed_index_aborts_when_the_update_lacks_the_feed() {
+    lazer_price::feed_index(&vector[OTHER_FEED_ID], FEED_ID);
 }

@@ -8,10 +8,11 @@
 /// Pyth's verifier produces, so holding one proves a Pyth signature over its
 /// feed, channel, timestamps, and price. It has `copy` and `drop` but not
 /// `store`, so it lives within one transaction. The decode is Predict v4's queue
-/// commit decode: it requires the price, exponent, and feed-update-time
-/// properties and aborts on an update that lacks one, and it returns `none` for
-/// an absent feed, an empty price or update time, or a price that does not
-/// normalize to Predict's pricing-safe 1e9 spot.
+/// commit decode: it aborts on an update that does not carry the requested feed
+/// or lacks its price, exponent, or feed-update-time property, because the
+/// caller then passed the wrong update, and it returns `none` only when the feed
+/// has no usable price at that tick: an empty price or update time, or a price
+/// that does not normalize to Predict's pricing-safe 1e9 spot.
 module deepbook_predict_math::lazer_price;
 
 use fixed_math::math;
@@ -19,6 +20,7 @@ use pyth_lazer::{i16::I16, i64::I64, update::Update};
 
 const EPropertyNotRequested: u64 = 0;
 const EGenerationAfterEnvelope: u64 = 1;
+const EFeedMissing: u64 = 2;
 
 /// A decoded, normalized price for one feed of one verified Lazer update.
 public struct LazerPrice has copy, drop {
@@ -56,12 +58,13 @@ macro fun max_spot(): u64 { std::u64::max_value!() / 100 }
 
 // === Public Functions ===
 
-/// Decode `feed_id` from a verified Lazer update. `none` when the update does not
-/// carry the feed, its price or update time is empty, or its price does not
-/// normalize to a pricing-safe spot. Aborts `EPropertyNotRequested` when the feed
-/// lacks the price, exponent, or update-time property, because the caller then
-/// requested the wrong update, and `EGenerationAfterEnvelope` when the feed claims
-/// an update time after the envelope that carries it.
+/// Decode `feed_id` from a verified Lazer update. `none` when the feed's price or
+/// update time is empty at this tick, or its price does not normalize to a
+/// pricing-safe spot. Aborts `EFeedMissing` when the update does not carry the
+/// feed and `EPropertyNotRequested` when the feed lacks the price, exponent, or
+/// update-time property, because the caller then passed the wrong update, and
+/// `EGenerationAfterEnvelope` when the feed claims an update time after the
+/// envelope that carries it.
 ///
 /// Uses Lazer's v1 `Update`, which Pyth marked deprecated on Mainnet but still
 /// serves; a later library upgrade adds a constructor for v2.
@@ -76,9 +79,7 @@ public fun from_update(update: &Update, feed_id: u32): Option<LazerPrice> {
         1
     };
     let feeds = update.feeds_ref();
-    let index = feeds.find_index!(|feed| feed.feed_id() == feed_id);
-    if (index.is_none()) return option::none();
-    let feed = &feeds[index.destroy_some()];
+    let feed = &feeds[feed_index(&feeds.map_ref!(|feed| feed.feed_id()), feed_id)];
     from_parts(
         feed_id,
         channel,
@@ -102,6 +103,14 @@ public fun generation_us(price: &LazerPrice): u64 { price.generation_us }
 public fun spot(price: &LazerPrice): u64 { price.spot }
 
 // === Public-Package Functions ===
+
+/// The position of `feed_id` among an update's feed IDs. Aborts `EFeedMissing`
+/// when the update does not carry it.
+public(package) fun feed_index(feed_ids: &vector<u32>, feed_id: u32): u64 {
+    let index = feed_ids.find_index!(|id| *id == feed_id);
+    assert!(index.is_some(), EFeedMissing);
+    index.destroy_some()
+}
 
 /// `from_update` over one feed's decoded properties, in Lazer's own `Option`
 /// layers: an outer `none` means the property was not requested, an inner `none`

@@ -287,6 +287,22 @@ public fun need_sell(close_quantity: u64, lambda: u64): u64 {
     fixed::mul_div_up(close_quantity, fixed::float_scaling!() - lambda, fixed::float_scaling!()) + 1
 }
 
+// === Order IDs ===
+
+/// Decode a packed Predict order ID into `(lower_tick, higher_tick, quantity)`,
+/// with the quantity in USDC base units. For the order-flow companion's sell
+/// sizing and remainder checks over order IDs Predict issued: it validates
+/// nothing. The layout is Predict's frozen order-ID encoding: 30-bit ticks at
+/// bits 70 and 40, and a 32-bit count of 10_000-unit lots at bit 100.
+public fun order_terms(order_id: u256): (u64, u64, u64) {
+    let tick_mask = (1u256 << 30) - 1;
+    (
+        ((order_id >> 70) & tick_mask) as u64,
+        ((order_id >> 40) & tick_mask) as u64,
+        (((order_id >> 100) & ((1u256 << 32) - 1)) as u64) * 10_000,
+    )
+}
+
 // === Private Functions ===
 
 /// Total variance `w = a + b * inner`, carried at `u128` / 1e18, or `none` when
