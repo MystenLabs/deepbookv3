@@ -5,8 +5,8 @@
 /// the committed tick through Predict's `try_fill`, with their cost
 /// decomposition; the refund reasons and where each order fee goes; the
 /// reason-8 cash check at its boundary; the `max_orders` walk with its span
-/// resume; cohorts committed out of τ order; overdue orders; and the call's
-/// gates.
+/// resume and its 450-record ceiling; cohorts committed out of τ order; overdue
+/// orders; and the call's gates.
 ///
 /// Timing follows the fixture policy from the fixture clock 120_000: τ =
 /// floor((t₀ + 1_000) / 200) * 200, deadline τ + 5_000. Placements at 120_000,
@@ -95,6 +95,14 @@ const BOUNDARY_ORDERS: u64 = 3;
 /// 60 orders in one cohort walked 15 at a time.
 const BATCH_ORDERS: u64 = 60;
 const BATCH_SIZE: u64 = 15;
+/// Missing record IDs between two orders of one cohort, more than one call's
+/// 450 visits.
+const SKIPPED_IDS: u64 = 500;
+/// The most records one `resolve` call visits: two events per fill keep 450 of
+/// them at 900 events, under Sui's 1,024 per transaction.
+const MAX_VISITS_PER_CALL: u64 = 450;
+/// More visits than any call allows.
+const VISIT_UNBOUNDED: u64 = 18_446_744_073_709_551_615;
 const DEFAULT_CAPACITY: u64 = 100;
 const DEFAULT_SETTLE_REFUND_BATCH: u64 = 450;
 const DEFAULT_SETTLE_PAYOUT_BATCH: u64 = 900;
@@ -538,6 +546,37 @@ fun resolve_counts_finished_records_against_max_orders() {
     assert_eq!(q.record(second).status(), order_queue::status_open());
     assert_eq!(q.resolve(1), 1);
     assert_eq!(q.record(third).status(), order_queue::status_open());
+    q.finish();
+}
+
+/// A walk asked for every record still stops after 450 visits, so one call
+/// emits at most 900 events. The skipped IDs stand in for visited records with
+/// nothing to do.
+#[test]
+fun resolve_visits_at_most_450_records_per_call() {
+    let mut q = fixture::new();
+    let first = q.enqueue_atm(QUANTITY, MAX_COST);
+    q.skip_record_ids(SKIPPED_IDS);
+    let last = q.enqueue_atm(QUANTITY, MAX_COST);
+    assert_eq!(last, SKIPPED_IDS + 1);
+    let (cohorts, _, _) = q.queue().waiting_cohorts();
+    assert_eq!(cohorts, 1);
+    q.commit_at(TAU, fixture::live_price());
+
+    // Record 0 and the first 449 missing IDs use up the call.
+    assert_eq!(q.resolve(VISIT_UNBOUNDED), 1);
+    assert_eq!(q.record(first).status(), order_queue::status_open());
+    assert_eq!(q.record(last).status(), order_queue::status_committed());
+    assert_eq!(events::fills().length(), 1);
+    let (resolve_head, _, _, _) = q.queue().queue_heads();
+    assert_eq!(resolve_head, MAX_VISITS_PER_CALL);
+
+    // The next call resumes there and reaches the last order.
+    assert_eq!(q.resolve(VISIT_UNBOUNDED), 1);
+    assert_eq!(q.record(last).status(), order_queue::status_open());
+    let (cohorts, _, _) = q.queue().waiting_cohorts();
+    assert_eq!(cohorts, 0);
+    q.assert_invariants();
     q.finish();
 }
 

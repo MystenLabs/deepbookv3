@@ -58,6 +58,13 @@ const ENotRecordOwner: u64 = 10;
 const EMarketNotSettled: u64 = 11;
 const EMarketNotExpired: u64 = 12;
 
+/// Most records one `resolve` or `refund` call visits, whatever `max_orders`
+/// asks. A resolved record emits at most two events: a fill emits Predict's
+/// `OrderMinted` or `LiveOrderRedeemed` and `QueuedOrderFilled`, and a refund
+/// emits `QueuedOrderRefunded` only. So one call emits at most 900 of the 1,024
+/// events Sui allows a transaction, even with both queues full (600 orders).
+const MAX_ORDERS_PER_CALL: u64 = 450;
+
 // `settle_step` phases. Never renumbered after publish.
 const PHASE_DRAIN: u8 = 0;
 const PHASE_PAY: u8 = 1;
@@ -540,7 +547,9 @@ public fun commit(
 }
 
 /// Fill or refund committed orders in τ order, visiting at most `max_orders`
-/// records. Permissionless. Returns how many orders it finished.
+/// records, and never more than 450 (each emits up to two events, and Sui caps
+/// a transaction at 1,024). Permissionless. Returns how many orders it
+/// finished.
 ///
 /// Walks the cohorts in τ order and loads only committed or overdue ones; a
 /// cohort still waiting for its price is skipped without loading a record.
@@ -563,6 +572,7 @@ public fun resolve(
     queue.assert_bound(desk, market);
     if (market.is_settled()) return 0;
 
+    let max_orders = max_orders.min(MAX_ORDERS_PER_CALL);
     let now_ms = clock.timestamp_ms();
     let sender = ctx.sender();
     // Spans are only dropped by `advance_heads` below, so indices stay stable.
@@ -599,12 +609,12 @@ public fun resolve(
 // --- Refunds and cleanup ---
 
 /// Refund waiting orders at or past their deadline (reason 5), visiting at most
-/// `max_orders` records, refunded or not. It walks the cohorts in τ order and
-/// stops at the first one not yet due, since deadlines never decrease along the
-/// queue. Permissionless, and available while Predict is frozen or this
-/// companion's witness is disabled: Predict's `release` checks only its version
-/// floor. Returns how many orders it refunded: `0`, without aborting, when none
-/// is due.
+/// `max_orders` records, refunded or not, and never more than 450, as `resolve`
+/// does. It walks the cohorts in τ order and stops at the first one not yet due,
+/// since deadlines never decrease along the queue. Permissionless, and
+/// available while Predict is frozen or this companion's witness is disabled:
+/// Predict's `release` checks only its version floor. Returns how many orders
+/// it refunded: `0`, without aborting, when none is due.
 public fun refund(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -616,6 +626,7 @@ public fun refund(
 ): u64 {
     queue.assert_bound(desk, market);
     let now_ms = clock.timestamp_ms();
+    let max_orders = max_orders.min(MAX_ORDERS_PER_CALL);
     queue.refund_walk(market, config, now_ms, max_orders, true, true, ctx.sender(), now_ms)
 }
 
@@ -1517,6 +1528,13 @@ public(package) fun receipt_for_testing(queue: &MarketQueue, record_id: u64): &O
 /// at launch.
 public fun mark_refund_due_for_testing(queue: &mut MarketQueue, record_id: u64, reason: u8) {
     queue.book.mark_refund_due_for_testing(record_id, reason);
+}
+
+#[test_only]
+/// Skip `count` record IDs, so the next placement in the same cohort sits
+/// `count` missing records past the last one.
+public fun skip_record_ids_for_testing(queue: &mut MarketQueue, count: u64) {
+    queue.book.skip_record_ids_for_testing(count);
 }
 
 #[test_only]

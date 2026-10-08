@@ -624,6 +624,12 @@ public fun mark_refund_due(q: &mut QueueTest, record_id: u64, reason: u8) {
     q.queue.mark_refund_due_for_testing(record_id, reason);
 }
 
+/// Leave `count` missing record IDs before the next placement, which joins the
+/// same cohort when it gets the same τ.
+public fun skip_record_ids(q: &mut QueueTest, count: u64) {
+    q.queue.skip_record_ids_for_testing(count);
+}
+
 // === Commit, resolve, refunds, settlement ===
 
 public fun commit(q: &mut QueueTest, updates: vector<TestUpdate>) {

@@ -924,3 +924,11 @@ public(package) fun mark_refund_due_for_testing(book: &mut OrderBook, record_id:
     record.status = STATUS_REFUND_DUE;
     record.result.reason = reason;
 }
+
+#[test_only]
+/// Skip `count` record IDs, so the next record joins the last cohort's span
+/// with `count` missing records before it. Stands in for the hundreds of
+/// visited-but-finished records only a full queue produces.
+public(package) fun skip_record_ids_for_testing(book: &mut OrderBook, count: u64) {
+    book.next_id = book.next_id + count;
+}

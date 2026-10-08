@@ -6,9 +6,10 @@
 /// with this companion's witness removed, refund the whole budget and order fee
 /// (reasons 5 and 7), return a committed mint's reserved subsidy to the
 /// incentives, hand a sell's position back to its record, and skip records that
-/// already finished. A RefundDue record, a status nothing sets at launch (a
-/// test seam marks it), refunds with its stored reason and that reason's fee
-/// rule: reasons 1 and 2 keep the order fee in market cash.
+/// already finished. A deadline walk visits at most 450 records per call. A
+/// RefundDue record, a status nothing sets at launch (a test seam marks it),
+/// refunds with its stored reason and that reason's fee rule: reasons 1 and 2
+/// keep the order fee in market cash.
 ///
 /// Orders are 100-contract mints over `(strike, +inf]` placed at 120_000 on the
 /// short-expiry market, so they share one cohort at τ 121_000 with deadline
@@ -44,6 +45,13 @@ const RESERVED_SUBSIDY: u64 = 100_000;
 /// ceil(100_000_000 * (1 - 0.31)) + 1.
 const SELL_CASH_NEED: u64 = 69_000_001;
 const SELL_PLACED_AT: u64 = 121_200;
+/// Missing record IDs between two orders of one cohort, more than one call's
+/// 450 visits.
+const SKIPPED_IDS: u64 = 500;
+/// The most records one `refund` call visits.
+const MAX_VISITS_PER_CALL: u64 = 450;
+/// More visits than any call allows.
+const VISIT_UNBOUNDED: u64 = 18_446_744_073_709_551_615;
 /// Pool liquidity, so a flush can start.
 const SUPPLY_AMOUNT: u64 = 100_000_000_000;
 /// A 4m at-the-money mint with a 3 USDC cap, for the default-expiry pool market.
@@ -163,6 +171,35 @@ fun refund_counts_every_visited_record_and_resumes_inside_the_cohort() {
     assert_refunded_with(&q, 2, order_queue::reason_deadline(), DEADLINE);
     let (resolve_head, _, _, _) = q.queue().queue_heads();
     assert_eq!(resolve_head, 3);
+    assert_pending(&q, 0, 0);
+    q.assert_invariants();
+    q.finish();
+}
+
+/// A walk asked for every record still stops after 450 visits, so one call's
+/// refund events stay under Sui's per-transaction limit. The skipped IDs stand
+/// in for visited records with nothing to do.
+#[test]
+fun refund_visits_at_most_450_records_per_call() {
+    let mut q = fixture::new_at(test_constants::short_expiry_ms());
+    let first = enqueue(&mut q);
+    q.skip_record_ids(SKIPPED_IDS);
+    let last = enqueue(&mut q);
+    assert_eq!(last, SKIPPED_IDS + 1);
+    let (cohorts, _, _) = q.queue().waiting_cohorts();
+    assert_eq!(cohorts, 1);
+    q.set_clock(DEADLINE);
+
+    // Record 0 and the first 449 missing IDs use up the call.
+    assert_eq!(q.refund(VISIT_UNBOUNDED), 1);
+    assert_refunded_with(&q, first, order_queue::reason_deadline(), DEADLINE);
+    assert_eq!(q.record(last).status(), order_queue::status_pending());
+    let (resolve_head, _, _, _) = q.queue().queue_heads();
+    assert_eq!(resolve_head, MAX_VISITS_PER_CALL);
+
+    // The next call resumes there and reaches the last order.
+    assert_eq!(q.refund(VISIT_UNBOUNDED), 1);
+    assert_refunded_with(&q, last, order_queue::reason_deadline(), DEADLINE);
     assert_pending(&q, 0, 0);
     q.assert_invariants();
     q.finish();
