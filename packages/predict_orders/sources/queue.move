@@ -158,7 +158,11 @@ public fun pending_counts(queue: &MarketQueue): (u64, u64) {
     (queue.book.pending_mints(), queue.book.pending_sells())
 }
 
-/// Return the unfinished queued orders `account_id` holds in this queue.
+/// Return the unfinished queued orders `account_id` holds in this queue, the
+/// count the per-account cap checks. The settlement drain (`settle_step`)
+/// refunds without lowering it, since no placement reads it once the market
+/// has expired, so after expiry it can overstate what the account still has
+/// waiting. Read `order` for each record's status instead.
 public fun waiting_orders(queue: &MarketQueue, account_id: ID): u64 {
     queue.book.account_waiting(account_id)
 }

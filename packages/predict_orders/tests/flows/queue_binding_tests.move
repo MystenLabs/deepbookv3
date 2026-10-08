@@ -37,9 +37,15 @@ fun the_queue_sits_at_the_id_derived_from_the_desk_and_the_market() {
     q.finish();
 }
 
-/// Aborts in `derived_object::claim`, whose `EObjectAlreadyExists` is a clever
-/// error with no plain abort code to name here.
-#[test, expected_failure]
+/// Aborts in `derived_object::claim` with its `EObjectAlreadyExists`, so neither
+/// the trailing sentinel nor any other abort satisfies the test.
+#[
+    test,
+    expected_failure(
+        abort_code = sui::derived_object::EObjectAlreadyExists,
+        location = sui::derived_object,
+    ),
+]
 fun a_second_queue_for_the_same_market_aborts() {
     let mut q = fixture::new();
     q.create_queue();
