@@ -9,12 +9,14 @@
 /// themselves contract probability.
 module deepbook_predict::strike_exposure_config;
 
-use deepbook_predict::{config_constants, constants, pricing::RangePrice};
+use deepbook_predict::{config_constants, pricing::RangePrice};
 use fixed_math::math;
 
+#[allow(unused_const)]
 const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
+#[allow(unused_const)]
 const EPremiumBelowMinimum: u64 = 3;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
@@ -122,6 +124,7 @@ public(package) fun is_range_mint_probability_allowed(
 
 /// Apply entry policy to the actual lower-ABOVE and upper-BELOW legs and to
 /// their combined range. This is mint-only; tail positions remain closable.
+#[test_only]
 public(package) fun assert_range_mint_probability_policy(
     config: &StrikeExposureConfig,
     price: &RangePrice,
@@ -133,6 +136,7 @@ public(package) fun assert_range_mint_probability_policy(
 /// terms. Budget-bias sizing runs this before searching so a policy-invalid
 /// request aborts with its domain code in the same order the mint admission
 /// itself would report it.
+#[test_only]
 public(package) fun assert_mint_probability_policy(
     config: &StrikeExposureConfig,
     entry_probability: u64,
@@ -142,6 +146,7 @@ public(package) fun assert_mint_probability_policy(
 
 /// Assert entry-probability and premium policy; return the premium. The holder
 /// pays the contract's full entry value, so no gross distinction remains.
+#[test_only]
 public(package) fun assert_mint_admission(
     config: &StrikeExposureConfig,
     entry_probability: u64,
@@ -150,7 +155,7 @@ public(package) fun assert_mint_admission(
     config.assert_mint_probability_policy(entry_probability);
 
     let premium = math::mul_down(entry_probability, quantity);
-    assert!(premium >= constants::min_premium!(), EPremiumBelowMinimum);
+    assert!(premium >= deepbook_predict::constants::min_premium!(), EPremiumBelowMinimum);
     premium
 }
 

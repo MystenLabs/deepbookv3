@@ -6,7 +6,6 @@ module deepbook_predict::config_events;
 
 use deepbook_predict::{
     delayed_execution_config::DelayedExecutionPolicy,
-    ewma_config::EwmaConfig,
     pricing_config::PricingConfig,
     strike_exposure_config::StrikeExposureConfig
 };
@@ -35,6 +34,7 @@ public struct PricingConfigUpdated has copy, drop, store {
 }
 
 /// Emitted when the EWMA gas-price penalty policy changes.
+#[allow(unused_field)]
 public struct EwmaConfigUpdated has copy, drop, store {
     alpha: u64,
     z_score_threshold: u64,
@@ -204,7 +204,11 @@ public(package) fun emit_pricing_config_updated(config: &PricingConfig, onchain_
     });
 }
 
-public(package) fun emit_ewma_config_updated(config: &EwmaConfig, onchain_timestamp_ms: u64) {
+#[test_only]
+public(package) fun emit_ewma_config_updated(
+    config: &deepbook_predict::ewma_config::EwmaConfig,
+    onchain_timestamp_ms: u64,
+) {
     event::emit(EwmaConfigUpdated {
         alpha: config.alpha(),
         z_score_threshold: config.z_score_threshold(),

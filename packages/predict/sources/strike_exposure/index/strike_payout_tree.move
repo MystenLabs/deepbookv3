@@ -261,6 +261,7 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
 }
 
 /// Insert interval payout quantity for the order tick range `(lower_tick, higher_tick]`.
+#[test_only]
 public(package) fun insert_range(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,

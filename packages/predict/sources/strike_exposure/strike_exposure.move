@@ -20,13 +20,15 @@ use deepbook_predict::{
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use fixed_math::math;
-use sui::{clock::Clock, vec_map::VecMap};
+use sui::vec_map::VecMap;
 
 const EInvalidCloseQuantity: u64 = 0;
+#[allow(unused_const)]
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
+#[allow(unused_const)]
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
 
@@ -125,6 +127,7 @@ public(package) fun mint_range_premium(range: &MintRange, quantity: u64): u64 {
     math::mul_down(range.price.probability(), quantity)
 }
 
+#[test_only]
 public(package) fun entry_probability(terms: &MintTerms): u64 {
     terms.price.probability()
 }
@@ -230,6 +233,7 @@ public(package) fun release_valuation_snapshot(
 }
 
 /// Return one live order's full-close range value without consulting book state.
+#[test_only]
 public(package) fun live_order_value(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -359,12 +363,13 @@ public(package) fun close_liability_after(
 ///
 /// Fee collection is expiry-market payment accounting; exposure only owns the
 /// snapshotted config needed to price it.
+#[test_only]
 public(package) fun trading_fee(
     exposure: &StrikeExposure,
     expiry_ms: u64,
     price: &RangePrice,
     quantity: u64,
-    clock: &Clock,
+    clock: &sui::clock::Clock,
 ): u64 {
     exposure
         .config
@@ -464,6 +469,7 @@ public(package) fun live_close_inventory_impact(
 /// Price a mint range, apply the entry-probability policy, and sample the pre-mint
 /// book terms its inventory-impact charge depends on. Returns a range token for a
 /// quantity search followed by `mint_terms`.
+#[test_only]
 public(package) fun quote_mint_range(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -573,6 +579,7 @@ public(package) fun try_mint_terms(
 /// Non-aborting `quote_mint_terms`: `try_quote_mint_range`, then sizing, then
 /// `try_mint_terms`, with the same reason codes. A range that cannot be quoted
 /// reports `2`; a budget too small for one lot sizes to zero and reports `1`.
+#[test_only]
 public(package) fun try_quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -614,6 +621,7 @@ public(package) fun max_quantity_for_premium(range: &MintRange, max_premium: u64
 
 /// Admit a quantity over a quoted range: require it to meet `min_quantity`, run
 /// mint admission, and build the terms with the range's inventory-impact charge.
+#[test_only]
 public(package) fun mint_terms(
     exposure: &StrikeExposure,
     range: MintRange,
@@ -644,6 +652,7 @@ public(package) fun mint_terms(
 /// Price a range, choose quantity under the requested bias, and run mint
 /// admission. Exact-quantity mode uses `min_quantity`. Budget mode sizes with
 /// `max_quantity_for_premium`, then requires the result to meet `min_quantity`.
+#[test_only]
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -667,6 +676,7 @@ public(package) fun quote_mint_terms(
 /// ties each allocation to exactly one admission result, so the order's contract
 /// fields are always the ones that were priced, and the market-identity assert
 /// rejects terms priced on another exposure.
+#[test_only]
 public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
     let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
@@ -883,6 +893,7 @@ public(package) fun new(
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
 /// validation. The single pricing-prefix orchestration shared by every mint
 /// quote/terms path.
+#[test_only]
 fun admitted_range_price(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -931,6 +942,7 @@ fun live_payout_liability_from_terms(
     max_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
 }
 
+#[test_only]
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
     assert!(exposure.is_admitted_mint_range(lower_tick, higher_tick), EInvalidAdmissionTick);
 }

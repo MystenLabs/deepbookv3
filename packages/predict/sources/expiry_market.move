@@ -25,9 +25,8 @@ use deepbook_predict::{
     config_events,
     constants,
     ewma::{Self, EwmaState},
-    ewma_config::EwmaConfig,
     expiry_cash::{Self, ExpiryCash},
-    order::{Self, Order},
+    order,
     order_events,
     order_queue::{Self, OrderBook, QueuedOrder},
     predict_account,
@@ -61,15 +60,21 @@ use fun df::exists as UID.exists_;
 
 const EMintPaused: u64 = 0;
 const EMarketNotSettled: u64 = 1;
+#[allow(unused_const)]
 const EMintCostAboveMax: u64 = 2;
+#[allow(unused_const)]
 const EMintProbabilityAboveMax: u64 = 3;
 const EWrongPricer: u64 = 4;
 const EReferenceTickObservationMissing: u64 = 5;
+#[allow(unused_const)]
 const EMintRedeemSameTimestamp: u64 = 6;
+#[allow(unused_const)]
 const ERedeemProbabilityBelowMin: u64 = 7;
+#[allow(unused_const)]
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
+#[allow(unused_const)]
 const EMintCostAboveMaxPayout: u64 = 11;
 const ENotSettledRedeemKeeper: u64 = 12;
 const EDelayedExecutionRequired: u64 = 13;
@@ -347,13 +352,10 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.cash.free_cash().saturating_sub(liability)
 }
 
-/// Return one live order's full-close range value before fees. Requires a
-/// market-bound `Pricer` and does not prove account ownership of `order_id`.
-/// Public for SDK, PTB, and devInspect position valuation.
-public fun live_order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
-    market.assert_pricer_bound(pricer);
-    let order = order::from_order_id(order_id);
-    market.strike_exposure.live_order_value(pricer, &order)
+/// Retired with instant trading: always aborts `EDelayedExecutionRequired`.
+/// Queue records are priced through `quote_redeem_open`.
+public fun live_order_value(_market: &ExpiryMarket, _pricer: &Pricer, _order_id: u256): u64 {
+    abort EDelayedExecutionRequired
 }
 
 /// Return one settled order's terminal payout. This function does not prove
@@ -370,131 +372,55 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Quote the all-in cost of a mint request for an anonymous taker (no builder
-/// code) without mutating any market state.
-/// Exact-quantity mode uses `min_quantity`; budget mode conservatively sizes a
-/// lot-rounded fill under `max_premium`. The quote applies live-mint and admission
-/// gates but does not preflight account balance, slippage caps, or exposure-index
-/// capacity. Its penalty uses the current pre-update EWMA state. Public for SDK
-/// and devInspect pre-trade pricing.
+/// Retired with instant trading: always aborts `EDelayedExecutionRequired`.
 public fun quote_mint(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &ExpiryMarket,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _exact_quantity: bool,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer, clock);
-    let terms = market
-        .strike_exposure
-        .quote_mint_terms(
-            pricer,
-            lower_tick,
-            higher_tick,
-            max_premium,
-            min_quantity,
-            exact_quantity,
-        );
-    let builder_code_id: Option<ID> = option::none();
-    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(
-        &terms,
-        &builder_code_id,
-        penalty_fee,
-        config.fee_incentive_subsidy_rate(),
-        clock,
-    )
+    abort EDelayedExecutionRequired
 }
 
-/// Quote the all-in cost of a mint request for one account, reading its builder
-/// code. Budget mode caps premium by total account balance, including unsettled
-/// accumulator funds. Public for SDK and devInspect pre-trade pricing.
+/// Retired with instant trading: always aborts `EDelayedExecutionRequired`.
 public fun quote_mint_for_account(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &ExpiryMarket,
+    _wrapper: &AccountWrapper,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _exact_quantity: bool,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer, clock);
-    let account = wrapper.load_account();
-    let max_premium = max_premium.min(account.balance<USDC>(root, clock));
-    let terms = market
-        .strike_exposure
-        .quote_mint_terms(
-            pricer,
-            lower_tick,
-            higher_tick,
-            max_premium,
-            min_quantity,
-            exact_quantity,
-        );
-    let builder_code_id = predict_account::builder_code_id(account);
-    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(
-        &terms,
-        &builder_code_id,
-        penalty_fee,
-        config.fee_incentive_subsidy_rate(),
-        clock,
-    )
+    abort EDelayedExecutionRequired
 }
 
-/// Quote `mint_exact_cost` for one account: the fill that mint would size for
-/// `max_cost`, capped by total account balance including unsettled accumulator
-/// funds, with that fill's cost decomposition. Applies the mint's live-mint gates,
-/// sizing, `min_quantity` floor, and admission, but does not preflight
-/// exposure-index capacity or cash backing. `quantity` is the figure to derive a
-/// `min_quantity` slippage floor from. Public for SDK and devInspect pre-trade
-/// pricing.
+/// Retired with instant trading: always aborts `EDelayedExecutionRequired`.
 public fun quote_mint_exact_cost_for_account(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &ExpiryMarket,
+    _wrapper: &AccountWrapper,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_cost: u64,
+    _min_quantity: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer, clock);
-    let account = wrapper.load_account();
-    let max_cost = max_cost.min(account.balance<USDC>(root, clock));
-    let builder_code_id = predict_account::builder_code_id(account);
-    let terms = market.quote_exact_cost_terms(
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        &builder_code_id,
-        max_cost,
-        min_quantity,
-        clock,
-        ctx,
-    );
-    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(
-        &terms,
-        &builder_code_id,
-        penalty_fee,
-        config.fee_incentive_subsidy_rate(),
-        clock,
-    )
+    abort EDelayedExecutionRequired
 }
 
 // === Delayed Execution: Queue Reads ===
@@ -700,240 +626,83 @@ public fun redeem_inventory_impact_rebate(quote: &RedeemQuote): u64 {
     quote.inventory_impact_rebate
 }
 
-/// Mint an exact live position quantity against this expiry market.
-///
-/// Requires the running package version to be at or above the protocol version
-/// watermark, per-market mint pause to be off, trading globally enabled, valid
-/// owner or authorized-app account auth, a market-bound live `Pricer`, and enough
-/// expiry cash to back the post-mint max payout. While
-/// `use_pyth_spot_for_forward` is set, the `Pricer` must also have loaded a usable,
-/// fresh Pyth spot: a mint aborts `pricing::EPythSpotUnavailable` or
-/// `pricing::EPythSpotStale` rather than execute on the Block Scholes-forward
-/// fallback, and the same holds for every mint, mint quote, and `redeem_live`. Mint
-/// fees are paid by routing a withdraw through the loaded account.
-/// The position's strike range is the tick pair `(lower_tick, higher_tick]`
-/// (`lower_tick = 0` is
-/// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
-/// strikes to ticks. `max_cost` caps the all-in USDC withdrawal, while
-/// `max_probability` caps the quoted per-contract probability before fees.
-/// Callers can pass `std::u64::max_value!()` for either uncapped guard. Returns
-/// the minted order ID for future order-scoped flows.
-///
-/// Retired by delayed execution: aborts `EDelayedExecutionRequired` once the
-/// version watermark reaches `current_version`. Use `enqueue_exact_quantity`.
+/// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
+/// Use `enqueue_exact_quantity`.
 public fun mint_exact_quantity(
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    max_cost: u64,
-    max_probability: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &mut ExpiryMarket,
+    _wrapper: &mut AccountWrapper,
+    _auth: Auth,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _quantity: u64,
+    _max_cost: u64,
+    _max_probability: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): u256 {
-    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
-    market.assert_live_mint_allowed(config, pricer, clock);
-    wrapper.settle<USDC>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    market.mint_prepared(
-        account,
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        0,
-        quantity,
-        true,
-        max_cost,
-        max_probability,
-        clock,
-        ctx,
-    )
+    abort EDelayedExecutionRequired
 }
 
-/// Mint a conservatively sized lot-rounded position whose premium does not
-/// exceed `max_premium`. The result may be one lot below the largest fitting
-/// quantity and must meet `min_quantity`.
-///
-/// Fees, builder fees, and EWMA congestion penalties are charged on top of
-/// `max_premium`, so `max_cost` — not `max_premium` — bounds the all-in USDC
-/// withdrawal (`premium + trader-paid fee + builder_fee + EWMA penalty`).
-/// `max_cost` is required: unlike `mint_exact_quantity`'s guards there is no
-/// value that disables it, because the budget shape exists to bound spend. The
-/// sizing budget is first capped to the account's available USDC after
-/// settlement; fees still require additional available USDC at payment time.
-/// Any unspent premium dust remains in the account because order quantity must
-/// be an integer number of `position_lot_size` lots.
-///
-/// Retired by delayed execution: aborts `EDelayedExecutionRequired` once the
-/// version watermark reaches `current_version`. Use `enqueue_exact_amount`.
+/// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
+/// Use `enqueue_exact_amount`.
 public fun mint_exact_amount(
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    max_cost: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &mut ExpiryMarket,
+    _wrapper: &mut AccountWrapper,
+    _auth: Auth,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _max_cost: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): u256 {
-    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
-    market.assert_live_mint_allowed(config, pricer, clock);
-    assert!(max_cost > 0, EMintCostCapRequired);
-    wrapper.settle<USDC>(root, clock);
-    let max_premium = max_premium.min(wrapper.load_account().balance<USDC>(root, clock));
-    let account = wrapper.load_account_mut(auth);
-    market.mint_prepared(
-        account,
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        max_premium,
-        min_quantity,
-        false,
-        max_cost,
-        // `min_quantity` against `max_premium` already bounds the price paid per
-        // contract, so the budget shape carries no separate probability cap.
-        std::u64::max_value!(),
-        clock,
-        ctx,
-    )
+    abort EDelayedExecutionRequired
 }
 
-/// Mint a lot-rounded position within an all-in `max_cost` budget.
-///
-/// Unlike `mint_exact_amount`, fees are sized inside the budget: the quantity
-/// search evaluates the all-in withdrawal the mint charges (`premium +
-/// trader-paid fee + builder_fee + EWMA penalty + inventory_impact_charge`)
-/// against the fee-incentive, congestion, and book state at execution, so the
-/// debit never exceeds `max_cost`. `max_cost` is first capped to the account's
-/// available USDC after settlement, so `std::u64::max_value!()` sizes against the
-/// whole balance.
-///
-/// The budget search finds the largest fitting quantity. If that quantity costs
-/// more than its maximum payout, a conservative search tries a smaller fill;
-/// rounding can make that fallback miss a larger admissible fill. Only when the
-/// budget is the limiting constraint is the remainder less than the incremental
-/// all-in cost of one more lot. Payout-limited fills and lot-cap saturation can
-/// leave more. Insufficient expiry cash backing aborts the mint; sizing does not
-/// shrink the fill to available backing, and the quote does not preflight it.
-///
-/// `min_quantity` is this entrypoint's slippage guard. The budget is fixed, so
-/// every adverse move between building the transaction and executing it — the
-/// price, the congestion surcharge, the sponsor subsidy, the inventory-impact
-/// charge — shows up as fewer contracts, and a fill below `min_quantity` aborts
-/// `EMintQuantityBelowMin`. It bounds the all-in price per contract at
-/// `max_cost / min_quantity`, which is why the shape carries no separate
-/// probability cap; passing `0` accepts any fill the budget buys. A budget too
-/// small to admit `constants::min_premium` aborts `EPremiumBelowMinimum` rather
-/// than minting nothing, and zero is such a budget: unlike `mint_exact_amount`
-/// there is no `max_cost` cap to require, because here the budget IS the sizing
-/// input. Other requirements match `mint_exact_quantity`. Returns the minted
-/// order ID.
-///
-/// Retired by delayed execution: aborts `EDelayedExecutionRequired` once the
-/// version watermark reaches `current_version`. Use `enqueue_exact_cost`.
+/// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
+/// Use `enqueue_exact_cost`.
 public fun mint_exact_cost(
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &mut ExpiryMarket,
+    _wrapper: &mut AccountWrapper,
+    _auth: Auth,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_cost: u64,
+    _min_quantity: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): u256 {
-    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
-    market.assert_live_mint_allowed(config, pricer, clock);
-    wrapper.settle<USDC>(root, clock);
-    let max_cost = max_cost.min(wrapper.load_account().balance<USDC>(root, clock));
-    let account = wrapper.load_account_mut(auth);
-    market.reconcile_stale_valuation_stamp(config);
-    let builder_code_id = predict_account::builder_code_id(account);
-    let terms = market.quote_exact_cost_terms(
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        &builder_code_id,
-        max_cost,
-        min_quantity,
-        clock,
-        ctx,
-    );
-    market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
+    abort EDelayedExecutionRequired
 }
 
-/// Redeem a live order you hold account authority over.
-///
-/// A live order is priced and closed (partial or full). Settled orders must use
-/// `redeem_settled`.
-/// Returns a replacement order ID only when a partial close leaves quantity open.
-///
-/// Requires a market-bound live `Pricer` and, while `use_pyth_spot_for_forward` is
-/// set, a usable, fresh Pyth spot in it, the same Pyth requirement every mint
-/// carries: the close aborts `pricing::EPythSpotUnavailable` or
-/// `pricing::EPythSpotStale` rather than execute on the Block Scholes-forward
-/// fallback. Trading and mint pauses do not apply. Through a gap in Pyth
-/// updates the position stays open until Pyth recovers, an admin deselects Pyth
-/// or widens `pyth_spot_freshness_ms` past the gap, or the market settles and
-/// `redeem_settled` pays it.
-///
-/// Two close-side slippage floors, the mirror of mint's `max_probability` /
-/// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
-/// quoted per-contract range probability (same units as mint's `max_probability`).
-/// `min_proceeds` floors the all-in net USDC credited to the account
-/// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
-/// of mint's all-in `max_cost`.
-///
-/// Retired by delayed execution: aborts `EDelayedExecutionRequired` once the
-/// version watermark reaches `current_version`. Early sells then go through
-/// `enqueue_redeem_open`, which sells Open queue records only, so a position
-/// held in the account has no early exit after the cutover.
+/// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
+/// Early sells go through `enqueue_redeem_open`; account-held positions exit
+/// through `redeem_settled` after settlement.
 public fun redeem_live(
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    order_id: u256,
-    close_quantity: u64,
-    min_probability: u64,
-    min_proceeds: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &mut ExpiryMarket,
+    _wrapper: &mut AccountWrapper,
+    _auth: Auth,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _order_id: u256,
+    _close_quantity: u64,
+    _min_probability: u64,
+    _min_proceeds: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): Option<u256> {
-    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
-    market.assert_live_flow_allowed(config, pricer, clock);
-    market.redeem_live_with_auth(
-        wrapper,
-        auth,
-        config,
-        pricer,
-        order_id,
-        close_quantity,
-        min_probability,
-        min_proceeds,
-        root,
-        clock,
-        ctx,
-    )
+    abort EDelayedExecutionRequired
 }
 
 /// Redeem a settled order you hold account authority over.
@@ -1778,6 +1547,7 @@ fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &Protocol
 }
 
 // --- Gates: the first call of every public entry ---
+#[test_only]
 fun assert_live_mint_allowed(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -1796,6 +1566,7 @@ fun assert_live_mint_allowed(
 // so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
 // mid-stamp cash move would skew the figures the seal freezes. That stage is one
 // PTB, so this never blocks a trade in any other transaction.
+#[test_only]
 fun assert_live_flow_allowed(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -1834,6 +1605,7 @@ fun assert_pricer_bound(market: &ExpiryMarket, pricer: &Pricer) {
 }
 
 // --- Mint flow ---
+#[test_only]
 fun mint_prepared(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -1895,6 +1667,7 @@ fun mint_prepared(
 /// search finds no smaller fill, the budget fill is admitted so the caller sees
 /// `EMintCostAboveMaxPayout` rather than an empty fill's admission error.
 /// `compute_mint_quote` still enforces the bound on whatever is admitted.
+#[test_only]
 fun quote_exact_cost_terms(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -1975,6 +1748,7 @@ fun quote_exact_cost_terms(
 
 /// All-in cost of minting `quantity` over `range`, computed by the helper the mint
 /// charges with (`mint_quote_at`) against pre-trade state, without admission.
+#[test_only]
 fun all_in_cost_at(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -2003,6 +1777,7 @@ fun all_in_cost_at(
 /// against pre-trade state, enforce the all-in `max_cost`, fold the EWMA, route
 /// the referral share, allocate the order, settle payment, and emit `OrderMinted`.
 /// `builder_code_id` is the caller's single read of the account's attribution.
+#[test_only]
 fun mint_with_terms(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -2067,6 +1842,7 @@ fun mint_with_terms(
 }
 
 /// Assemble the cost decomposition shared by mint quotes and execution.
+#[test_only]
 fun compute_mint_quote(
     market: &ExpiryMarket,
     terms: &MintTerms,
@@ -2093,6 +1869,7 @@ fun compute_mint_quote(
 /// inputs, without admission or the maximum-payout bound. The single home of the
 /// all-in sum: execution reaches it through `compute_mint_quote`, and the all-in
 /// budget search probes candidate quantities with it directly.
+#[test_only]
 fun mint_quote_at(
     market: &ExpiryMarket,
     price: &RangePrice,
@@ -2130,6 +1907,7 @@ fun mint_quote_at(
     }
 }
 
+#[test_only]
 fun fee_incentive_subsidy_amount(
     market: &ExpiryMarket,
     fee_amount: u64,
@@ -2148,10 +1926,11 @@ fun fee_incentive_subsidy_amount(
 /// Fee incentives subsidize only the trader-paid portion of the trading fee;
 /// the referral is split before that sponsor balance joins, so incentives do not
 /// fund the referral payment.
+#[test_only]
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
-    order: &Order,
+    order: &order::Order,
     quote: &MintQuote,
     builder_code_id: Option<ID>,
     referrer_receive_address: Option<address>,
@@ -2183,6 +1962,7 @@ fun settle_mint_payment(
 }
 
 // --- Redeem flow ---
+#[test_only]
 fun redeem_live_with_auth(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -2365,6 +2145,7 @@ fun redeem_settled_with_auth(
 ///
 /// The EWMA penalty is withheld from the payout and kept in expiry cash
 /// as surplus.
+#[test_only]
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
@@ -3793,9 +3574,10 @@ fun refund_record(
 // --- Shared by the mint and redeem flows ---
 /// Compute the congestion surcharge from pre-trade EWMA state, then fold the
 /// current gas price into the estimate.
+#[test_only]
 fun ewma_penalty(
     market: &mut ExpiryMarket,
-    config: &EwmaConfig,
+    config: &deepbook_predict::ewma_config::EwmaConfig,
     quantity: u64,
     clock: &Clock,
     ctx: &TxContext,
@@ -3838,4 +3620,272 @@ fun assert_cash_backing(market: &ExpiryMarket) {
         market.cash.inventory_impact_reserve()
             >= market.strike_exposure.inventory_impact_potential(),
     );
+}
+
+// === Test-Only: retired instant-trading paths ===
+// The bodies the retired public functions had, kept so tests can still seed
+// account-held positions and exercise the legacy pricing.
+
+#[test_only]
+public fun live_order_value_for_testing(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
+    market.assert_pricer_bound(pricer);
+    let order = order::from_order_id(order_id);
+    market.strike_exposure.live_order_value(pricer, &order)
+}
+
+#[test_only]
+public fun quote_mint_for_testing(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer, clock);
+    let terms = market
+        .strike_exposure
+        .quote_mint_terms(
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            exact_quantity,
+        );
+    let builder_code_id: Option<ID> = option::none();
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
+}
+
+#[test_only]
+public fun quote_mint_for_account_for_testing(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer, clock);
+    let account = wrapper.load_account();
+    let max_premium = max_premium.min(account.balance<USDC>(root, clock));
+    let terms = market
+        .strike_exposure
+        .quote_mint_terms(
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_premium,
+            min_quantity,
+            exact_quantity,
+        );
+    let builder_code_id = predict_account::builder_code_id(account);
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
+}
+
+#[test_only]
+public fun quote_mint_exact_cost_for_account_for_testing(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MintQuote {
+    market.assert_live_mint_allowed(config, pricer, clock);
+    let account = wrapper.load_account();
+    let max_cost = max_cost.min(account.balance<USDC>(root, clock));
+    let builder_code_id = predict_account::builder_code_id(account);
+    let terms = market.quote_exact_cost_terms(
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        &builder_code_id,
+        max_cost,
+        min_quantity,
+        clock,
+        ctx,
+    );
+    let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
+}
+
+#[test_only]
+public fun mint_exact_quantity_for_testing(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
+    market.assert_live_mint_allowed(config, pricer, clock);
+    wrapper.settle<USDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    market.mint_prepared(
+        account,
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        0,
+        quantity,
+        true,
+        max_cost,
+        max_probability,
+        clock,
+        ctx,
+    )
+}
+
+#[test_only]
+public fun mint_exact_amount_for_testing(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
+    market.assert_live_mint_allowed(config, pricer, clock);
+    assert!(max_cost > 0, EMintCostCapRequired);
+    wrapper.settle<USDC>(root, clock);
+    let max_premium = max_premium.min(wrapper.load_account().balance<USDC>(root, clock));
+    let account = wrapper.load_account_mut(auth);
+    market.mint_prepared(
+        account,
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        false,
+        max_cost,
+        // `min_quantity` against `max_premium` already bounds the price paid per
+        // contract, so the budget shape carries no separate probability cap.
+        std::u64::max_value!(),
+        clock,
+        ctx,
+    )
+}
+
+#[test_only]
+public fun mint_exact_cost_for_testing(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
+    market.assert_live_mint_allowed(config, pricer, clock);
+    wrapper.settle<USDC>(root, clock);
+    let max_cost = max_cost.min(wrapper.load_account().balance<USDC>(root, clock));
+    let account = wrapper.load_account_mut(auth);
+    market.reconcile_stale_valuation_stamp(config);
+    let builder_code_id = predict_account::builder_code_id(account);
+    let terms = market.quote_exact_cost_terms(
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        &builder_code_id,
+        max_cost,
+        min_quantity,
+        clock,
+        ctx,
+    );
+    market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
+}
+
+#[test_only]
+public fun redeem_live_for_testing(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    order_id: u256,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Option<u256> {
+    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
+    market.assert_live_flow_allowed(config, pricer, clock);
+    market.redeem_live_with_auth(
+        wrapper,
+        auth,
+        config,
+        pricer,
+        order_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
 }

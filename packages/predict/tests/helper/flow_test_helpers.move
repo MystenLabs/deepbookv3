@@ -633,8 +633,8 @@ public fun set_ewma_penalty(
     z_score_threshold: u64,
     penalty_rate: u64,
 ) {
-    config.set_ewma_params(&self.admin_cap, alpha, z_score_threshold, penalty_rate, &self.clock);
-    config.set_ewma_enabled(&self.admin_cap, true, &self.clock);
+    config.set_ewma_params_for_testing(&self.admin_cap, alpha, z_score_threshold, penalty_rate, &self.clock);
+    config.set_ewma_enabled_for_testing(&self.admin_cap, true, &self.clock);
 }
 
 /// Enable the EWMA congestion penalty through a market bundle.
@@ -1622,7 +1622,7 @@ public fun quote_mint_bundle(
         );
     market
         .market
-        .quote_mint(
+        .quote_mint_for_testing(
             &market.config,
             &pricer,
             lower_tick,
@@ -1658,7 +1658,7 @@ public fun quote_mint_amount_bundle(
         );
     market
         .market
-        .quote_mint(
+        .quote_mint_for_testing(
             &market.config,
             &pricer,
             lower_tick,
@@ -1693,7 +1693,7 @@ public fun quote_mint_for_account_bundle(
         );
     market
         .market
-        .quote_mint_for_account(
+        .quote_mint_for_account_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1732,7 +1732,7 @@ public fun quote_mint_for_account_amount_bundle(
         );
     market
         .market
-        .quote_mint_for_account(
+        .quote_mint_for_account_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1772,7 +1772,7 @@ public fun quote_mint_exact_cost_for_account_bundle(
         );
     market
         .market
-        .quote_mint_exact_cost_for_account(
+        .quote_mint_exact_cost_for_account_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1812,7 +1812,7 @@ public fun mint_exact_quantity(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.mint_exact_quantity(
+    market.mint_exact_quantity_for_testing(
         wrapper,
         auth,
         config,
@@ -1882,7 +1882,7 @@ public fun mint_exact_amount(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.mint_exact_amount(
+    market.mint_exact_amount_for_testing(
         wrapper,
         auth,
         config,
@@ -1949,7 +1949,7 @@ public fun mint_exact_cost(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.mint_exact_cost(
+    market.mint_exact_cost_for_testing(
         wrapper,
         auth,
         config,
@@ -2001,7 +2001,7 @@ public fun mint_exact_cost_with_pricer_bundle(
     let auth = account::generate_auth(self.scenario.ctx());
     market
         .market
-        .mint_exact_cost(
+        .mint_exact_cost_for_testing(
             &mut account.wrapper,
             auth,
             &market.config,
@@ -2030,7 +2030,7 @@ public fun quote_mint_exact_cost_for_account_with_pricer_bundle(
 ): MintQuote {
     market
         .market
-        .quote_mint_exact_cost_for_account(
+        .quote_mint_exact_cost_for_account_for_testing(
             &account.wrapper,
             &market.config,
             pricer,
@@ -2070,7 +2070,7 @@ public fun redeem_live(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.redeem_live(
+    market.redeem_live_for_testing(
         wrapper,
         auth,
         config,
@@ -2411,7 +2411,7 @@ public fun current_nav_bundle(self: &mut Fixture, market: &MarketBundle): u64 {
 /// Read one order's gross-of-fees live holder value through a market bundle.
 public fun live_order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.live_order_value(&pricer, order_id)
+    market.market.live_order_value_for_testing(&pricer, order_id)
 }
 
 /// Read one settled order's terminal holder payout.

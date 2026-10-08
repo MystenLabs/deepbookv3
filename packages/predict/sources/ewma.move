@@ -10,9 +10,7 @@
 /// `ExpiryMarket` owns the stored state and decides when to fold observations in.
 module deepbook_predict::ewma;
 
-use deepbook_predict::ewma_config::EwmaConfig;
 use fixed_math::math;
-use sui::clock::Clock;
 
 /// Smoothed gas-price estimate for one expiry market. `mean` and `variance` are
 /// scaled by `float_scaling`.
@@ -39,9 +37,10 @@ public(package) fun new(ctx: &TxContext): EwmaState {
 /// trading fee. Zero unless the penalty is enabled, variance has accumulated, and
 /// the current gas price sits above the mean by more than `z_score_threshold`
 /// standard deviations.
+#[test_only]
 public(package) fun penalty_fee(
     self: &EwmaState,
-    config: &EwmaConfig,
+    config: &deepbook_predict::ewma_config::EwmaConfig,
     quantity: u64,
     ctx: &TxContext,
 ): u64 {
@@ -65,10 +64,11 @@ public(package) fun penalty_fee(
 ///
 /// The squared deviation is measured from the pre-update mean. When variance is
 /// zero, the first nonzero deviation becomes the variance without alpha scaling.
+#[test_only]
 public(package) fun update(
     self: &mut EwmaState,
-    config: &EwmaConfig,
-    clock: &Clock,
+    config: &deepbook_predict::ewma_config::EwmaConfig,
+    clock: &sui::clock::Clock,
     ctx: &TxContext,
 ) {
     let now = clock.timestamp_ms();

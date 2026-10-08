@@ -43,7 +43,7 @@ fun set_ewma_params_and_enabled_update_config() {
     let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
 
-    config.set_ewma_params(
+    config.set_ewma_params_for_testing(
         &admin_cap,
         config_constants::min_ewma_alpha!(),
         config_constants::min_ewma_z_score_threshold!(),
@@ -57,9 +57,9 @@ fun set_ewma_params_and_enabled_update_config() {
     );
     assert_eq!(config.ewma_config().penalty_rate(), config_constants::min_ewma_penalty_rate!());
 
-    config.set_ewma_enabled(&admin_cap, true, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, true, &clock);
     assert!(config.ewma_config().enabled());
-    config.set_ewma_enabled(&admin_cap, false, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, false, &clock);
     assert!(!config.ewma_config().enabled());
 
     destroy(admin_cap);
@@ -168,7 +168,7 @@ fun frozen_blocks_version_gated_flow() {
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
     config.set_frozen(&admin_cap, true);
-    config.set_ewma_enabled(&admin_cap, true, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, true, &clock);
     abort 999
 }
 

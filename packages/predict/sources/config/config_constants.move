@@ -20,8 +20,11 @@ const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
 const EInvalidExpiryFeeWindowMs: u64 = 8;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 9;
 const EInvalidMarketTickSize: u64 = 10;
+#[allow(unused_const)]
 const EInvalidEwmaAlpha: u64 = 11;
+#[allow(unused_const)]
 const EInvalidEwmaZScoreThreshold: u64 = 12;
+#[allow(unused_const)]
 const EInvalidEwmaPenaltyRate: u64 = 13;
 const EInvalidBackingBufferLambda: u64 = 14;
 const EInvalidCadenceWindowSize: u64 = 15;
@@ -529,6 +532,7 @@ public(package) macro fun min_ewma_alpha(): u64 { 1 }
 
 public(package) macro fun max_ewma_alpha(): u64 { 100_000_000 }
 
+#[test_only]
 public(package) fun assert_ewma_alpha(value: u64) {
     assert!(value >= min_ewma_alpha!() && value <= max_ewma_alpha!(), EInvalidEwmaAlpha);
 }
@@ -545,6 +549,7 @@ public(package) macro fun min_ewma_z_score_threshold(): u64 {
 
 public(package) macro fun max_ewma_z_score_threshold(): u64 { 10_000_000_000 }
 
+#[test_only]
 public(package) fun assert_ewma_z_score_threshold(value: u64) {
     assert!(
         value >= min_ewma_z_score_threshold!() && value <= max_ewma_z_score_threshold!(),
@@ -560,6 +565,7 @@ public(package) macro fun min_ewma_penalty_rate(): u64 { 0 }
 
 public(package) macro fun max_ewma_penalty_rate(): u64 { 2_000_000 }
 
+#[test_only]
 public(package) fun assert_ewma_penalty_rate(value: u64) {
     assert!(
         value >= min_ewma_penalty_rate!() && value <= max_ewma_penalty_rate!(),

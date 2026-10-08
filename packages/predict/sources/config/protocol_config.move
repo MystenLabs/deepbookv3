@@ -39,6 +39,7 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
+#[allow(unused_const)]
 const ETradeWindowClosed: u64 = 7;
 const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
 const ESettledRedeemKeeperNotFound: u64 = 9;
@@ -51,6 +52,7 @@ const EFlushOperatorNotFound: u64 = 15;
 const ENotFlushOperator: u64 = 16;
 const ECutoverNotReached: u64 = 17;
 const EUnsupportedPythChannel: u64 = 18;
+const EEwmaRetired: u64 = 19;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -499,30 +501,28 @@ public fun set_max_lp_pool_value(
     config.max_lp_pool_value = max_pool_value;
 }
 
-/// Set the EWMA gas-price penalty parameters.
+/// Retired with instant trading: the congestion penalty only priced instant
+/// trades, and queued fills charge none. Always aborts `EEwmaRetired`.
 public fun set_ewma_params(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    alpha: u64,
-    z_score_threshold: u64,
-    penalty_rate: u64,
-    clock: &Clock,
+    _alpha: u64,
+    _z_score_threshold: u64,
+    _penalty_rate: u64,
+    _clock: &Clock,
 ) {
-    config.assert_version();
-    config.ewma_config.set_params(alpha, z_score_threshold, penalty_rate);
-    config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
+    abort EEwmaRetired
 }
 
-/// Enable or disable the EWMA gas-price penalty.
+/// Retired with instant trading: the congestion penalty only priced instant
+/// trades, and queued fills charge none. Always aborts `EEwmaRetired`.
 public fun set_ewma_enabled(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    enabled: bool,
-    clock: &Clock,
+    _enabled: bool,
+    _clock: &Clock,
 ) {
-    config.assert_version();
-    config.ewma_config.set_enabled(enabled);
-    config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
+    abort EEwmaRetired
 }
 
 /// Set the window before expiry in which live quotes, mints, and live redeems
@@ -929,6 +929,7 @@ public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): St
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
+#[test_only]
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
@@ -992,6 +993,7 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
 /// `now < expiry_ms` guards the subtraction against underflow for any future
 /// caller; on today's paths it cannot be false, because a `&Pricer` only exists
 /// if `load_live_pricer` already asserted `now < expiry` in the same transaction.
+#[test_only]
 public(package) fun assert_trade_window_open(
     config: &ProtocolConfig,
     expiry_ms: u64,
@@ -1166,4 +1168,30 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
 /// upgrade and its `bump_version_watermark`.
 public fun set_version_watermark_for_testing(config: &mut ProtocolConfig, version_watermark: u64) {
     config.version_watermark = version_watermark;
+}
+
+#[test_only]
+public fun set_ewma_params_for_testing(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    alpha: u64,
+    z_score_threshold: u64,
+    penalty_rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config.ewma_config.set_params(alpha, z_score_threshold, penalty_rate);
+    config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
+}
+
+#[test_only]
+public fun set_ewma_enabled_for_testing(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config.ewma_config.set_enabled(enabled);
+    config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
 }

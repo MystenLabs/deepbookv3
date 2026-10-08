@@ -424,6 +424,7 @@ public(package) fun pending_sells(book: &OrderBook): u64 { book.pending_sells }
 
 public(package) fun waiting_cash_need(book: &OrderBook): u64 { book.waiting_cash_need }
 
+#[test_only]
 public(package) fun escrow_value(book: &OrderBook): u64 { book.escrow.value() }
 
 public(package) fun pins(book: &OrderBook): &VecMap<u64, u64> { &book.pins }

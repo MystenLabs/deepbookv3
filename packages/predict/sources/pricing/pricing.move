@@ -175,9 +175,11 @@ const EBlockScholesInputTooWide: u64 = 16;
 /// or one that does not normalize to a positive value. Raised only by the live
 /// trades that refuse the fallback (mints, mint quotes, and live redeems); the load
 /// itself never aborts on it, so valuation keeps pricing.
+#[allow(unused_const)]
 const EPythSpotUnavailable: u64 = 17;
 /// As `EPythSpotUnavailable`, but the feed held a usable spot older than
 /// `pyth_spot_freshness_ms`.
+#[allow(unused_const)]
 const EPythSpotStale: u64 = 18;
 /// A volatility snapshot requires `use_pyth_spot_for_forward`: resolve re-anchors
 /// the snapshotted Block Scholes basis on the committed Pyth price.
@@ -502,6 +504,7 @@ public(package) fun pricer_at(
 /// Non-aborting `up_price`: `none` wherever the digital would abort on a zero
 /// forward, a negative SVI inner term, or a non-positive variance; the same bits
 /// as `up_price` everywhere else.
+#[test_only]
 public(package) fun try_up_price(pricer: &Pricer, strike: Strike): Option<u64> {
     let (price, _) = evaluate_up_price(&pricer.svi, pricer.forward, strike);
     price
@@ -563,6 +566,7 @@ public(package) fun normalize_lazer_spot(
 /// call in one transaction, it passes exactly when the load re-anchored the
 /// forward on Pyth. With `use_pyth_spot_for_forward` off no Pyth spot feeds the
 /// forward, so there is nothing to reject and it always passes.
+#[test_only]
 public(package) fun assert_pyth_spot_fresh(pricer: &Pricer, config: &PricingConfig, clock: &Clock) {
     if (!config.use_pyth_spot_for_forward()) return;
     assert!(pricer.pyth_spot_source_timestamp_ms > 0, EPythSpotUnavailable);
