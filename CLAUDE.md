@@ -72,9 +72,9 @@ Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as 
 ### Move
 
 - Build a package: `sui move build --path packages/<package>`.
-- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000`; the high gas limit is required because Sui 1.66+ lowered the default test gas budget.
+- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000 --package-size 64`. The high gas limit is required because Sui 1.66+ lowered the default test gas budget. `--package-size 64` raises the test VM's package arena from its 10 MB default, which the Predict test package exceeds, and needs Sui 1.79.1 or later.
 - Build Predict with warnings denied: `sui move build --path packages/predict --warnings-are-errors`.
-- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000`.
+- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000 --package-size 64`.
 - Format Move before opening a pull request: `pnpm install --frozen-lockfile && pnpm format:move`; do not use `bunx` or `npx` because CI uses the repository-pinned formatter dependency.
 
 Run every `sui move build` and `sui move test` in the main session, not in a subagent. Preserve the command's real exit code with `${PIPESTATUS[0]}` when a pipeline is unavoidable, or inspect the output for `error` and `Test result:`; never pipe a build or test through `tail`, which reports `tail`'s status.

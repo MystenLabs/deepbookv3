@@ -1,6 +1,6 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A referred mint redirects a configured share of the protocol-collected trading fee and congestion surcharge to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or an early sell — carries a trading fee, and may also carry a builder fee. A queued order also pays a flat order fee, and the retired immediate paths charged a congestion surcharge. A referred mint redirects a configured share of the protocol-collected trading fee and congestion surcharge to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
 
@@ -10,7 +10,7 @@ This page covers **per-trade** fees. The pool also charges an LP-side **exit** f
 
 ## Where fees come from
 
-Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at live redeem is withheld from the payout. The fee is collected into the expiry's USDC cash custody (`ExpiryCash`), and the trader-paid portion is recorded in the trader's Predict account data.
+Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at an early sell is withheld from the payout. The fee is collected into the expiry's USDC cash custody (`ExpiryCash`), and the trader-paid portion is recorded in the trader's Predict account data.
 
 The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at creation so that later admin changes do not reprice contracts already trading. The composition, in the order the protocol applies it, is:
 
@@ -61,7 +61,7 @@ fee_rate   = base_fee_rate * multiplier
 
 Outside the window (`time_to_expiry ≥ expiry_fee_window_ms`) the multiplier is exactly 1.0 and the ramp is inert. Inside the window the multiplier rises **linearly** from 1.0 toward `expiry_fee_max_multiplier` as expiry approaches. Setting `expiry_fee_max_multiplier` to 1.0 disables the ramp entirely. Both the window length and the peak multiplier are configured per expiry (snapshotted at creation).
 
-The ramp applies identically to mints and live redeems, since both create or unwind risk against the pool in the final window.
+The ramp applies identically to mints and early sells, since both create or unwind risk against the pool in the final window. A queued order's ramp is evaluated at its committed tick, not at the clock of the transaction that fills it.
 
 ## 3. Builder fee add-on
 
@@ -96,7 +96,7 @@ The referral is direct and one level: Predict reads only the minting Account's s
 
 ## 5. Congestion surcharge (gas-price EWMA)
 
-Predict mirrors DeepBook core's gas-price penalty: trades placed during abnormal network congestion pay a surcharge. Each `ExpiryMarket` maintains an exponentially-weighted estimate (`EwmaState`) of the on-chain gas price — a smoothed mean and variance — folding the current transaction's gas price in on every trade:
+Predict mirrors DeepBook core's gas-price penalty: immediate trades placed during abnormal network congestion pay a surcharge. Queued fills carry none, so from the delayed-execution cutover the surcharge reaches only the read-only mint quotes, which still include it. Each `ExpiryMarket` maintains an exponentially-weighted estimate (`EwmaState`) of the on-chain gas price — a smoothed mean and variance — folding the current transaction's gas price in on every trade:
 
 ```text
 mean'     = alpha * gas + (1 - alpha) * mean
@@ -171,7 +171,7 @@ sponsor_subsidy = min( floor(trading_fee * fee_incentive_subsidy_rate) , market_
 trader_paid_fee = trading_fee - sponsor_subsidy
 ```
 
-The trading fee charged never changes; the subsidy changes only who pays it. Live redeems are never subsidized. On a referred mint the referral basis above uses the trader-paid fee, so a higher rate also shrinks the referral share.
+The trading fee charged never changes. The subsidy changes only who pays it. Early sells are never subsidized. A queued mint reserves its subsidy when its cohort is committed, at the rate in force then, and the fill uses at most that reservation (see [Queued orders](#queued-orders)). On a referred mint the referral basis above uses the trader-paid fee, so a higher rate also shrinks the referral share.
 
 `fee_incentive_subsidy_rate` is an admin setting on `ProtocolConfig`, read at mint time rather than snapshotted, so a change applies to the next mint on every market, including markets already trading. It ships at 20% and can be set anywhere from 0% to 50%. At 0% nothing is spent and allocated balances stay where they are. The 50% ceiling means a trader always pays at least half of every trading fee, so no promotion makes volume free: at 100%, a trader with a self-owned builder code could mint both sides of a market paying no trading fee and farm the sponsor's balance, making volume and points metrics free to inflate. Package versions before 4 charge a fixed 20% and ignore the setting, so it binds every mint only once the version watermark has retired them.
 
@@ -209,7 +209,18 @@ Cash routing at trade time:
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
 | Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available USDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. The `mint_exact_cost` entrypoint fixes an all-in withdrawal budget: every component above is sized to fit inside `max_cost`, so the fee is taken out of the spend rather than added to it, and the budget search finds the largest lot-rounded quantity that fits. If that quantity breaches its maximum payout, a conservative fallback may select a smaller fill and is not guaranteed to find the largest admissible one. Insufficient expiry cash backing aborts execution; sizing does not shrink the fill to available backing. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+At an immediate **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available USDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. The `mint_exact_cost` entrypoint fixes an all-in withdrawal budget: every component above is sized to fit inside `max_cost`, so the fee is taken out of the spend rather than added to it, and the budget search finds the largest lot-rounded quantity that fits. If that quantity breaches its maximum payout, a conservative fallback may select a smaller fill and is not guaranteed to find the largest admissible one. Insufficient expiry cash backing aborts execution; sizing does not shrink the fill to available backing. At an immediate **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate. From the delayed-execution cutover the `mint_exact_*` entrypoints abort, and a queued mint's withdrawal is the same sum without the congestion surcharge, plus the order fee (next section).
+
+## Queued orders
+
+A queued order pays the components above with four differences (see [delayed execution](./delayed-execution.md)).
+
+- **A flat order fee.** Each queued mint or early sell escrows `order_fee` at placement, 0.02 USDC by default. It is per order, not per contract. A fill moves it into market cash. A refund for the order's own limits (reason 1) or for admission (reason 2) also keeps it in market cash, and every other refund returns it.
+- **Fees at the committed tick.** The trading fee, including the expiry ramp, is computed at the order's committed tick, so a late fill pays the same fee as a prompt one.
+- **No congestion surcharge.** The fill's `OrderMinted` or `LiveOrderRedeemed` reports `penalty_fee` 0, and the referral basis is the trader-paid trading fee alone.
+- **A reserved subsidy.** Commit reserves `min(subsidy_bound × fee_incentive_subsidy_rate, the market's incentive balance)` from the market's incentive balance, where `subsidy_bound` is the placement-time quote's trading fee capped at the order's budget. The fill uses `min(trading_fee × rate, reservation)`, and the unused part returns to the incentive balance.
+
+A queued mint's all-in cost is `premium + trading_fee - sponsor_subsidy + builder_fee + inventory_impact_charge`, charged from its escrowed budget, and the unused budget returns to the trader. `max_cost` caps it on every shape. A queued sell pays `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee` to the trader, and `min_proceeds` floors that amount. The order fee is separate from both. The referral rate is read when the order fills.
 
 ## The LP supply/withdraw fee
 

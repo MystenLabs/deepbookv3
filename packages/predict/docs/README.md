@@ -13,7 +13,10 @@ contain transaction recipes or a function-by-function API reference.
 > and withdraw are queued and settled by a **privileged periodic flush** that
 > marks the whole pool at one **exact** NAV; and **terminal settlement is
 > passive**, preferring Propbook's exact Pyth history and permitting exact Block Scholes after a 30-second grace period when a normal redeem
-> or pool-rebalance flow first needs the settled branch. Where a behaviour is
+> or pool-rebalance flow first needs the settled branch. From package version 4,
+> mints and early sells use **delayed execution**: each order waits in its
+> market's queue and fills at Pyth's signed price for a fixed instant after it
+> was placed, and a filled order stays in the market as an Open record. Where a behaviour is
 > still changing, the docs describe it at the conceptual level and point to the
 > configuration that governs it rather than to specific values that may drift.
 
@@ -30,7 +33,10 @@ How the protocol works:
 
 - **[Markets and positions](./concepts/markets-and-positions.md)** — per-expiry
   range markets, the absolute tick grid, what an order/position is, and the
-  lifecycle from mint through live redeem and settlement.
+  lifecycle from mint through early sell and settlement.
+- **[Delayed execution](./concepts/delayed-execution.md)** — how queued mints
+  and early sells are placed, priced at τ, filled or refunded, held as Open
+  records, and paid at settlement, plus the policy that governs the queue.
 - **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
   formed from the propbook Pyth spot and split Block Scholes feeds, the forward
   fallback, and freshness rules.
@@ -63,6 +69,7 @@ How the protocol is built:
 
 - **Trader:** [overview](./overview.md) →
   [markets and positions](./concepts/markets-and-positions.md) →
+  [delayed execution](./concepts/delayed-execution.md) →
   [fees and rebates](./concepts/fees-and-rebates.md) →
   [risks](./risks.md).
 - **Liquidity provider:** [overview](./overview.md) →

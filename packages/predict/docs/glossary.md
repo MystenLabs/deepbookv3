@@ -21,8 +21,9 @@ these terms directly.
 - **Notional** — the fixed payout of the digital; code `quantity` (lot-sized,
   USDC base units). A winning 1x contract pays exactly its notional.
 - **Position** — one held contract. The code type is `Order` and the handle is
-  the packed `order_id`; there is no resting order book — every trade executes
-  against the pool at the model price.
+  the packed `order_id`. There is no resting order book: every trade executes
+  against the pool at the model price, and a queued order waits only for the
+  price at its τ (see [Delayed execution](#delayed-execution)).
 - **Writer** — the seller of an option, who owes its payout. The pool
   (`PoolVault` plus each expiry's `ExpiryCash`) is the writer of record for
   every Predict contract and fully collateralizes its written payouts (code:
@@ -45,7 +46,7 @@ grid, no boundary indices).
   so `raw_strike = tick × tick_size`. Carried on `MarketCreated`; an indexer or
   SDK reconstructs raw strikes from it. Code `tick_size`.
 - **range (`lower_tick`, `higher_tick`)** — a position's strike interval
-  `(lower, higher]`, carried at public entrypoints (`mint`) and in events as the
+  `(lower, higher]`, carried at public entrypoints (`enqueue_*`) and in events as the
   two absolute ticks directly. There is no standalone packed range key; the only
   packed form is inside the order ID.
 - **`pos_inf_tick`** — the sentinel higher tick (`2³⁰ − 1`) that denotes the
@@ -75,9 +76,10 @@ grid, no boundary indices).
   range probability is differenced off. The admin setting
   `use_pyth_spot_for_forward` picks its source: on (the default) Predict builds
   it as `spot × basis` when the Pyth spot is fresh and falls back to the Block
-  Scholes forward otherwise; off, it is always the Block Scholes forward. Live
-  trades (mints and live redeems) abort rather than price on that fallback;
-  only valuation uses it.
+  Scholes forward otherwise; off, it is always the Block Scholes forward. The
+  retired immediate mints and live redeems abort rather than price on that
+  fallback, and only valuation uses it. A queued fill re-anchors the basis on
+  the committed Pyth price for its τ instead.
   Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
 - **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
   the spot to the forward when live spot is applied. Code: derived in `pricing`
@@ -132,13 +134,69 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   valuation instant. Code `current_nav`.
 - **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide USDC value the flush prices PLP at: `idle + Σ active-market snapshot-instant NAV`, net of the pending-protocol-profit exclusion. Computed once per flush and used for both supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
 - **Supply / withdraw queue** — the two FIFO request queues on `PoolVault` (`supply_queue` of escrowed USDC, `withdraw_queue` of escrowed PLP). An LP enqueues with `request_supply` / `request_withdraw` (routed through its account, with a minimum-output limit and an index that can be cancelled while no flush is in flight), and the flush fills eligible heads. Code `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
-- **The flush** — the three-stage valuation-and-drain cycle that marks the whole pool at one snapshot instant and fills eligible queued heads at that mark, with trading live throughout. **Snapshot** (one atomic transaction, scoped by the `SnapshotStage` hot potato): `start_pool_valuation` engages the valuation flag and records the active set, the start time, each queue's eligibility cutoff, and the per-queue drain budgets; `snapshot_expiry_pricer` freezes one `Pricer` per live market and stamps it; `seal_valuation_snapshot` proves completeness. **Valuation** (resumable, one market per transaction): each `value_expiry` folds one market's snapshot-instant NAV, read from the cash values and payout-tree shadows captured at the snapshot instant. **Finish**: `finish_flush` proves every market was valued exactly once, computes `pool_nav`, then `lp_book::drain` mints/burns PLP and delivers fills up to each queue's recorded cutoff (supplies first, then withdrawals FIFO until idle is dry, up to the per-queue `supply_budget`/`withdraw_budget` committed at the snapshot; non-executable queue heads are protocol-cancelled and refunded, as are live request-limit misses at the shipped attempt count of one — above one they carry until their attempts are exhausted). Fills are delivered to each account through the balance accumulator (`send_funds`); the account absorbs them lazily on its next capital op. The flush's **snapshot is privileged** — started only by a pool-valuation operator's `PoolValuationCap` (`start_pool_valuation`); once it seals, `value_expiry` and `finish_flush` are permissionless, because the frozen mark and the per-queue budgets are both fixed at the snapshot so it no longer matters who drives the rest. `finish_flush` refuses a flush older than `max_valuation_window_ms` (for everyone, including the operator); a stalled flush is not aborted but superseded by a fresh `start_pool_valuation`, which discards it and re-snapshots (there is no abort or restart entrypoint). Code `PoolValuation` (vault-held valuation state), event `FlushExecuted`.
+- **The flush** — the three-stage valuation-and-drain cycle that marks the whole pool at one snapshot instant and fills eligible queued heads at that mark, with trading live throughout. **Snapshot** (one atomic transaction, scoped by the `SnapshotStage` hot potato): `start_pool_valuation` engages the valuation flag and records the active set, the start time, each queue's eligibility cutoff, and the per-queue drain budgets; `snapshot_expiry_pricer` freezes one `Pricer` per live market and stamps it; `seal_valuation_snapshot` proves completeness. **Valuation** (resumable, one market per transaction): each `value_expiry` folds one market's snapshot-instant NAV, read from the cash values and payout-tree shadows captured at the snapshot instant. **Finish**: `finish_flush` proves every market was valued exactly once, computes `pool_nav`, then `lp_book::drain` mints/burns PLP and delivers fills up to each queue's recorded cutoff (supplies first, then withdrawals FIFO until idle is dry, up to the per-queue `supply_budget`/`withdraw_budget` committed at the snapshot; non-executable queue heads are protocol-cancelled and refunded, as are live request-limit misses at the shipped attempt count of one — above one they carry until their attempts are exhausted). Fills are delivered to each account through the balance accumulator (`send_funds`); the account absorbs them lazily on its next capital op. The flush's **snapshot is privileged** — started only by a pool-valuation operator's `PoolValuationCap` (`start_pool_valuation`). Once it seals, `value_expiry` is permissionless, because the frozen mark and the per-queue budgets are both fixed at the snapshot. `finish_flush` accepts only an address on the flush-operator allowlist, because its fills move idle cash that the keeper funding queued orders relies on. `finish_flush` refuses a flush older than `max_valuation_window_ms` (for everyone, including the operator); a stalled flush is not aborted but superseded by a fresh `start_pool_valuation`, which discards it and re-snapshots (there is no abort or restart entrypoint). Code `PoolValuation` (vault-held valuation state), event `FlushExecuted`.
 - **Valuation stamp / book snapshot** — the per-market capture that keeps trading live during a flush. The snapshot stage stamps each live market with its flush ordinal, copying the two cash rows NAV reads at that instant; the payout tree holds its own snapshot, each node copying its boundary quantities into a shadow before its first mutation under that flush (an emptied node is retained as a live-zero husk until `value_expiry` reads and releases the snapshot). Trades record nothing and have no budget; a stamp left by an aborted flush is stale and lazily discarded by the next trade or settle attempt. Code `ValuationStamp`, `strike_payout_tree::activate_snapshot`/`walk_linear_frozen`/`release_snapshot`.
+
+## Delayed execution
+
+From package version 4, mints and early sells wait in a per-market queue and
+fill at Pyth's signed price for a fixed instant after placement. See
+[delayed execution](./concepts/delayed-execution.md).
+
+- **τ (tau)** — an order's price time: the last tick of the policy's Pyth Lazer
+  channel at or before `t₀ + delay_ms`, never earlier than the market's last τ
+  and always after its newest committed τ. t₀ is the Sui clock of the placing
+  transaction. Launch runs `delay_ms` at 800 ms on the 200 ms channel, so τ
+  falls 600 to 800 ms after the order. Code `tau_ms`.
+- **Cohort** — every order in one market that shares one τ, and therefore one
+  signed update, one deadline, and one channel. A cohort commits whole or not at
+  all, and each cohort fills on its own. Code `CohortSpan`.
+- **Deadline** — `min(τ + stall_timeout_ms, expiry)`, never earlier than the
+  market's last deadline. At or past it an order can only be refunded in full.
+  Code `deadline_ms`.
+- **Cutoff** — `expiry − max(no_trade_window_ms, stall_timeout_ms + 5_000)`. An
+  order whose τ would land at or past it is refused. At launch, with a 10-second
+  no-trade window, it is 10 seconds before expiry, so new orders stop about 11
+  seconds before expiry. Code `cutoff_ms`.
+- **Record ID** — the sequential `u64` ID of one queue record in a market. It is
+  not a position's packed `u256` order ID. Code `record_id`.
+- **Open record** — a filled order that stays in the market's queue, owned by
+  the placing account and holding a live position. A v4 fill never enters the
+  account. It is sold with `enqueue_redeem_open` or paid by `try_settle`. Code
+  `order_queue::status_open`.
+- **Commit** — attaching Pyth's verified price stamped exactly τ (or, when the
+  backup tick is switched on, the next tick of the cohort's channel) to a
+  waiting cohort. Permissionless. Code `expiry_market::commit`.
+- **Resolve** — filling or refunding committed orders at their τ price from the
+  market's own cash. Permissionless. Code `expiry_market::resolve`.
+- **Refund reason** — why an order was refunded: limits (1), admission (2),
+  missing node (4), deadline (5), admin (7), or no cash (8), with 3 and 6
+  reserved. The order fee is kept for reasons 1 and 2 and returned otherwise.
+  Code `order_queue::reason_*`.
+- **Order fee** — a flat USDC fee per queued order, not per contract, escrowed at
+  placement. Code `order_fee`.
+- **Spare cash** — market cash minus required cash. Code `spare_cash`.
+- **Cash need** — the most an order's fill could take out of spare cash.
+  Placement checks a mint's own need against spare cash, and the rebalance target
+  covers the summed need of waiting orders. Code `cash_need`, `waiting_cash_need`.
+- **Pin** — a payout-tree boundary node a waiting mint will use. Placement
+  creates it, and no deletion path removes it while pinned, so a fill never
+  creates a node. Code `OrderBook.pins`.
+- **Stuck gate** — the check that refuses new orders while commits have stalled.
+  Code `EQueueStuck`, `queue_stuck`.
+- **Cutover** — the version-watermark bump to package version 4. It opens
+  placement and retires the immediate mints and `redeem_live`. Code
+  `assert_cutover_reached`, `EDelayedExecutionRequired`.
+- **Flush operator** — an address on the admin-managed allowlist that may call
+  `finish_flush`. Code `add_flush_operator`, `is_flush_operator`.
 
 ## Trade lifecycle verbs
 
 | Code verb | Options term | Meaning |
 | --- | --- | --- |
-| `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
-| `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark. |
-| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records exact Pyth at expiry when available, or exact Block Scholes after the 30-second Pyth-exclusive window, plus terminal payout liability; `redeem_settled` then pays the full `notional` in range and zero out of range without reading an oracle. |
+| `enqueue_exact_quantity` / `enqueue_exact_amount` / `enqueue_exact_cost` | write / open | The buyer queues an order. The pool writes the contract at the τ premium when the order fills. |
+| `enqueue_redeem_open` | sell to close / close-out | The holder queues a sale of an Open record back to the writer at the τ mark. |
+| `commit` / `resolve` | — | Anyone attaches the τ price and fills or refunds the order. |
+| `try_settle` | cash settlement | Refunds waiting orders, records exact Pyth at expiry when available (or exact Block Scholes after the 30-second Pyth-exclusive window) plus terminal payout liability, then pays each Open record the full `notional` in range and zero out of range. |
+| `redeem_settled` | cash settlement | Pays a position an immediate mint left in an account, without reading an oracle. |
+| `mint_exact_*` / `redeem_live` | write / close-out | The retired immediate paths. They abort `EDelayedExecutionRequired` from the cutover. |

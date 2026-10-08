@@ -2,6 +2,8 @@
 
 This directory is the deterministic contract-parity engine. It executes the same scenario through a published localnet package and an independent Python model, then compares canonical economic records.
 
+**The parity simulation and the benchmark do not run on delayed execution yet.** The scenario, the TypeScript executor, and the Python replay model immediate fills: `mint_exact_quantity`, `redeem_live`, and settled redemption of account positions. A fresh publish starts past the delayed-execution cutover, where those mint and live-close rows abort `EDelayedExecutionRequired`, so a parity or benchmark run fails at the first mint row. Porting all three to enqueue, commit, and resolve, with fills priced at the committed tick, is open work. Setup already initializes the delayed-execution policy and adds the simulation address as a flush operator before the bootstrap flush.
+
 Long-run economics, charts, and encoding experiments are research concerns and intentionally live outside this public repository.
 
 ## Run

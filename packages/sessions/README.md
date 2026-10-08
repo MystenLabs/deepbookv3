@@ -62,7 +62,16 @@ Advancing the watermark retires authorization and trading entrypoints in older p
 
 ## Predict wrappers
 
-An active session may call these wrappers:
+An active session may call these wrappers for Predict's delayed-execution queue:
+
+- `enqueue_exact_quantity`
+- `enqueue_exact_amount`
+- `enqueue_exact_cost`
+- `enqueue_redeem_open`
+
+Each queues an order in Predict and returns its record ID. Besides the market, Account, and config objects, each takes Propbook's oracle registry and the canonical Pyth and Block Scholes objects that Predict validates when it snapshots the order's pricing inputs. `enqueue_redeem_open` sells an Open record, a filled Predict order that stays in its market, by its record ID. Once placed, an order is committed, filled or refunded, and paid at settlement by Predict calls that need no session or Account authority.
+
+An active session may also call these wrappers:
 
 - `mint_exact_quantity`
 - `mint_exact_amount`
@@ -70,7 +79,11 @@ An active session may call these wrappers:
 - `redeem_live`
 - `redeem_settled`
 
+`redeem_settled` pays a settled position held in the Account. The immediate `mint_exact_*` and `redeem_live` wrappers abort through Predict once Predict's delayed-execution cutover is reached, because Predict retires those functions at its version watermark bump. They keep their signatures so the upgrade stays compatible.
+
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict function. All market parameters remain caller-selected and are validated by Predict.
+
+The queue wrappers were added by the Sessions upgrade that set `current_version!()` to 3 and links Predict package version 4, so it publishes after that Predict upgrade. A Sessions package linked against an earlier Predict version aborts once Predict's watermark retires that version.
 
 ## DeepBook spot wrappers
 
@@ -84,7 +97,7 @@ An active session may call these Account-backed DeepBook spot wrappers:
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
 
-The session can therefore submit adverse Predict and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed.
+The session can therefore submit adverse Predict orders and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed. A queued Predict order placed through a session still fills or refunds after the session ends.
 
 ## Events
 

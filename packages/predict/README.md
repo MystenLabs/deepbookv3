@@ -23,7 +23,7 @@ Protocol documentation lives in [`docs/`](./docs/README.md). Start with the
 
 ```sh
 sui move build                          # build the package
-sui move test --gas-limit 100000000000  # run the Move test suite
+sui move test --gas-limit 100000000000 --package-size 64  # run the Move test suite (Sui 1.79.1+)
 ```
 
 ## Developing Predict

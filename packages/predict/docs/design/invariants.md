@@ -36,9 +36,10 @@ and contributors. For *how* each mechanism works, follow the links into
   governs how much pre-settlement exit demand beyond the floor is funded. A
   lambda of 1.0 reproduces the fully summed reserve. See
   [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
-- **Early exits are buffer-bounded, settlement is not.** A live redeem that
-  would push cash below the reserve aborts; smaller closes, later retries, and
-  the full settlement payout remain available. Closing a position releases its
+- **Early exits are buffer-bounded, settlement is not.** An early sell that
+  would push cash below the reserve is refunded at its fill (reason 8), and an
+  immediate live redeem aborts. Smaller closes, later retries, and the full
+  settlement payout remain available. Closing a position releases its
   own share of the buffer, so exit liquidity cannot be monopolized.
 - **Settled liability is exact.** `StrikeExposure::record_settlement` records the
   terminal price and exact payout liability together; the liability is always ≤
@@ -48,11 +49,51 @@ and contributors. For *how* each mechanism works, follow the links into
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
   on every funding move as a ceiling, and the pool sync tops every market up toward
   its reserve target before an LP withdrawal pays out.
-- **Custody.** USDC lives in exactly three places: account-package `Account`
-  custody, each expiry's `ExpiryCash`, and the pool ledger's idle balance.
+- **Custody.** USDC lives in exactly four places: account-package `Account`
+  custody, each expiry's `ExpiryCash`, each market's queued-order escrow, and the
+  pool ledger's idle balance.
   `ExpiryMarket` is the sole authorizer of expiry cash movement. The protocol
   reserve accumulates the protocol's profit share and is excluded from PLP
   redemption.
+
+## Delayed execution
+
+See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
+
+- **Escrow equals the unfinished orders.** A market's queue escrow always equals
+  the sum of its unfinished orders' budgets, order fees, and reserved subsidies.
+  A fill withdraws one record's escrow whole, and a short escrow aborts the fill
+  rather than filling. The shared refund routine never aborts: it pays at most
+  what escrow holds, in seniority order, and reports any shortfall
+  (`EscrowShortfall`).
+- **Escrow is outside cash, NAV, and backing.** No waiting order changes market
+  cash, required cash, NAV, or the pool mark until it fills.
+- **Fills never draw on the pool.** A fill pays from the order's escrow and the
+  market's own cash, and leaves market cash at or above required cash. Resolve
+  checks this before anything moves and refunds a cash-short order (reason 8),
+  then `assert_cash_backing` re-asserts it after the fill.
+- **One price per cohort, fixed by τ.** A cohort accepts only the update stamped
+  exactly τ on its stored channel, or, with the backup tick switched on and once
+  `gap_wait_ms` has passed, the single update one tick of that channel later. The
+  price must be generated at or after τ. A cohort commits whole or not at all,
+  and never at or past its deadline.
+- **τ and the deadline never decrease along record IDs.** A committed cohort
+  never grows, and a cohort never mixes Pyth channels.
+- **The deadline is final.** At or past its deadline an unfinished order can
+  only be refunded in full. Every deadline falls at least 5 seconds before
+  expiry, so every waiting order is due before the market can settle.
+- **Keeper calls create no objects.** Commit, resolve, refund, and cleanup take
+  `&TxContext`, and a fill inserts only over payout-tree nodes that placement
+  already created and pinned. A pinned node is never pruned, and a snapshot
+  release keeps it.
+- **Settlement never waits on the queue.** `try_settle` refunds waiting orders
+  and pays Open records in bounded batches, one phase per call, and never aborts
+  because of a queued order. A record the market cannot pay stays Open
+  (`OpenRecordPayoutSkipped`). Each batch fits Sui's 1,000 dynamic-object loads
+  per transaction.
+- **A v4 fill never enters the account.** It stays an Open record until an
+  early sell moves it out or the settlement payout closes it. Status moves only
+  forward, except that a refunded sell returns to Open.
 
 ## Position value
 
@@ -71,7 +112,7 @@ and contributors. For *how* each mechanism works, follow the links into
   degenerate (underwater) market at 0, the correct per-market limited-recourse
   value, never negative.
 - **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP supply *and* withdraw at the single `pool_nav = idle + Σ snapshot-instant market NAV` (net of the protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`), computed once in `finish_flush`. Because each market's snapshot NAV is exact — `current_nav`'s shape over the reconstructed snapshot-instant book — that one mark equals true recoverable value in both directions: a supplier prices `=` fair shares (never over-mints to dilute incumbents) and a withdrawer draws `=` fair cash. There is **no conservative band** — the bucket/band decomposition belonged to the deleted approximate-NAV world. Any liveness clamp inside the NAV shape (the degenerate-underwater cash floor) only ever *maximizes* NAV when it fires, preserving the supply-mark direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
-- **Exactly-once full-pool valuation, on vault-held state.** The in-flight valuation (`PoolValuation`) lives on the vault across transactions, with the `ProtocolConfig` flag (`valuation_in_progress`) engaged for its whole span. `start_pool_valuation` records the active-expiry set and commits the per-queue drain budgets; each `value_expiry` proves its market is in the snapshot and skips it if already valued (idempotent, so a permissionless caller racing the keeper cannot wedge or double-count it); `finish_flush` proves the valued set equals the snapshot. A missed or double-counted market would mis-price the pool, so the completeness proof is mandatory. Only the snapshot is privileged; `value_expiry` and `finish_flush` are permissionless once it seals. The state is released on exactly two paths: `finish_flush` (after the completeness proof and the queue drain, refused past `max_valuation_window_ms` for everyone including the operator), or a fresh `start_pool_valuation`, which discards the in-flight valuation and re-snapshots (folding stop into start). Both discard the partial NAV — frozen marks are sound only as a simultaneous set — while cash already moved by valuation settled sweeps stays (an invariant-preserving per-market move); the discard bumps the flush ordinal, so stale market stamps are lazily dropped by the next trade or settle attempt without visiting them.
+- **Exactly-once full-pool valuation, on vault-held state.** The in-flight valuation (`PoolValuation`) lives on the vault across transactions, with the `ProtocolConfig` flag (`valuation_in_progress`) engaged for its whole span. `start_pool_valuation` records the active-expiry set and commits the per-queue drain budgets; each `value_expiry` proves its market is in the snapshot and skips it if already valued (idempotent, so a permissionless caller racing the keeper cannot wedge or double-count it); `finish_flush` proves the valued set equals the snapshot. A missed or double-counted market would mis-price the pool, so the completeness proof is mandatory. The snapshot is privileged (a `PoolValuationCap`) and so is the finish (an address on the flush-operator allowlist). `value_expiry` is permissionless once the snapshot seals. The state is released on exactly two paths: `finish_flush` (after the completeness proof and the queue drain, refused past `max_valuation_window_ms` for everyone including the operator), or a fresh `start_pool_valuation`, which discards the in-flight valuation and re-snapshots (folding stop into start). Both discard the partial NAV — frozen marks are sound only as a simultaneous set — while cash already moved by valuation settled sweeps stays (an invariant-preserving per-market move); the discard bumps the flush ordinal, so stale market stamps are lazily dropped by the next trade or settle attempt without visiting them.
 - **One instant per flush.** Every live market's `Pricer` is frozen inside the single snapshot transaction — the ability-less `SnapshotStage` hot potato cannot leave it — and no later stage reads an oracle: the frozen map alone decides each market's sweep-vs-value branch and its mark. The pool NAV a flush prices, and every LP fill against it, is therefore the pool's value at one instant.
 - **Post-snapshot trades cannot reach the snapshot figure.** A stamped (snapshotted-not-yet-valued) market's snapshot state is captured, not reconstructed: the stamp copies the two cash rows NAV reads at the snapshot instant, and each payout-tree node copies its boundary quantities into a shadow before its first mutation under the flush's generation (a node emptied mid-window is retained as a live-zero husk until the valuation consumes it). `snapshot_nav` is then the SAME linear walk as the live read over the captured terms — identical rounding and monotonicity contract by construction — against the captured cash, so the folded figure equals the market's NAV at the snapshot instant with no per-trade record and no trade budget. Trades after the market's valuation are invisible to the already-folded figure (as-of-snapshot either way).
 
@@ -142,8 +183,8 @@ and contributors. For *how* each mechanism works, follow the links into
   registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
-- While `use_pyth_spot_for_forward` is set, every live trade — mint, mint quote, and live redeem — requires a pricer that loaded a usable Pyth spot no older than `pyth_spot_freshness_ms`. Valuation (`current_nav`, `live_order_value`, the flush snapshot) accepts a pricer that fell back to the Block Scholes forward, and settlement and settled redemption read no live price, so a Pyth gap blocks early exits but never the flush or settlement.
-- Trading pause blocks new risk creation. Trade flows (mint, live redeem, settled redeem) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
+- While `use_pyth_spot_for_forward` is set, every immediate live trade — mint, mint quote, and live redeem — requires a pricer that loaded a usable Pyth spot no older than `pyth_spot_freshness_ms`. Valuation (`current_nav`, `live_order_value`, the flush snapshot) accepts a pricer that fell back to the Block Scholes forward, and settlement and settled redemption read no live price, so a Pyth gap blocks immediate early exits but never the flush or settlement. Queued placement does not need a fresh on-chain Pyth spot, and a queued fill prices at the committed Pyth price for its τ.
+- Trading pause blocks new risk creation: queued mints abort, while early sells, commit, resolve, refunds, and settlement run. Trade flows (queued placement, resolve, the retired immediate mint and live redeem, settled redeem) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
   there is no expiry-only path that can strand capital. (The standalone compaction
