@@ -64,6 +64,8 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 /// Stable fee floor for broad flow fixtures whose accounting assertions are not
 /// tests of the production initialization policy.
 const FLOW_FIXTURE_MIN_FEE: u64 = 5_000_000;
+/// Policy delay the flow fixtures derive τ from. The compiled default is 800 ms.
+const FLOW_FIXTURE_DELAY_MS: u64 = 1_000;
 
 /// A representative finite strike tick the flow tests mint against. Re-exported
 /// from `test_constants` so existing call sites keep one source of truth.
@@ -404,6 +406,20 @@ public fun init_delayed_execution(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared_by_id<ProtocolConfig>(self.config_id);
     config.init_delayed_execution_policy(&self.admin_cap, &self.clock);
+    // Flow tests derive τ by hand from a 1_000 ms delay. Pin it here so they
+    // stay independent of the compiled default, which the policy tests check.
+    let policy = *config.policy();
+    config.set_delayed_execution_timing(
+        &self.admin_cap,
+        FLOW_FIXTURE_DELAY_MS,
+        policy.stall_timeout_ms(),
+        policy.stuck_threshold_ms(),
+        policy.gap_wait_ms(),
+        policy.pyth_price_buffer_ms(),
+        policy.pyth_channel(),
+        policy.svi_max_age_ms(),
+        &self.clock,
+    );
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }

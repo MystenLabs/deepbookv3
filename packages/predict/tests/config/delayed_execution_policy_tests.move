@@ -28,7 +28,7 @@ const TWO_EVENTS: u64 = 2;
 const FOUR_EVENTS: u64 = 4;
 
 // Spec defaults.
-const DEFAULT_DELAY_MS: u64 = 1_000;
+const DEFAULT_DELAY_MS: u64 = 800;
 const DEFAULT_STALL_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_STUCK_THRESHOLD_MS: u64 = 1_500;
 const DEFAULT_GAP_WAIT_MS: u64 = 2_000;

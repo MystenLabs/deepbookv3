@@ -574,8 +574,9 @@ public(package) fun assert_ewma_penalty_rate(value: u64) {
 
 /// Latest τ may fall after placement, in ms. τ rounds down to the policy
 /// channel's tick at or before `t₀ + delay_ms`, so `0` prices on the tick at or
-/// before placement.
-public(package) macro fun default_delay_ms(): u64 { 1_000 }
+/// before placement. 800 ms on the 200 ms channel puts τ 600 to 800 ms after
+/// the order, the launch setting.
+public(package) macro fun default_delay_ms(): u64 { 800 }
 
 public(package) macro fun min_delay_ms(): u64 { 0 }
 

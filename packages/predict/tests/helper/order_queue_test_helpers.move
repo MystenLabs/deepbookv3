@@ -53,9 +53,21 @@ public fun account(index: u64): ID {
 
 public fun receive_address(): address { @0xBEEF }
 
-/// The compiled defaults: delay 1_000, stall 5_000, channel 3 (200 ms).
+/// The compiled defaults (stall 5_000, channel 3 at 200 ms) with the delay pinned
+/// at 1_000 ms, which the hand-derived queue fixtures assume.
 public fun default_policy(): DelayedExecutionPolicy {
-    delayed_execution_config::new()
+    let defaults = delayed_execution_config::new();
+    let mut policy = defaults;
+    policy.set_timing(
+        1_000,
+        defaults.stall_timeout_ms(),
+        defaults.stuck_threshold_ms(),
+        defaults.gap_wait_ms(),
+        defaults.pyth_price_buffer_ms(),
+        defaults.pyth_channel(),
+        defaults.svi_max_age_ms(),
+    );
+    policy
 }
 
 /// Defaults with the delay, stall timeout, and channel replaced.
