@@ -17,7 +17,7 @@ import {
     commitAndResolveTx, createAccountTx, createExpiryMarketTx, createMarketQueueTx, depositToAccountTx,
     deriveAccountWrapperId, deriveMarketQueueId, enableOrderFlowTx, execute, executeAndWait,
     finalizeUsdcCurrencyRegistrationTx, keeperTrySettleTx, lockCapitalTx, mintLifecycleCapTx,
-    mintPoolValuationCapTx, mintRangeTicks, readPredictEconomicState, readSettlementProgress,
+    mintPoolValuationCapTx, mintRangeTicks, objectExists, readPredictEconomicState, readSettlementProgress,
     rebalanceExpiryCashTx, refreshOracleAndEnqueueMintTxs, settleStepTx,
     refreshOracleAndEnqueueRedeemOpenTxs, refreshOracleAndFlushTxs,
     registerUnderlyingAndCreateFeedsTx, requestSupplyTx, requestWithdrawTx,
@@ -435,6 +435,9 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     await alignCreation(periodMs);
     const marketResult = await executeAndWait(createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId: config.market.cadence_id }), "create_and_share_expiry_market");
     const expiryMarketId = createdObjectId(marketResult, "ExpiryMarket");
+    // The keeper's `ensureMarketQueue` reads the derived ID first, so check that read reports a
+    // queue that does not exist yet as absent.
+    if (await objectExists(deriveMarketQueueId(expiryMarketId))) throw new Error("market queue exists before its creation");
     const queueResult = await executeAndWait(createMarketQueueTx(expiryMarketId), "create_market_queue");
     const marketQueueId = createdObjectId(queueResult, "queue::MarketQueue");
     if (marketQueueId !== deriveMarketQueueId(expiryMarketId)) throw new Error(`market queue ${marketQueueId} is not at its derived ID`);

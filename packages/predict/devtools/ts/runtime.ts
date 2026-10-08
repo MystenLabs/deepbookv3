@@ -62,6 +62,7 @@ import {
 import { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson } from "./artifacts.js";
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
 import { transactionClockTimestampMs } from "./grpcClock.js";
+import { objectLookupExists } from "./grpcObjects.js";
 
 export interface GasUsage {
     computationCost: number;
@@ -791,8 +792,7 @@ export async function readSupplyRequestsPending(): Promise<bigint> {
 
 // Whether a shared/owned object still exists on chain (used to make genesis steps idempotent).
 export async function objectExists(id: string): Promise<boolean> {
-    const result = (await client.getObjects({ objectIds: [id] })).objects[0] as any;
-    return result !== undefined && typeof result?.objectId === "string";
+    return objectLookupExists((await client.getObjects({ objectIds: [id] })).objects[0]);
 }
 
 // A market's expiry (ms) read from chain — recovers expiries for markets the keeper did
