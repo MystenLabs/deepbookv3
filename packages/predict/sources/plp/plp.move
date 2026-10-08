@@ -611,7 +611,7 @@ public fun finish_flush(
 /// market, ongoing live rebalance/surplus-sweep toward target, and the
 /// settled-market sweep (deactivate, return all free cash, materialize profit).
 /// The live target covers the market's queued orders' cash need
-/// (`expiry_market::waiting_cash_need`), so the keeper calls this after each
+/// (the waiting cash need in `expiry_market::order_flow_state`), so the keeper calls this after each
 /// enqueue to fund those orders' fills, and a sweep never takes that cash back.
 /// Call `expiry_market::try_settle` first in the same PTB when settlement may be due.
 /// An expired unsettled market is a no-op until that transition succeeds.
