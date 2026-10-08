@@ -86,6 +86,22 @@ const LIMIT_SPOT: u64 = 100_002_000_000;
 /// A settlement spot inside `(100, +inf]`, so the position wins its quantity.
 const WINNING_SETTLEMENT: u64 = 101_000_000_000;
 const OTHER_FEED_ID: u32 = 2;
+/// Market cash a 4m fill adds: PREMIUM + TRADING_FEE + ORDER_FEE.
+const MINT_CASH: u64 = 2_039_974;
+/// 10 USDC of sponsored incentives.
+const INCENTIVES: u64 = 10_000_000;
+/// The default 20% subsidy rate on the 20_000 subsidy bound.
+const RESERVED_SUBSIDY: u64 = 4_000;
+/// ALL_IN_COST - RESERVED_SUBSIDY: the trader pays the fee less the subsidy.
+const SUBSIDIZED_COST: u64 = 2_015_974;
+/// min(0.1 * 20_000, 0.005 * 4m).
+const BUILDER_FEE: u64 = 2_000;
+/// The default 10% referral share of the trader-paid 20_000 fee.
+const REFERRAL_FEE: u64 = 2_000;
+const BUILDER_CODE_INDEX: u64 = 0;
+/// One 4m fill owes 4m and brings MINT_CASH, so it fills exactly when cash
+/// before the fill is at least 4_000_000 - 2_039_974 = 1_960_026.
+const BOUNDARY_CASH: u64 = 1_960_026;
 
 // === Mints ===
 
@@ -681,6 +697,222 @@ fun releasing_with_another_subsidy_aborts() {
     abort 999
 }
 
+// === Accounting ===
+
+/// The reservation leaves the incentives at commit and the fill uses all of
+/// it: the market gains the whole fee, and the escrow handed back is the unused
+/// budget. Escrow in 3_000_000 + 20_000 + 4_000 = 3_024_000 = MINT_CASH
+/// 2_039_974 + change 984_026.
+#[test]
+fun a_subsidized_fill_uses_the_reservation_once() {
+    let (mut fx, mut market, mut account) = setup();
+    fund_incentives(&mut fx, &mut market);
+    let incentives_before = helpers::market(&market).fee_incentive_balance();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    assert_eq!(subsidy.value(), RESERVED_SUBSIDY);
+    assert_eq!(
+        helpers::market(&market).fee_incentive_balance(),
+        incentives_before - RESERVED_SUBSIDY,
+    );
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let (reason, kept, change, _, amount, fee, _, _, used, _) = fill(
+        &fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(used, RESERVED_SUBSIDY);
+    assert_eq!(fee, TRADING_FEE);
+    assert_eq!(amount, SUBSIDIZED_COST);
+    assert_eq!(change.value(), BUDGET - SUBSIDIZED_COST);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + MINT_CASH);
+    assert_eq!(
+        helpers::market(&market).fee_incentive_balance(),
+        incentives_before - RESERVED_SUBSIDY,
+    );
+    assert_flow_state(&market, 0, 1);
+    helpers::assert_market_backed_bundle(&market);
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// A refund at the tick returns the whole reservation to the incentives.
+#[test]
+fun a_refund_at_the_tick_returns_the_reservation() {
+    let (mut fx, mut market, mut account) = setup();
+    fund_incentives(&mut fx, &mut market);
+    let incentives_before = helpers::market(&market).fee_incentive_balance();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, MAX_PROBABILITY);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let (reason, kept, change, _, _, _, _, _, used, _) = fill(
+        &fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, constants::fill_reason_limits!());
+    assert_eq!(used, 0);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), incentives_before);
+    // Reason 1 keeps the order fee; the budget comes back.
+    assert_eq!(change.value(), BUDGET);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + ORDER_FEE);
+    assert_flow_state(&market, 0, 0);
+    kept.destroy_none();
+    destroy(change);
+    finish(fx, market, account);
+}
+
+/// A release returns the reservation the companion escrowed.
+#[test]
+fun releasing_a_committed_mint_returns_the_reservation() {
+    let (mut fx, mut market, mut account) = setup();
+    fund_incentives(&mut fx, &mut market);
+    let incentives_before = helpers::market(&market).fee_incentive_balance();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+
+    let kept = release(&mut market, receipt, subsidy, true);
+
+    kept.destroy_none();
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), incentives_before);
+    assert_flow_state(&market, 0, 0);
+    finish(fx, market, account);
+}
+
+/// The builder fee comes out of the escrow and leaves the market.
+#[test]
+fun a_builder_fee_comes_out_of_the_escrow() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let (reason, kept, change, _, amount, _, builder, referral, _, _) = fill(
+        &fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(builder, BUILDER_FEE);
+    assert_eq!(referral, 0);
+    assert_eq!(amount, ALL_IN_COST + BUILDER_FEE);
+    assert_eq!(change.value(), BUDGET - ALL_IN_COST - BUILDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + MINT_CASH);
+    helpers::assert_market_backed_bundle(&market);
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// The referral comes out of the trading fee, not the trader's cost, and
+/// leaves the market.
+#[test]
+fun a_referral_fee_comes_out_of_the_trading_fee() {
+    let (mut fx, expiry_id, trader, _) = helpers::setup_referred_live_market(
+        test_constants::default_expiry_ms(),
+        live_price(),
+    );
+    fx.cutover();
+    let mut market = fx.take_market_bundle(expiry_id);
+    set_witness(&mut fx, &mut market, true);
+    helpers::return_market_bundle(market);
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let (reason, kept, change, _, amount, _, _, referral, _, _) = fill(
+        &fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(referral, REFERRAL_FEE);
+    assert_eq!(amount, ALL_IN_COST);
+    assert_eq!(change.value(), BUDGET - ALL_IN_COST);
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        cash_before + MINT_CASH - REFERRAL_FEE,
+    );
+    helpers::assert_market_backed_bundle(&market);
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// Reason 8 at its boundary: with cash before the fill at exactly
+/// BOUNDARY_CASH the fill lands cash on required cash and fills.
+#[test]
+fun a_fill_landing_cash_on_required_cash_fills() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let taken = drain_cash_to(&mut market, BOUNDARY_CASH);
+
+    let (reason, kept, change, _, _, _, _, _, _, _) = fill(
+        &fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(helpers::market(&market).cash_balance(), QUANTITY);
+    assert_eq!(helpers::market(&market).required_cash(), QUANTITY);
+    helpers::assert_market_backed_bundle(&market);
+    destroy(taken);
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// One unit less and the fill would leave cash below required cash: reason 8
+/// returns the whole escrow, order fee included, moves no market cash, and
+/// takes the order out of the ledger.
+#[test]
+fun a_fill_one_unit_short_of_required_cash_refunds_with_reason_8() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let taken = drain_cash_to(&mut market, BOUNDARY_CASH - 1);
+
+    let (reason, kept, change, quantity, _, _, _, _, _, _) = fill(
+        &fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, constants::fill_reason_no_cash!());
+    assert_eq!(quantity, 0);
+    assert_eq!(change.value(), BUDGET + ORDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), BOUNDARY_CASH - 1);
+    assert_eq!(helpers::market(&market).required_cash(), 0);
+    assert_flow_state(&market, 0, 0);
+    kept.destroy_none();
+    destroy(taken);
+    destroy(change);
+    finish(fx, market, account);
+}
+
 // === Retired instant trading ===
 
 #[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
@@ -734,6 +966,19 @@ fun setup_at(expiry_ms: u64): (Fixture, MarketBundle, AccountBundle) {
     let market = fx.take_market_bundle(expiry_id);
     let account = fx.take_account_bundle(&trader);
     (fx, market, account)
+}
+
+/// Sponsor the pool and let a rebalance hand the market its fee incentives.
+fun fund_incentives(fx: &mut Fixture, market: &mut MarketBundle) {
+    fx.sponsor_fee_incentives_bundle(market, INCENTIVES);
+    fx.rebalance_expiry_cash_bundle(market);
+}
+
+/// Take market cash down to `cash` with no liability change (a test-only
+/// seam), returning what it took.
+fun drain_cash_to(market: &mut MarketBundle, cash: u64): Balance<USDC> {
+    let drain = helpers::market(market).cash_balance() - cash;
+    helpers::market_mut(market).take_market_cash_for_testing(drain)
 }
 
 fun set_witness(fx: &mut Fixture, market: &mut MarketBundle, enabled: bool) {
