@@ -22,6 +22,7 @@ use deepbook_predict::{
 use fixed_math::math;
 use sui::vec_map::VecMap;
 
+#[allow(unused_const)]
 const EInvalidCloseQuantity: u64 = 0;
 #[allow(unused_const)]
 const EInvalidAdmissionTick: u64 = 1;
@@ -31,15 +32,6 @@ const ETermsExposureMismatch: u64 = 4;
 #[allow(unused_const)]
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
-
-// Refund reasons `try_mint_terms` reports. They equal `order_queue`'s
-// `reason_limits()` and `reason_admission()`; this module sits below
-// `order_queue` and cannot import it.
-macro fun reason_none(): u8 { 0 }
-
-macro fun reason_limits(): u8 { 1 }
-
-macro fun reason_admission(): u8 { 2 }
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -233,7 +225,6 @@ public(package) fun release_valuation_snapshot(
 }
 
 /// Return one live order's full-close range value without consulting book state.
-#[test_only]
 public(package) fun live_order_value(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -551,7 +542,7 @@ public(package) fun try_mint_terms(
 ): (Option<MintTerms>, u8) {
     assert!(range.expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
     if (quantity < min_quantity || !is_valid_order_quantity(quantity)) {
-        return (option::none(), reason_limits!())
+        return (option::none(), constants::fill_reason_limits!())
     };
     let entry_probability = range.price.probability();
     let premium = math::mul_down(entry_probability, quantity);
@@ -559,7 +550,7 @@ public(package) fun try_mint_terms(
         !exposure.config.is_mint_probability_allowed(entry_probability)
             || premium < constants::min_premium!()
     ) {
-        return (option::none(), reason_admission!())
+        return (option::none(), constants::fill_reason_admission!())
     };
 
     let inventory_impact_charge = exposure.mint_range_inventory_impact(&range, quantity);
@@ -573,7 +564,7 @@ public(package) fun try_mint_terms(
         premium,
         inventory_impact_charge,
     };
-    (option::some(terms), reason_none!())
+    (option::some(terms), 0)
 }
 
 /// Non-aborting `quote_mint_terms`: `try_quote_mint_range`, then sizing, then
@@ -590,7 +581,7 @@ public(package) fun try_quote_mint_terms(
     exact_quantity: bool,
 ): (Option<MintTerms>, u8) {
     let range = exposure.try_quote_mint_range(pricer, lower_tick, higher_tick);
-    if (range.is_none()) return (option::none(), reason_admission!());
+    if (range.is_none()) return (option::none(), constants::fill_reason_admission!());
     let range = range.destroy_some();
     let quantity = if (exact_quantity) {
         min_quantity
@@ -607,7 +598,7 @@ public(package) fun try_quote_mint_terms(
 public(package) fun max_quantity_for_premium(range: &MintRange, max_premium: u64): u64 {
     let lot = constants::position_lot_size!();
     let mut lo = 0;
-    let mut hi = order::max_quantity_lots();
+    let mut hi = order::max_quantity_lots!();
     while (lo < hi) {
         let mid = (lo + hi + 1) / 2;
         if (range.mint_range_premium(mid * lot) <= max_premium) {
@@ -766,6 +757,7 @@ public(package) fun try_quote_live_close(
 /// Quote one prospective live close as pure terms, touching neither the book nor
 /// the oracle after the supplied `Pricer` snapshot. Boundary prices feed fees;
 /// mint probability eligibility is deliberately not applied to exits.
+#[test_only]
 public(package) fun quote_live_close(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -975,7 +967,7 @@ fun is_valid_order_range(lower_tick: u64, higher_tick: u64): bool {
 /// that fits the order ID's lot field.
 fun is_valid_order_quantity(quantity: u64): bool {
     let lot_size = constants::position_lot_size!();
-    quantity > 0 && quantity % lot_size == 0 && quantity / lot_size <= order::max_quantity_lots()
+    quantity > 0 && quantity % lot_size == 0 && quantity / lot_size <= order::max_quantity_lots!()
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): RangePrice {

@@ -15,13 +15,13 @@
 /// `assert_pyth_spot_fresh`. Exact-history reads do not apply live freshness policy.
 ///
 /// Delayed execution splits that read in two. `load_vol_snapshot` validates the same live
-/// inputs when an order is queued and returns the raw Block Scholes basis and SVI it stores;
-/// `pricer_at` later rebuilds a `Pricer` from them at the order's committed Pyth tick. The
-/// `try_*` reads price exactly as `up_price` and `range_price` do, and return `none` where those
-/// abort, so resolving a queue never aborts on a surface.
+/// inputs when an order is admitted and returns the raw Block Scholes basis and SVI its receipt
+/// stores; `pricer_at` later rebuilds a `Pricer` from them at the order's committed Pyth tick.
+/// The `try_*` reads price exactly as `up_price` and `range_price` do, and return `none` where
+/// those abort, so an order-flow fill never aborts on a surface.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::Strike};
+use deepbook_predict::{pricing_config::PricingConfig, range_codec::Strike};
 use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},
@@ -125,10 +125,11 @@ public struct PricingSVI has copy, drop, store {
     sigma: u64,
 }
 
-/// The raw volatility inputs an enqueue read, stored on the queued order so
-/// resolve can rebuild a `Pricer` at the order's committed Pyth tick (RP-32: the
-/// rebuilt `Pricer` never leaves a package function). Captured by
+/// The raw volatility inputs an order-flow admission read, stored in the order's
+/// receipt so its fill can rebuild a `Pricer` at the committed Pyth tick (RP-32:
+/// the rebuilt `Pricer` never leaves a package function). Captured by
 /// `load_vol_snapshot` in the trader's transaction and never written by a keeper.
+/// Read through BCS; Predict exposes no field getters.
 public struct VolSnapshot has copy, drop, store {
     /// Canonical Propbook Pyth source for the market's underlying; commit finds
     /// this feed in each Lazer update.
@@ -237,53 +238,6 @@ public fun probability(price: &RangePrice): u64 {
     let lower = price.lower_up.get_with_default(math::float_scaling!());
     let higher = price.higher_up.get_with_default(0);
     lower.saturating_sub(higher)
-}
-
-// === VolSnapshot Getters ===
-// Public for SDK and devInspect reads of a queued order's snapshot.
-
-public fun pyth_source_id(snapshot: &VolSnapshot): u32 {
-    snapshot.pyth_source_id
-}
-
-public fun bs_spot(snapshot: &VolSnapshot): u64 {
-    snapshot.bs_spot
-}
-
-public fun bs_forward(snapshot: &VolSnapshot): u64 {
-    snapshot.bs_forward
-}
-
-public fun svi_a(snapshot: &VolSnapshot): I64 {
-    snapshot.svi_a
-}
-
-public fun svi_b(snapshot: &VolSnapshot): u64 {
-    snapshot.svi_b
-}
-
-public fun svi_rho(snapshot: &VolSnapshot): I64 {
-    snapshot.svi_rho
-}
-
-public fun svi_m(snapshot: &VolSnapshot): I64 {
-    snapshot.svi_m
-}
-
-public fun svi_sigma(snapshot: &VolSnapshot): u64 {
-    snapshot.svi_sigma
-}
-
-public fun bs_spot_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
-    snapshot.bs_spot_source_timestamp_ms
-}
-
-public fun bs_forward_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
-    snapshot.bs_forward_source_timestamp_ms
-}
-
-public fun svi_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
-    snapshot.svi_source_timestamp_ms
 }
 
 // === Public-Package Functions ===
@@ -462,6 +416,22 @@ public(package) fun load_vol_snapshot(
     (snapshot, pricer)
 }
 
+/// The Propbook Pyth source a volatility snapshot was captured against, so the
+/// order-flow companion reads the matching feed from each Lazer update.
+public(package) fun pyth_source_id(snapshot: &VolSnapshot): u32 {
+    snapshot.pyth_source_id
+}
+
+/// Whether a committed Pyth `spot` may price an order captured in `snapshot`:
+/// at most Predict's pricing-safe ceiling, which keeps `pricer_at`'s re-anchored
+/// forward inside `u64`, and within 10% of the snapshot's Block Scholes spot. A
+/// wrong feed, exponent, or unit moves a reported spot far outside that band,
+/// while Pyth and Block Scholes normally differ by well under 1% over the few
+/// seconds an order waits.
+public(package) fun is_committable_spot(snapshot: &VolSnapshot, spot: u64): bool {
+    spot <= max_pricing_spot!() && spot.diff(snapshot.bs_spot) <= snapshot.bs_spot / 10
+}
+
 /// Rebuild a `Pricer` from a queued order's snapshot at a committed Pyth tick:
 /// the snapshotted Block Scholes basis re-anchored on `spot`, and the raw SVI
 /// rolled down to `tick_ms`. The Pyth source timestamp is `generation_ms`; the
@@ -519,34 +489,6 @@ public(package) fun try_range_price(
 ): Option<RangePrice> {
     let (price, _) = evaluate_range_price(pricer, lower, higher);
     price
-}
-
-/// Normalize a Lazer price and exponent to Predict's 1e9 spot, rounding down
-/// when the source is finer. `none` for a zero or negative price, a decimal
-/// shift past 18, a result that rounds to zero, or a spot above Predict's
-/// pricing-safe ceiling (which also covers overflow). Matches Propbook's Pyth
-/// normalization below that ceiling, so a committed price reads as the feed
-/// would record it.
-public(package) fun normalize_lazer_spot(
-    magnitude: u64,
-    is_negative: bool,
-    exponent_magnitude: u16,
-    exponent_is_negative: bool,
-): Option<u64> {
-    if (is_negative) return option::none();
-    let target = constants::float_scaling_decimals!();
-    let exponent = exponent_magnitude as u64;
-    let spot = if (exponent_is_negative && exponent > target) {
-        let shift = exponent - target;
-        if (shift > 18) return option::none();
-        (magnitude / math::pow10(shift)) as u128
-    } else {
-        let shift = if (exponent_is_negative) target - exponent else target + exponent;
-        if (shift > 18) return option::none();
-        (magnitude as u128) * (math::pow10(shift) as u128)
-    };
-    if (spot == 0 || spot > (max_pricing_spot!() as u128)) return option::none();
-    option::some(spot as u64)
 }
 
 /// Abort unless the selected Pyth spot was usable and fresh when this pricer was
@@ -1160,6 +1102,44 @@ public(package) fun variance_sqrt_and_d2_for_testing(
     let total_var = total_variance(a_magnitude, a_is_negative, b, inner);
     assert!(total_var.is_some(), ENonPositiveVariance);
     sqrt_variance_and_d2(total_var.destroy_some(), k)
+}
+
+// Field reads for tests; production reads a snapshot through BCS.
+
+#[test_only]
+public(package) fun bs_spot(snapshot: &VolSnapshot): u64 { snapshot.bs_spot }
+
+#[test_only]
+public(package) fun bs_forward(snapshot: &VolSnapshot): u64 { snapshot.bs_forward }
+
+#[test_only]
+public(package) fun svi_a(snapshot: &VolSnapshot): I64 { snapshot.svi_a }
+
+#[test_only]
+public(package) fun svi_b(snapshot: &VolSnapshot): u64 { snapshot.svi_b }
+
+#[test_only]
+public(package) fun svi_rho(snapshot: &VolSnapshot): I64 { snapshot.svi_rho }
+
+#[test_only]
+public(package) fun svi_m(snapshot: &VolSnapshot): I64 { snapshot.svi_m }
+
+#[test_only]
+public(package) fun svi_sigma(snapshot: &VolSnapshot): u64 { snapshot.svi_sigma }
+
+#[test_only]
+public(package) fun bs_spot_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
+    snapshot.bs_spot_source_timestamp_ms
+}
+
+#[test_only]
+public(package) fun bs_forward_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
+    snapshot.bs_forward_source_timestamp_ms
+}
+
+#[test_only]
+public(package) fun svi_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
+    snapshot.svi_source_timestamp_ms
 }
 
 /// Build a `VolSnapshot` from its raw fields, in struct order, so unit tests can

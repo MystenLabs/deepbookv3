@@ -4,11 +4,12 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the fee-incentive
-/// subsidy, live-target, and lifetime-cap rates, the delayed-execution policy, the
-/// trading pause gate, the protocol-wide emergency freeze, the version watermark
-/// (reaching `current_version!()` is also the delayed-execution cutover), the
-/// allowlists of keepers that may redeem settled orders without owner auth and of
-/// operators that may finish an LP flush, and the full-pool valuation in-flight
+/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
+/// protocol-wide emergency freeze, the version watermark (reaching
+/// `current_version!()` is also the delayed-execution cutover), the allowlists of
+/// keepers that may redeem settled orders without owner auth, of operators that
+/// may finish an LP flush, and of the order-flow companion witness types that may
+/// drive the order-flow primitives, and the full-pool valuation in-flight
 /// state (flag + flush ordinal, held across the transactions a flush spans;
 /// keeper/config flows gate on it, trading flows read it only to discard stale
 /// stamps lazily). Flow modules decide which gates apply before they mutate expiry,
@@ -20,17 +21,18 @@ use deepbook_predict::{
     config_constants,
     config_events,
     constants,
-    delayed_execution_config::{Self, DelayedExecutionPolicy},
     ewma_config::{Self, EwmaConfig},
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
+use std::type_name;
 use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
 use fun df::borrow_mut as UID.borrow_mut;
 use fun df::exists as UID.exists_;
+use fun df::remove as UID.remove;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -43,16 +45,12 @@ const ESnapshotInProgress: u64 = 6;
 const ETradeWindowClosed: u64 = 7;
 const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
 const ESettledRedeemKeeperNotFound: u64 = 9;
-const EPolicyNotInitialized: u64 = 10;
-const EPolicyAlreadyInitialized: u64 = 11;
-const EInvalidDelayedExecutionTiming: u64 = 12;
-const EInvalidDelayedExecutionLimits: u64 = 13;
-const EFlushOperatorAlreadyAdded: u64 = 14;
-const EFlushOperatorNotFound: u64 = 15;
-const ENotFlushOperator: u64 = 16;
-const ECutoverNotReached: u64 = 17;
-const EUnsupportedPythChannel: u64 = 18;
-const EEwmaRetired: u64 = 19;
+const EFlushOperatorAlreadyAdded: u64 = 10;
+const EFlushOperatorNotFound: u64 = 11;
+const ENotFlushOperator: u64 = 12;
+const ECutoverNotReached: u64 = 13;
+const EEwmaRetired: u64 = 14;
+const EOrderFlowNotAllowed: u64 = 15;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -158,16 +156,15 @@ public struct FeeIncentiveLiveTargetRateKey() has copy, drop, store;
 /// the fixed share earlier package versions used.
 public struct FeeIncentiveLifetimeCapRateKey() has copy, drop, store;
 
-/// Dynamic-field key on `ProtocolConfig` for the `DelayedExecutionPolicy`. The
-/// policy arrived after deploy, so it lives off the struct layout. It is absent
-/// until `init_delayed_execution_policy` runs, and every queue flow that reads it
-/// aborts `EPolicyNotInitialized` until then.
-public struct DelayedExecutionPolicyKey() has copy, drop, store;
-
 /// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of flush
 /// operators allowed to call `plp::finish_flush`. An absent field is an empty set,
 /// which rejects every caller.
 public struct FlushOperatorsKey() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` whose presence allowlists the witness
+/// type `W` for Predict's order-flow primitives. Holds `true`; an absent field
+/// refuses `W`.
+public struct OrderFlowKey<phantom W>() has copy, drop, store;
 
 // === Public Functions ===
 
@@ -241,14 +238,6 @@ public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
     config.no_trade_window_ms
 }
 
-/// Return the delayed-execution policy, or `none` before
-/// `init_delayed_execution_policy` runs. For SDK and devInspect reads.
-public fun delayed_execution_policy(config: &ProtocolConfig): Option<DelayedExecutionPolicy> {
-    if (!config.id.exists_(DelayedExecutionPolicyKey())) return option::none();
-    let policy: &DelayedExecutionPolicy = config.id.borrow(DelayedExecutionPolicyKey());
-    option::some(*policy)
-}
-
 /// Whether `operator` may call `plp::finish_flush`. For SDK, keeper, and
 /// devInspect reads; `finish_flush` gates through `assert_flush_operator`.
 public fun is_flush_operator(config: &ProtocolConfig, operator: address): bool {
@@ -256,6 +245,13 @@ public fun is_flush_operator(config: &ProtocolConfig, operator: address): bool {
     if (!config.id.exists_(key)) return false;
     let operators: &VecSet<address> = config.id.borrow(key);
     operators.contains(&operator)
+}
+
+/// Whether the witness type `W` may drive Predict's order-flow primitives
+/// (admission, commit, and fill). For SDK, keeper, and devInspect reads and the
+/// companion's setup checks; the primitives gate through `assert_order_flow`.
+public fun is_order_flow<W: drop>(config: &ProtocolConfig): bool {
+    config.id.exists_(OrderFlowKey<W>())
 }
 
 /// Return the runtime version floor. For SDK, keeper, and devInspect reads: the
@@ -592,108 +588,6 @@ public fun remove_settled_redeem_keeper(
     config_events::emit_settled_redeem_keeper_updated(keeper, false);
 }
 
-/// Write the delayed-execution policy with its compiled defaults. Admin-only and
-/// version-gated; aborts if the policy already exists. Not gated on an open LP
-/// valuation, so a stalled flush cannot block it. Until it runs, enqueue,
-/// commit, and resolve abort `EPolicyNotInitialized`.
-public fun init_delayed_execution_policy(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    clock: &Clock,
-) {
-    config.assert_version();
-    assert!(!config.id.exists_(DelayedExecutionPolicyKey()), EPolicyAlreadyInitialized);
-    let policy = delayed_execution_config::new();
-    config.id.add(DelayedExecutionPolicyKey(), policy);
-    config_events::emit_delayed_execution_policy_updated(&policy, clock.timestamp_ms());
-}
-
-/// Set every delayed-execution timing field and the Pyth channel in one call, so
-/// the relational order `pyth_price_buffer_ms < stuck_threshold_ms <=
-/// gap_wait_ms < stall_timeout_ms` is checked on the final state and an admin
-/// never passes through an invalid intermediate one. Each value must also sit in
-/// its `config_constants` bound, the channel must be a fixed-rate Lazer channel
-/// (`EUnsupportedPythChannel`), the buffer must be `0` or exactly one tick of it,
-/// and the stuck threshold at least one tick (`EInvalidDelayedExecutionTiming`).
-///
-/// Waiting orders keep the τ, deadline, and channel stored at enqueue, so a new
-/// delay, stall timeout, or channel only reaches new orders. Commit reads the
-/// buffer and gap wait when it runs, so they also apply to waiting cohorts.
-/// Admin-only and version-gated; not gated on an open LP valuation.
-public fun set_delayed_execution_timing(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    delay_ms: u64,
-    stall_timeout_ms: u64,
-    stuck_threshold_ms: u64,
-    gap_wait_ms: u64,
-    pyth_price_buffer_ms: u64,
-    pyth_channel: u8,
-    svi_max_age_ms: u64,
-    clock: &Clock,
-) {
-    config.assert_version();
-    let mut policy = *config.policy();
-    policy.set_timing(
-        delay_ms,
-        stall_timeout_ms,
-        stuck_threshold_ms,
-        gap_wait_ms,
-        pyth_price_buffer_ms,
-        pyth_channel,
-        svi_max_age_ms,
-    );
-    assert_delayed_execution_timing(&policy);
-    config.store_policy(policy, clock);
-}
-
-/// Set the queue capacities, the per-account cap, the minimum early sell, and
-/// the two `try_settle` batch sizes. Each value must sit in its
-/// `config_constants` bound, and the per-account cap may not exceed the smaller
-/// capacity (`EInvalidDelayedExecutionLimits`). Lowering a capacity below the
-/// current pending count only blocks new orders. Admin-only and version-gated;
-/// not gated on an open LP valuation.
-public fun set_delayed_execution_limits(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    mint_capacity: u64,
-    sell_capacity: u64,
-    per_account_cap: u64,
-    min_sell_quantity: u64,
-    settle_refund_batch: u64,
-    settle_payout_batch: u64,
-    clock: &Clock,
-) {
-    config.assert_version();
-    let mut policy = *config.policy();
-    policy.set_limits(
-        mint_capacity,
-        sell_capacity,
-        per_account_cap,
-        min_sell_quantity,
-        settle_refund_batch,
-        settle_payout_batch,
-    );
-    assert!(per_account_cap <= mint_capacity.min(sell_capacity), EInvalidDelayedExecutionLimits);
-    config.store_policy(policy, clock);
-}
-
-/// Set the flat fee charged per queued order, in USDC base units, up to the
-/// `config_constants` cap of 1 USDC. Applies to orders placed after the call;
-/// waiting orders keep the fee they paid. Admin-only and version-gated; not
-/// gated on an open LP valuation.
-public fun set_order_fee(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    order_fee: u64,
-    clock: &Clock,
-) {
-    config.assert_version();
-    let mut policy = *config.policy();
-    policy.set_order_fee(order_fee);
-    config.store_policy(policy, clock);
-}
-
 /// Allow `operator` to call `plp::finish_flush`. Admin-only and version-gated;
 /// aborts if `operator` is already allowed. Not gated on an open LP valuation,
 /// so an admin can always add an operator to finish a stuck flush.
@@ -727,6 +621,35 @@ public fun remove_flush_operator(
     let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
     operators.remove(&operator);
     config_events::emit_flush_operator_updated(operator, false, clock.timestamp_ms());
+}
+
+/// Allowlist (`enabled = true`) or remove the witness type `W` of an order-flow
+/// companion for Predict's order-flow primitives. Removing it stops admissions,
+/// commits, and fills only: `release` and `try_pay_settled` need a receipt, not
+/// the allowlist, so waiting orders still drain and queue-held positions are
+/// still paid. Admin-only. Enabling is version-gated, since it grants authority;
+/// removing is ungated, like `remove_flush_operator`, so it works under the
+/// emergency freeze and from a package version below the runtime floor. Setting
+/// the state `W` already has changes nothing but still emits `OrderFlowUpdated`.
+public fun set_order_flow<W: drop>(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+    clock: &Clock,
+) {
+    if (enabled) config.assert_version();
+    let key = OrderFlowKey<W>();
+    let listed = config.id.exists_(key);
+    if (enabled && !listed) {
+        config.id.add(key, true);
+    } else if (!enabled && listed) {
+        let _: bool = config.id.remove(key);
+    };
+    config_events::emit_order_flow_updated(
+        type_name::with_defining_ids<W>(),
+        enabled,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Advance the version floor to this package's compiled-in `current_version!()`.
@@ -942,17 +865,15 @@ public(package) fun is_settled_redeem_keeper(config: &ProtocolConfig, keeper: ad
     keepers.contains(&keeper)
 }
 
-/// Return the delayed-execution policy. Aborts `EPolicyNotInitialized` before
-/// `init_delayed_execution_policy` runs.
-public(package) fun policy(config: &ProtocolConfig): &DelayedExecutionPolicy {
-    assert!(config.id.exists_(DelayedExecutionPolicyKey()), EPolicyNotInitialized);
-    config.id.borrow(DelayedExecutionPolicyKey())
-}
-
 /// Abort unless the transaction sender is a flush operator. An absent allowlist
 /// rejects everyone.
 public(package) fun assert_flush_operator(config: &ProtocolConfig, ctx: &TxContext) {
     assert!(config.is_flush_operator(ctx.sender()), ENotFlushOperator);
+}
+
+/// Abort unless the witness type `W` is allowlisted for the order-flow primitives.
+public(package) fun assert_order_flow<W: drop>(config: &ProtocolConfig) {
+    assert!(config.is_order_flow<W>(), EOrderFlowNotAllowed);
 }
 
 /// Abort until the watermark has reached this package's `current_version!()`,
@@ -1092,35 +1013,6 @@ fun emit_fee_incentive_allocation_rates_updated(config: &ProtocolConfig, clock: 
         config.fee_incentive_lifetime_cap_rate(),
         clock.timestamp_ms(),
     );
-}
-
-/// Abort unless the timing fields fit the policy channel and each other: the
-/// buffer is `0` or exactly one tick, so a backup tick can only be the next
-/// update after τ; the stuck threshold spans at least one tick; and `buffer <
-/// stuck <= gap < stall`, where `gap < stall` leaves commit room to take a
-/// backup tick before the deadline refund. The channel check comes first
-/// because the tick size is only defined for a supported channel.
-fun assert_delayed_execution_timing(policy: &DelayedExecutionPolicy) {
-    let channel = policy.pyth_channel();
-    assert!(delayed_execution_config::is_supported_channel(channel), EUnsupportedPythChannel);
-    let tick_ms = delayed_execution_config::channel_tick_ms(channel);
-    let buffer_ms = policy.pyth_price_buffer_ms();
-    let stuck_ms = policy.stuck_threshold_ms();
-    let gap_ms = policy.gap_wait_ms();
-    assert!(buffer_ms == 0 || buffer_ms == tick_ms, EInvalidDelayedExecutionTiming);
-    assert!(stuck_ms >= tick_ms, EInvalidDelayedExecutionTiming);
-    assert!(
-        buffer_ms < stuck_ms && stuck_ms <= gap_ms && gap_ms < policy.stall_timeout_ms(),
-        EInvalidDelayedExecutionTiming,
-    );
-}
-
-/// Replace the stored policy with a fully validated one and emit its complete
-/// post-state.
-fun store_policy(config: &mut ProtocolConfig, policy: DelayedExecutionPolicy, clock: &Clock) {
-    let stored: &mut DelayedExecutionPolicy = config.id.borrow_mut(DelayedExecutionPolicyKey());
-    *stored = policy;
-    config_events::emit_delayed_execution_policy_updated(&policy, clock.timestamp_ms());
 }
 
 /// Read a `u64` knob made tunable after deploy and stored in a dynamic field, or

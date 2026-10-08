@@ -4,11 +4,8 @@
 /// Admin and configuration events for Predict.
 module deepbook_predict::config_events;
 
-use deepbook_predict::{
-    delayed_execution_config::DelayedExecutionPolicy,
-    pricing_config::PricingConfig,
-    strike_exposure_config::StrikeExposureConfig
-};
+use deepbook_predict::{pricing_config::PricingConfig, strike_exposure_config::StrikeExposureConfig};
+use std::type_name::TypeName;
 use sui::event;
 
 /// Emitted when the strike-exposure policy template for future markets changes.
@@ -90,18 +87,19 @@ public struct SettledRedeemKeeperUpdated has copy, drop, store {
     allowed: bool,
 }
 
-/// Emitted by every delayed-execution policy write (initialization and each
-/// setter) with the complete post-state.
-public struct DelayedExecutionPolicyUpdated has copy, drop, store {
-    policy: DelayedExecutionPolicy,
-    onchain_timestamp_ms: u64,
-}
-
 /// Emitted when admin adds (`added = true`) or removes (`added = false`) an
 /// address allowed to call `plp::finish_flush`.
 public struct FlushOperatorUpdated has copy, drop, store {
     operator: address,
     added: bool,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when admin allowlists (`enabled = true`) or removes (`enabled =
+/// false`) an order-flow companion witness type, `order_flow`.
+public struct OrderFlowUpdated has copy, drop, store {
+    order_flow: TypeName,
+    enabled: bool,
     onchain_timestamp_ms: u64,
 }
 
@@ -277,11 +275,12 @@ public(package) fun emit_settled_redeem_keeper_updated(keeper: address, allowed:
     event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
 }
 
-public(package) fun emit_delayed_execution_policy_updated(
-    policy: &DelayedExecutionPolicy,
+public(package) fun emit_order_flow_updated(
+    order_flow: TypeName,
+    enabled: bool,
     onchain_timestamp_ms: u64,
 ) {
-    event::emit(DelayedExecutionPolicyUpdated { policy: *policy, onchain_timestamp_ms });
+    event::emit(OrderFlowUpdated { order_flow, enabled, onchain_timestamp_ms });
 }
 
 public(package) fun emit_flush_operator_updated(

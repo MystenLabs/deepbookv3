@@ -92,9 +92,10 @@ public(package) fun assert_valid_quantity(quantity: u64) {
     assert!(quantity / lot_size <= U32_MASK as u64, EInvalidQuantity);
 }
 
-public(package) fun max_quantity_lots(): u64 {
-    U32_MASK as u64
-}
+/// Return the largest lot count an order ID can encode, the width of its quantity field. That
+/// layout is frozen, so this never changes. A macro, so callers outside Predict share it at no
+/// bytecode cost.
+public macro fun max_quantity_lots(): u64 { (1u64 << 32) - 1 }
 
 fun new(lower_tick: u64, higher_tick: u64, quantity_lots: u64, sequence: u64): Order {
     assert!(lower_tick <= tick_mask!() as u64, EInvalidTick);
