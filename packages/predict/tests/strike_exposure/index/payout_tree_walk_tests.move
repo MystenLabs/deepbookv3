@@ -27,6 +27,7 @@ use deepbook_predict::{
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
+use sui::vec_map;
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes
 /// price close together and smoothly — a real clustered-price regime.
@@ -164,7 +165,7 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
 
     // Removing the middle range deletes two interior boundary nodes through GC; the walk, settlement,
     // and rebuilt-tree assertions below prove those boundaries left no trace.
-    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
+    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, &vec_map::empty());
 
     let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
     rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);

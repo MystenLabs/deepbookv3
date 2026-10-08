@@ -10,6 +10,7 @@ module deepbook_predict::strike_payout_tree_range_max_tests;
 
 use deepbook_predict::{constants, strike_payout_tree};
 use std::unit_test::{assert_eq, destroy};
+use sui::vec_map;
 
 #[test]
 fun empty_tree_has_zero_peaks() {
@@ -62,11 +63,11 @@ fun shared_boundaries_and_removal_refresh_peaks() {
     assert_eq!(tree.range_max_payout(1, 4), 65);
     assert_eq!(tree.complement_max_payout(1, 4), 30);
 
-    tree.remove_range(1, 4, 25);
+    tree.remove_range(1, 4, 25, &vec_map::empty());
     assert_eq!(tree.range_max_payout(1, 4), 40);
     assert_eq!(tree.complement_max_payout(1, 4), 30);
 
-    tree.remove_range(1, 4, 40);
+    tree.remove_range(1, 4, 40, &vec_map::empty());
     assert_eq!(tree.range_max_payout(1, 4), 0);
     assert_eq!(tree.complement_max_payout(1, 4), 30);
     destroy(tree);

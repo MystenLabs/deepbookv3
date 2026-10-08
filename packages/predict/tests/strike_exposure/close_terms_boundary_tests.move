@@ -12,7 +12,7 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use sui::object::{Self, UID};
+use sui::{object::{Self, UID}, vec_map};
 
 public struct ExposureHarness has key {
     id: UID,
@@ -58,7 +58,7 @@ fun process_live_close_of_terms_quoted_on_another_exposure_aborts() {
     let close_terms = harness_a.exposure.quote_live_close(&pricer, &order, order.quantity());
 
     // Consuming A's close terms on exposure B must abort.
-    harness_b.exposure.process_live_close(close_terms);
+    harness_b.exposure.process_live_close(close_terms, &vec_map::empty());
 
     abort 999
 }

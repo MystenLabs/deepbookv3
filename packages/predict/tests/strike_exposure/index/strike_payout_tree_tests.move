@@ -11,6 +11,7 @@ module deepbook_predict::strike_payout_tree_tests;
 
 use deepbook_predict::{constants, strike_payout_tree::{Self, StrikePayoutTree}};
 use std::unit_test::{assert_eq, destroy};
+use sui::vec_map;
 
 /// Per-tick raw-strike scale used to turn a settlement tick into a raw oracle
 /// price (`settlement = tick * TICK_SIZE`). The exact value is arbitrary for the
@@ -52,6 +53,7 @@ fun remove_range(tree: &mut StrikePayoutTree, lower_tick: u64, higher_tick: u64,
         lower_tick,
         higher_tick,
         quantity,
+        &vec_map::empty(),
     );
 }
 

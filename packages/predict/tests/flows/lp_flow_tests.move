@@ -182,17 +182,15 @@ fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
 }
 
 #[test]
-fun a_committed_supply_budget_is_honored_when_a_stranger_finishes() {
+fun a_committed_supply_budget_is_honored_at_a_later_finish() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, 0);
     // Two supply requests wait in the queue before the flush.
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
 
-    // The operator commits a supply budget of ONE at the snapshot — the only place a
-    // budget can be set now. This is the whole reason finish could be made
-    // permissionless: a griefer can no longer pass a zero budget at finish to retire
-    // the mark with nothing filled, because finish takes no budget at all.
+    // The cap holder commits a supply budget of ONE at the snapshot, the only place
+    // a budget can be set: finish takes no budget at all.
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
@@ -206,10 +204,10 @@ fun a_committed_supply_budget_is_honored_when_a_stranger_finishes() {
     return_shared(config);
     return_shared(vault);
 
-    // A stranger finishes. The budget committed at start still bounds the drain to one
-    // request: the first deposit mints, the second stays queued — the stranger cannot
-    // widen or zero it.
-    fx.scenario_mut().next_tx(test_constants::alice());
+    // The flush operator finishes in a later transaction. The budget committed at
+    // start still bounds the drain to one request: the first deposit mints, the second
+    // stays queued.
+    fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let _ = fx.finish_flush(&mut vault, &mut config);

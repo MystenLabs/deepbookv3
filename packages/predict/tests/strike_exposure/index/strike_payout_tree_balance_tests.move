@@ -22,6 +22,7 @@ module deepbook_predict::strike_payout_tree_balance_tests;
 
 use deepbook_predict::{constants, strike_payout_tree::{Self, StrikePayoutTree}};
 use std::unit_test::{assert_eq, destroy};
+use sui::vec_map;
 
 const QUANTITY: u64 = 1_000_000;
 const NODES: u64 = 100;
@@ -63,7 +64,7 @@ fun insert(tree: &mut StrikePayoutTree, tick: u64) {
 }
 
 fun remove(tree: &mut StrikePayoutTree, tick: u64) {
-    tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY);
+    tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY, &vec_map::empty());
 }
 
 /// Insert one finite boundary per tick, checking the whole invariant after each —
