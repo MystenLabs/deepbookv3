@@ -18,32 +18,46 @@ python3 -m harness cleanup --instances
 
 | Task | Purpose | Retained output |
 | --- | --- | --- |
-| `smoke` | Stage and publish the package closure once. | Failure artifacts, or the full instance with `--keep`. |
+| `smoke` | Stage and publish the package closure once, including the `predict_math` library and the `predict_orders` order-flow companion. | Failure artifacts, or the full instance with `--keep`. |
 | `live` | Hold one localnet with keeper, signed oracle updater, and optional fuzz traders. | Deployment and actor traces. |
 | `campaign` | Run named strategies concurrently, one isolated localnet per strategy, from one market-data hub. | Atomic campaign manifest, hub metrics, and per-strategy traces. |
-| `parity` | Generate a seeded scenario and compare localnet contract behavior with the independent Python model. | Exact scenario, manifest, local trace, economic outputs, and failures. |
+| `parity` | Generate a seeded scenario, run it on localnet through the delayed-execution queue, and compare the result with the independent Python model (see [the simulations README](../simulations/README.md)). | Exact scenario, manifest, local trace, economic outputs, and failures. |
 | `analyze` | Reduce retained campaign traces into measurements and a contract-bug verdict. | Terminal report and exit status. |
 | `status` / `cleanup` | Inspect or reclaim localnet slots. | Slot registry state. |
 
-The external gas-benchmark worker calls `python3 -m harness benchmark --source <downloaded-snapshot.csv> --results-output <path>`. The worker passes the downloaded source path directly; the task runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
+The external gas-benchmark worker calls `python3 -m harness benchmark --source <downloaded-snapshot.csv> --results-output <path>`. It runs the same parity scenario. The worker passes the downloaded source path directly; the task runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
+
+## Delayed execution
+
+The immediate mints and `redeem_live` abort, so every trade is queued in the order-flow companion, `deepbook_predict_orders`. The staged closure publishes `predict_math`, then Predict, then `predict_orders`, whose publish shares the deployment's one `OrderDesk` with the launch policy. `deployment.json` records it as `order_desk`, and the actors read it with the companion's package ID from `.env.localnet`. Setup allowlists the companion's `OrderFlow` witness with `protocol_config::set_order_flow`, without which Predict refuses every admission, commit, and fill, and adds the publisher, which sends every flush, as a flush operator before the bootstrap flush. Both steps read first, so re-attaching to a localnet stays idempotent.
+
+Each market needs its `MarketQueue` before anyone can place on it. The keeper creates it with `queue::create_and_share` right after the market, at the ID derived from the desk and the market, and before it funds and advertises the market. A market picked up from chain without a queue, as after a restart between the two transactions, gets its queue on the next funding pass.
+
+Traders fill their own orders. The strategy context enqueues a mint or an early sell in the market's queue, waits for the order's τ, signs the updater's latest spot for τ with the local Pyth signer, and commits and resolves in one PTB, since both calls are permissionless. Commit takes the verified Lazer updates by value. A held position is the Open record a fill left, and an early sell goes through `enqueue_redeem_open`. A partial fill keeps the remainder in the sell's own record. Mint and redeem traces carry the enqueue gas, the fill gas, and the outcome: filled, refunded with a reason, or still waiting. The queue events come from `predict_orders::queue_events`, and a fill also emits Predict's `OrderMinted` or `LiveOrderRedeemed`, so the readers match events by module and name rather than by the called package.
+
+The keeper rebalances every live market each tick, so queued orders' cash need is funded. It settles each expired market in its own transactions: Predict's `try_settle` until the market is settled, then the queue's `settle_step`, one call per transaction, until the payout walk completes, then `cleanup` of the finished records, and only then the sweep. So a market with unpaid Open records stays in the chain-reconciled active set. Before a flush it first settles, pays, and sweeps every market that expired since, and the snapshot transaction settles nothing, so the snapshot's own sweep never drops a market whose Open records are unpaid.
+
+The bug oracle treats aborts from the companion's `queue`, `order_queue`, `desk`, and `delayed_execution_config` modules, and from the library's `lazer_price`, as expected guards, like Predict's own guard modules.
 
 ## Strategy registry
 
-Evergreen behavioral strategies:
+Evergreen behavioral strategies, which trade through the queue:
 
 - `fuzz`
 - `mint-only`
 - `mixed-churn`
 
-Capacity profiles generated by one strategy family:
+Capacity profiles generated by one strategy family, disabled pending a queued-flow redesign:
 
 - `capacity-single` — one far market, batched book fill
 - `capacity-pool` — round-robin batched fill across live markets
 - `capacity-tree` — one market with distinct payout-tree strikes
 
-Cleanup-economics profiles generated by one state machine:
+Cleanup-economics profiles generated by one state machine, disabled pending a queued-flow redesign:
 
 - `cleanup-survivor`
+
+The capacity and cleanup profiles stay registered but cannot run. They build their books with batched immediate mints, which always abort now, so the context's batch-mint helper throws a clear error and the run fails with that reason. The cleanup profile also measures settled redemption of account positions, and a queued fill never enters the account.
 
 Duration-only strategies require `campaign --timeout` and may stop successfully at that bound only after emitting trader progress; a keeper-only or declaration-only trace fails. Strategies with `maxOps` or semantic completion fail as incomplete if they are still running at the deadline. Strategy metadata is read from the TypeScript registry, so the Python router does not duplicate funding, gas-budget, cadence, or completion configuration.
 
