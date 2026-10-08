@@ -6,6 +6,8 @@ version = "0.0.1"
 [dependencies]
 account = { local = "../account" }
 deepbook_predict = { local = "../predict" }
+# The order-flow companion the queued-order wrappers place into.
+deepbook_predict_orders = { local = "../predict_orders" }
 deepbook_core_account = { local = "../deepbook_core_account" }
 deepbook = { local = "../deepbook" }
 propbook = { local = "../propbook" }

@@ -1,26 +1,30 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Session wrappers over Predict's delayed-execution queue: the four enqueue
+/// Session wrappers over the order-flow companion's queue: the four enqueue
 /// wrappers, the session auth and version gates in front of them, and the
-/// retired immediate wrappers after the cutover.
+/// retired immediate wrappers.
 ///
-/// Every market here runs past the Predict cutover; only the retired live
-/// redeem test mints before crossing it. The auth and version tests abort in
-/// Sessions before Predict runs. The flow tests drive the real queue
-/// (enqueue, commit, resolve, sell) and pin what Sessions owns: each wrapper
-/// forwards its arguments into the named request fields, and the record belongs
-/// to the Account, never to the session key.
+/// The auth and version tests abort in Sessions before the companion runs. The
+/// flow tests drive the real queue (enqueue, commit, resolve, sell) and pin
+/// what Sessions owns: each wrapper forwards its arguments into the named
+/// request fields, and the record belongs to the Account, never to the session
+/// key.
 #[test_only]
 module deepbook_sessions::sessions_queue_tests;
 
 use account::{account::AccountWrapper, account_registry::AccountRegistry};
 use deepbook_predict::{
-    expiry_market::{Self as expiry_market, ExpiryMarket},
+    expiry_market,
     flow_test_helpers::{Self as predict_helpers, Fixture, MarketBundle},
-    order_queue::{Self, QueuedOrder},
-    queue_test_helpers,
     test_constants
+};
+use deepbook_predict_orders::{
+    desk::{Self, OrderDesk},
+    order_flow::OrderFlow,
+    order_queue::{Self, OrderView},
+    queue::{Self, MarketQueue},
+    queue_fixture
 };
 use deepbook_sessions::{
     session_config::{Self as session_config, SessionsConfig},
@@ -83,21 +87,15 @@ const QUANTITY_SELL_MIN_PROCEEDS: u64 = 2;
 const COST_SELL_MIN_PROBABILITY: u64 = 3;
 const COST_SELL_MIN_PROCEEDS: u64 = 4;
 
-// Pyth Lazer `fixed_rate@200ms`, the policy's default channel.
-const PYTH_CHANNEL_200MS: u8 = 3;
-// 100.00000000 at exponent -8 normalizes to the fixture's 100 * 1e9 live spot.
-const LAZER_SPOT_MAGNITUDE: u64 = 10_000_000_000;
-const LAZER_SPOT_NEG_EXPONENT: u16 = 8;
-const US_PER_MS: u64 = 1_000;
 // The keeper lands τ's update 100 ms after τ, well inside the 5_000 ms stall
 // timeout.
 const PRICE_LANDING_MS: u64 = 100;
 const RESOLVE_BATCH: u64 = 10;
 const THREE_ORDERS: u64 = 3;
 
-// One millisecond after the fixture's 120_000 mint time.
-const LIVE_REDEEM_MS: u64 = 120_001;
 const MISSING_RECORD_ID: u64 = 0;
+/// No position this test suite holds; the retired redeem aborts before it looks.
+const UNUSED_ORDER_ID: u256 = 1;
 const ZERO_FLOOR: u64 = 0;
 const EUnexpectedSuccess: u64 = 999;
 
@@ -106,6 +104,8 @@ public struct QueueSessionFixture {
     market_id: ID,
     owner: address,
     sessions_config_id: ID,
+    desk_id: ID,
+    queue_id: ID,
 }
 
 /// Every shared object one session transaction needs, taken together.
@@ -115,6 +115,8 @@ public struct SessionTx {
     wrapper: AccountWrapper,
     sessions_config: SessionsConfig,
     root: AccumulatorRoot,
+    desk: OrderDesk,
+    queue: MarketQueue,
 }
 
 // === Session auth ===
@@ -289,7 +291,7 @@ fun session_enqueues_while_the_mainnet_watermark_still_names_version_two() {
 // === Retired immediate wrappers ===
 
 #[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
-fun session_mint_exact_quantity_aborts_after_cutover() {
+fun session_mint_exact_quantity_is_retired() {
     let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
@@ -299,7 +301,7 @@ fun session_mint_exact_quantity_aborts_after_cutover() {
 }
 
 #[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
-fun session_mint_exact_amount_aborts_after_cutover() {
+fun session_mint_exact_amount_is_retired() {
     let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
@@ -309,7 +311,7 @@ fun session_mint_exact_amount_aborts_after_cutover() {
 }
 
 #[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
-fun session_mint_exact_cost_aborts_after_cutover() {
+fun session_mint_exact_cost_is_retired() {
     let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
@@ -319,22 +321,12 @@ fun session_mint_exact_cost_aborts_after_cutover() {
 }
 
 #[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
-fun session_redeem_live_aborts_after_cutover() {
-    // A position the session minted through the immediate path before the
-    // cutover can no longer be sold through it afterwards. A real position keeps
-    // every other redeem check passing, so only the cutover gate can abort.
-    let mut fixture = setup_before_cutover();
+fun session_redeem_live_is_retired() {
+    let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let order_id = session_mint_exact_quantity(&mut fixture, &mut tx);
-    end_tx(tx);
-    fixture.predict.cutover();
-    // A later timestamp keeps the same-timestamp mint and redeem guard out of
-    // the way.
-    fixture.predict.set_clock_for_testing(LIVE_REDEEM_MS);
-    let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    destroy(session_redeem_live(&mut fixture, &mut tx, order_id));
+    destroy(session_redeem_live(&mut fixture, &mut tx, UNUSED_ORDER_ID));
     abort EUnexpectedSuccess
 }
 
@@ -376,9 +368,9 @@ fun place_three_mints(fixture: &mut QueueSessionFixture): (u64, u64, u64, u64) {
     assert_quantity_mint_record(&tx, quantity_id, owner);
     assert_amount_mint_record(&tx, amount_id, owner);
     assert_cost_mint_record(&tx, cost_id, owner);
-    // The Account paid every budget and order fee into escrow.
+    // The Account paid every budget and order fee into the records' escrow.
     assert_eq!(account_balance(fixture, &tx), BALANCE_AFTER_MINTS);
-    queue_test_helpers::assert_queue_invariants(predict_helpers::market(&tx.market));
+    assert_cash_need_matches(&tx);
     // One t₀ gives one τ, so a single update prices all three orders.
     let tau_ms = record(&tx, quantity_id).timing().tau_ms();
     end_tx(tx);
@@ -390,21 +382,20 @@ fun fill_cohort(fixture: &mut QueueSessionFixture, tau_ms: u64, record_ids: vect
     fixture.predict.set_clock_for_testing(tau_ms + PRICE_LANDING_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(fixture, KEEPER, owner);
-    queue_test_helpers::commit_decoded(
-        &mut fixture.predict,
-        &mut tx.market,
-        vector[
-            queue_test_helpers::lazer_tick(
-                tau_ms,
-                PYTH_CHANNEL_200MS,
-                test_constants::pyth_feed_id(),
-                LAZER_SPOT_MAGNITUDE,
-                LAZER_SPOT_NEG_EXPONENT,
-                tau_ms * US_PER_MS,
-            ),
-        ],
-    );
-    let finished = queue_test_helpers::resolve(&mut fixture.predict, &mut tx.market, RESOLVE_BATCH);
+    let tx_fields = &mut tx;
+    let (market, config, _, _, _) = tx_fields.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    tx_fields
+        .queue
+        .commit_for_testing(
+            market,
+            &tx_fields.desk,
+            config,
+            vector[queue_fixture::price_update(tau_ms, test_constants::default_live_price())],
+            clock,
+            ctx,
+        );
+    let finished = tx_fields.queue.resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, clock, ctx);
     assert_eq!(finished, THREE_ORDERS);
     record_ids.do_ref!(|record_id| {
         assert_eq!(record(&tx, *record_id).status(), order_queue::status_open());
@@ -475,41 +466,53 @@ fun sell_two_open_records(
     assert_eq!(record(&tx, quantity_id).status(), order_queue::status_closed());
     assert_eq!(record(&tx, cost_id).status(), order_queue::status_closed());
     assert_eq!(record(&tx, amount_id).status(), order_queue::status_open());
-    queue_test_helpers::assert_queue_invariants(predict_helpers::market(&tx.market));
+    assert_cash_need_matches(&tx);
     end_tx(tx);
 }
 
 // === Fixture ===
 
-/// A live market past the Predict cutover with the default delayed-execution
-/// policy, a funded owner account, Sessions authorized as an Account app, and
-/// a fresh `SessionsConfig` at this package's version.
+/// A live market past the Predict cutover with the companion's witness
+/// allowlisted, a desk at the launch policy, the market's queue, a funded owner
+/// account, Sessions authorized as an Account app, and a fresh `SessionsConfig`
+/// at this package's version.
 fun setup(): QueueSessionFixture {
-    let mut fixture = setup_before_cutover();
-    fixture.predict.cutover();
-    fixture
-}
-
-/// `setup` stopped before the Predict cutover, where the immediate mint and
-/// redeem paths still run. `queue_test_helpers::setup_queue_market` is this
-/// plus the cutover.
-fun setup_before_cutover(): QueueSessionFixture {
     let (mut predict, market_id, trader) = predict_helpers::setup_live_market(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );
-    predict.init_delayed_execution();
+    predict.cutover();
     predict.authorize_account_app<SessionsApp>();
     let (sessions_config_id, sessions_admin_cap) = session_config::init_for_testing(predict
         .scenario_mut()
         .ctx());
     destroy(sessions_admin_cap);
     predict.scenario_mut().next_tx(test_constants::admin());
+    let mut market = predict.take_market_bundle(market_id);
+    let desk_id = {
+        let (admin_cap, clock, ctx) = predict.admin_parts();
+        let config = predict_helpers::config_mut(&mut market);
+        config.set_order_flow<OrderFlow>(admin_cap, true, clock);
+        desk::create_and_share(admin_cap, config, clock, ctx)
+    };
+    predict_helpers::return_market_bundle(market);
+    predict.scenario_mut().next_tx(test_constants::admin());
+    let mut desk = predict.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
+    let market = predict.take_market_bundle(market_id);
+    let queue_id = {
+        let (_, ctx) = predict.clock_and_ctx();
+        queue::create_and_share(&mut desk, predict_helpers::market(&market), ctx)
+    };
+    predict_helpers::return_market_bundle(market);
+    return_shared(desk);
+    predict.scenario_mut().next_tx(test_constants::admin());
     QueueSessionFixture {
         predict,
         market_id,
         owner: predict_helpers::owner(&trader),
         sessions_config_id,
+        desk_id,
+        queue_id,
     }
 }
 
@@ -540,6 +543,8 @@ fun begin_tx(
 ): SessionTx {
     let market_id = fixture.market_id;
     let sessions_config_id = fixture.sessions_config_id;
+    let desk_id = fixture.desk_id;
+    let queue_id = fixture.queue_id;
     fixture.predict.scenario_mut().next_tx(sender);
     let market = fixture.predict.take_market_bundle(market_id);
     let scenario = fixture.predict.scenario_mut();
@@ -548,20 +553,24 @@ fun begin_tx(
     let wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     let root = scenario.take_shared<AccumulatorRoot>();
-    SessionTx { market, account_registry, wrapper, sessions_config, root }
+    let desk = scenario.take_shared_by_id<OrderDesk>(desk_id);
+    let queue = scenario.take_shared_by_id<MarketQueue>(queue_id);
+    SessionTx { market, account_registry, wrapper, sessions_config, root, desk, queue }
 }
 
 fun end_tx(tx: SessionTx) {
-    let SessionTx { market, account_registry, wrapper, sessions_config, root } = tx;
+    let SessionTx { market, account_registry, wrapper, sessions_config, root, desk, queue } = tx;
     predict_helpers::return_market_bundle(market);
     return_shared(account_registry);
     return_shared(wrapper);
     return_shared(sessions_config);
     return_shared(root);
+    return_shared(desk);
+    return_shared(queue);
 }
 
 fun finish(fixture: QueueSessionFixture) {
-    let QueueSessionFixture { predict, market_id: _, owner: _, sessions_config_id: _ } = fixture;
+    let QueueSessionFixture { predict, .. } = fixture;
     predict.finish();
 }
 
@@ -577,10 +586,12 @@ fun session_enqueue_exact_quantity(
     let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
     let (clock, ctx) = fixture.predict.clock_and_ctx();
     sessions::enqueue_exact_quantity(
+        &mut tx.queue,
         market,
         &tx.account_registry,
         &mut tx.wrapper,
         &tx.sessions_config,
+        &tx.desk,
         config,
         oracle_registry,
         pyth,
@@ -607,10 +618,12 @@ fun session_enqueue_exact_amount(
     let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
     let (clock, ctx) = fixture.predict.clock_and_ctx();
     sessions::enqueue_exact_amount(
+        &mut tx.queue,
         market,
         &tx.account_registry,
         &mut tx.wrapper,
         &tx.sessions_config,
+        &tx.desk,
         config,
         oracle_registry,
         pyth,
@@ -636,10 +649,12 @@ fun session_enqueue_exact_cost(
     let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
     let (clock, ctx) = fixture.predict.clock_and_ctx();
     sessions::enqueue_exact_cost(
+        &mut tx.queue,
         market,
         &tx.account_registry,
         &mut tx.wrapper,
         &tx.sessions_config,
+        &tx.desk,
         config,
         oracle_registry,
         pyth,
@@ -666,10 +681,12 @@ fun session_enqueue_redeem_open(
     let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
     let (clock, ctx) = fixture.predict.clock_and_ctx();
     sessions::enqueue_redeem_open(
+        &mut tx.queue,
         market,
         &tx.account_registry,
         &mut tx.wrapper,
         &tx.sessions_config,
+        &tx.desk,
         config,
         oracle_registry,
         pyth,
@@ -779,15 +796,33 @@ fun session_redeem_live(
 
 // === Reads and assertions ===
 
-fun record(tx: &SessionTx, record_id: u64): QueuedOrder {
-    let market: &ExpiryMarket = predict_helpers::market(&tx.market);
-    let order = market.queued_order(record_id);
+fun record(tx: &SessionTx, record_id: u64): OrderView {
+    let order = tx.queue.order(record_id);
     assert!(order.is_some());
     order.destroy_some()
 }
 
 fun account_balance(fixture: &QueueSessionFixture, tx: &SessionTx): u64 {
     tx.wrapper.load_account().balance<USDC>(&tx.root, fixture.predict.clock())
+}
+
+/// Predict's waiting cash need is exactly the queue's unfinished records' cash
+/// need.
+fun assert_cash_need_matches(tx: &SessionTx) {
+    let (_, next_id, _, _) = tx.queue.queue_heads();
+    let mut sum = 0;
+    next_id.do!(|record_id| {
+        tx.queue.order(record_id).do!(|order| {
+            let status = order.status();
+            if (
+                status == order_queue::status_pending()
+                    || status == order_queue::status_committed()
+                    || status == order_queue::status_refund_due()
+            ) sum = sum + order.escrow().cash_need();
+        });
+    });
+    let (waiting_cash_need, _, _) = predict_helpers::market(&tx.market).order_flow_state();
+    assert_eq!(waiting_cash_need, sum);
 }
 
 fun assert_quantity_mint_record(tx: &SessionTx, record_id: u64, owner: address) {
@@ -802,6 +837,7 @@ fun assert_quantity_mint_record(tx: &SessionTx, record_id: u64, owner: address) 
     assert_eq!(request.max_probability(), QUANTITY_MAX_PROBABILITY);
     assert_eq!(order.escrow().budget(), QUANTITY_BUDGET);
     assert_eq!(order.escrow().order_fee(), ORDER_FEE);
+    assert_eq!(order.funds(), QUANTITY_BUDGET + ORDER_FEE);
     assert_account_parties(tx, &order, owner);
 }
 
@@ -855,14 +891,13 @@ fun assert_sell_record(
     assert_eq!(order.position().order_id(), position_order_id);
     assert_eq!(order.escrow().budget(), SELL_BUDGET);
     assert_eq!(order.escrow().order_fee(), ORDER_FEE);
+    assert_eq!(order.funds(), ORDER_FEE);
     assert_account_parties(tx, &order, owner);
 }
 
-/// A session-placed record belongs to the Account and its owner, and refunds
-/// and proceeds go to the Account wrapper, never to the session key.
-fun assert_account_parties(tx: &SessionTx, order: &QueuedOrder, owner: address) {
-    let parties = order.parties();
-    assert_eq!(parties.account_id(), tx.wrapper.load_account().account_id());
-    assert_eq!(parties.owner(), owner);
-    assert_eq!(parties.receive_address(), tx.account_registry.derived_wrapper_address(owner));
+/// A session-placed record belongs to the owner's Account, and refunds and
+/// proceeds go to the Account wrapper, never to the session key.
+fun assert_account_parties(tx: &SessionTx, order: &OrderView, owner: address) {
+    assert_eq!(order.account_id(), tx.wrapper.load_account().account_id());
+    assert_eq!(order.receive_address(), tx.account_registry.derived_wrapper_address(owner));
 }

@@ -14,6 +14,7 @@ use deepbook_predict::{
     pricing::Pricer,
     protocol_config::ProtocolConfig
 };
+use deepbook_predict_orders::{desk::OrderDesk, queue::MarketQueue};
 use deepbook_sessions::session_config::{Self, SessionsConfig};
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -224,8 +225,8 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
 }
 
 /// Mint an exact Predict position quantity for an Account with an active session.
-/// Aborts through Predict once its delayed-execution cutover is reached; use
-/// `enqueue_exact_quantity` after it.
+/// Always aborts through Predict, whose immediate mints are retired; use
+/// `enqueue_exact_quantity`.
 public fun mint_exact_quantity(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -260,8 +261,8 @@ public fun mint_exact_quantity(
 }
 
 /// Mint a budget-sized Predict position for an Account with an active session.
-/// Aborts through Predict once its delayed-execution cutover is reached; use
-/// `enqueue_exact_amount` after it.
+/// Always aborts through Predict, whose immediate mints are retired; use
+/// `enqueue_exact_amount`.
 public fun mint_exact_amount(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -296,8 +297,8 @@ public fun mint_exact_amount(
 }
 
 /// Mint a Predict position sized to an all-in cost for an Account with an active
-/// session. Aborts through Predict once its delayed-execution cutover is reached;
-/// use `enqueue_exact_cost` after it.
+/// session. Always aborts through Predict, whose immediate mints are retired; use
+/// `enqueue_exact_cost`.
 public fun mint_exact_cost(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -329,9 +330,9 @@ public fun mint_exact_cost(
     )
 }
 
-/// Redeem a live Predict order for an Account with an active session. Aborts
-/// through Predict once its delayed-execution cutover is reached. Early sells
-/// then go through `enqueue_redeem_open`.
+/// Redeem a live Predict order for an Account with an active session. Always
+/// aborts through Predict, whose live redeem is retired. Early sells of queued
+/// positions go through `enqueue_redeem_open`.
 public fun redeem_live(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -387,13 +388,15 @@ public fun redeem_settled(
     )
 }
 
-/// Queue an exact-quantity Predict mint for an Account with an active session.
-/// Returns the queue record ID.
+/// Queue an exact-quantity Predict mint in `market`'s order-flow queue for an
+/// Account with an active session. Returns the queue record ID.
 public fun enqueue_exact_quantity(
+    queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -409,9 +412,11 @@ public fun enqueue_exact_quantity(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    market.enqueue_exact_quantity(
+    queue.enqueue_exact_quantity(
+        market,
         wrapper,
         auth,
+        desk,
         config,
         propbook_registry,
         pyth,
@@ -428,13 +433,15 @@ public fun enqueue_exact_quantity(
     )
 }
 
-/// Queue a premium-budget Predict mint for an Account with an active session.
-/// Returns the queue record ID.
+/// Queue a premium-budget Predict mint in `market`'s order-flow queue for an
+/// Account with an active session. Returns the queue record ID.
 public fun enqueue_exact_amount(
+    queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -450,9 +457,11 @@ public fun enqueue_exact_amount(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    market.enqueue_exact_amount(
+    queue.enqueue_exact_amount(
+        market,
         wrapper,
         auth,
+        desk,
         config,
         propbook_registry,
         pyth,
@@ -469,13 +478,15 @@ public fun enqueue_exact_amount(
     )
 }
 
-/// Queue an all-in-budget Predict mint for an Account with an active session.
-/// Returns the queue record ID.
+/// Queue an all-in-budget Predict mint in `market`'s order-flow queue for an
+/// Account with an active session. Returns the queue record ID.
 public fun enqueue_exact_cost(
+    queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -490,9 +501,11 @@ public fun enqueue_exact_cost(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    market.enqueue_exact_cost(
+    queue.enqueue_exact_cost(
+        market,
         wrapper,
         auth,
+        desk,
         config,
         propbook_registry,
         pyth,
@@ -508,13 +521,15 @@ public fun enqueue_exact_cost(
     )
 }
 
-/// Queue an early sell of an Open Predict queue record for an Account with an
-/// active session. Returns the new queue record ID.
+/// Queue an early sell of an Open order-flow queue record for an Account with
+/// an active session. Returns the new queue record ID.
 public fun enqueue_redeem_open(
+    queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
@@ -529,9 +544,11 @@ public fun enqueue_redeem_open(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    market.enqueue_redeem_open(
+    queue.enqueue_redeem_open(
+        market,
         wrapper,
         auth,
+        desk,
         config,
         propbook_registry,
         pyth,
