@@ -310,6 +310,9 @@ def _capture_objects(name: str, changes: list[dict], objects: dict[str, str | No
         objects["admin_cap"] = _created(changes, "admin::AdminCap")
         objects["protocol_config"] = _created(changes, "protocol_config::ProtocolConfig")
         objects["pool_vault"] = _created(changes, "plp::PoolVault")
+    elif name == "predict_orders":
+        # The desk's `init` shares the deployment's one OrderDesk at publish.
+        objects["order_desk"] = _created(changes, "desk::OrderDesk")
 
 
 def publish_closure(
