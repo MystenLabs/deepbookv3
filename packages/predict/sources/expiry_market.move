@@ -1583,8 +1583,8 @@ public(package) fun create_and_share(
 /// Non-production fixture: take USDC out of market cash with no liability
 /// change. The only way to reach the payout walk's skip branch, which
 /// production never reaches because backing keeps cash at or above the settled
-/// liability.
-public(package) fun take_market_cash_for_testing(
+/// liability. Public so the order-flow companion's settlement tests reach it.
+public fun take_market_cash_for_testing(
     market: &mut ExpiryMarket,
     amount: u64,
 ): Balance<USDC> {
