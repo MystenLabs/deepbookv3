@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Tick-time pricing for delayed execution: `pricing::pricer_at`, the non-aborting
-/// `try_up_price` / `try_range`, and the committed-spot bound
-/// `can_commit`.
+/// `try_up_price` / `try_range`, and the committed-spot bound `safe_spot`.
 ///
 /// `pricer_at` must rebuild exactly the Pricer the live load builds from the same
 /// inputs, re-anchor the snapshot basis on the committed spot, roll the SVI down to the
@@ -106,19 +105,10 @@ const DOUBLE_FORWARD_STRIKE: u64 = 200_000_000_000;
 const STRIKE_BELOW: u64 = 101_000_000_000;
 const STRIKE_ABOVE: u64 = 104_000_000_000;
 
-// === can_commit (hand-derived) ===
+// === safe_spot (hand-derived) ===
 
-/// A committed spot may sit at most a tenth of the snapshot's Block Scholes spot
-/// away from it: `100e9 / 10 = 10e9`, so 90e9 and 110e9 are in and one raw unit
-/// past either edge is out.
-const BAND_BS_SPOT: u64 = 100_000_000_000;
-const BAND_LOW_EDGE: u64 = 90_000_000_000;
-const BAND_HIGH_EDGE: u64 = 110_000_000_000;
 /// `u64::MAX / 100`, Predict's pricing-safe spot ceiling.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516;
-/// A Block Scholes spot whose band reaches past the ceiling: the ceiling is still
-/// accepted and one raw unit above it is refused.
-const CEILING_BS_SPOT: u64 = 180_000_000_000_000_000;
 
 // === pricer_at matches the live pricer ===
 
@@ -437,24 +427,15 @@ fun range_price_where_the_variance_rounds_to_zero_aborts_from_the_higher_boundar
     abort EUnexpectedSuccess
 }
 
-// === is_committable_spot ===
+// === safe_spot ===
 
+/// A committed spot must be positive and at most the inclusive ceiling.
 #[test]
-fun committable_spot_band_is_ten_percent_of_the_block_scholes_spot() {
-    let snapshot = default_surface_snapshot(BAND_BS_SPOT, BAND_BS_SPOT);
-    assert!(snapshot.can_commit(BAND_BS_SPOT));
-    assert!(snapshot.can_commit(BAND_LOW_EDGE));
-    assert!(snapshot.can_commit(BAND_HIGH_EDGE));
-    assert!(!snapshot.can_commit(BAND_LOW_EDGE - 1));
-    assert!(!snapshot.can_commit(BAND_HIGH_EDGE + 1));
-    assert!(!snapshot.can_commit(ZERO_SPOT));
-}
-
-#[test]
-fun committable_spot_is_capped_at_the_pricing_safe_ceiling() {
-    let snapshot = default_surface_snapshot(CEILING_BS_SPOT, CEILING_BS_SPOT);
-    assert!(snapshot.can_commit(MAX_PRICING_SPOT));
-    assert!(!snapshot.can_commit(MAX_PRICING_SPOT + 1));
+fun safe_spot_is_positive_and_capped_at_the_pricing_safe_ceiling() {
+    assert!(pricing::safe_spot(1));
+    assert!(pricing::safe_spot(MAX_PRICING_SPOT));
+    assert!(!pricing::safe_spot(ZERO_SPOT));
+    assert!(!pricing::safe_spot(MAX_PRICING_SPOT + 1));
 }
 
 // === Helpers ===

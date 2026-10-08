@@ -38,6 +38,7 @@ use deepbook_predict::{
     range_codec,
     strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure}
 };
+use deepbook_predict_math::lazer_price::{Self, LazerPrice};
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -86,7 +87,7 @@ const EWrongMarket: u64 = 18;
 const EWrongStage: u64 = 19;
 const ENotRecordOwner: u64 = 20;
 const EEscrowMismatch: u64 = 21;
-const EPriceOutOfBounds: u64 = 22;
+const EWrongPrice: u64 = 22;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -952,7 +953,7 @@ public fun try_settle(
 /// Aborts unless `W` is allowlisted, the version and cutover gates pass, trading
 /// and this market's mints are unpaused, and the snapshot stage is closed. The
 /// timing must fit (`EInvalidOrderTiming`): `channel` a supported fixed-rate
-/// channel (`constants::lazer_channel_*`), `tau_ms` on its grid, at most one of
+/// channel (`lazer_price::channel_fixed_rate_*`), `tau_ms` on its grid, at most one of
 /// its ticks before now, and before `deadline_ms`, τ before the no-trade window,
 /// and the deadline at least
 /// `constants::deadline_expiry_margin_ms!()` before expiry. Then
@@ -1191,29 +1192,27 @@ public fun admit_sell<W: drop>(
     receipt.cash_need = cash_need;
 }
 
-/// Commit the Pyth price an admitted order fills at, as the companion decoded it
-/// from a verified Lazer update: `spot` normalized to 1e9, generated at
-/// `generation_us` and carried by the update stamped `tick_ms`. For a mint it
-/// also reserves the fee subsidy, `min(subsidy_bound *
-/// fee_incentive_subsidy_rate, incentives left)`, records the rate and amount,
-/// and returns the reservation for the companion to escrow with the order. A
-/// sell returns a zero balance.
+/// Commit the Pyth price an admitted order fills at: a `LazerPrice`, which only
+/// the `deepbook_predict_math` library builds, from a Pyth-verified Lazer
+/// update. Stores the spot, the envelope time (the tick the fill prices at),
+/// and the feed's generation time. For a mint it also reserves the fee subsidy,
+/// `min(subsidy_bound * fee_incentive_subsidy_rate, incentives left)`, records
+/// the rate and amount, and returns the reservation for the companion to escrow
+/// with the order. A sell returns a zero balance.
 ///
-/// Predict does not decode Lazer, so it bounds what it stores: `τ <= generation
-/// <= tick <= τ + one tick of the receipt's channel`, the tick at or before now,
-/// and the spot
-/// pricing-safe and within 10% of the order's own Block Scholes spot
-/// (`EPriceOutOfBounds`). Aborts unless `W` is allowlisted, the version gate
-/// passes, the receipt is this market's (`EWrongMarket`), admitted with no price
-/// yet (`EWrongStage`), and before its deadline (`EInvalidOrderTiming`).
+/// The price must be the receipt's: its Pyth feed and channel, an envelope at
+/// exactly τ or one tick of that channel later (the backup tick), a generation
+/// time between τ and the envelope, an envelope at or before now, and a
+/// pricing-safe spot (`EWrongPrice`). Aborts unless `W` is allowlisted, the
+/// version gate passes, the receipt is this market's (`EWrongMarket`), admitted
+/// with no price yet (`EWrongStage`), and before its deadline
+/// (`EInvalidOrderTiming`).
 public fun commit<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     receipt: &mut OrderReceipt,
-    spot: u64,
-    generation_us: u64,
-    tick_ms: u64,
+    price: &LazerPrice,
     clock: &Clock,
 ): Balance<USDC> {
     config.chk_flow<W>();
@@ -1226,10 +1225,10 @@ public fun commit<W: drop>(
     );
     let now = clock.timestamp_ms();
     assert!(now < receipt.deadline_ms, EInvalidOrderTiming);
-    chk_price(receipt, spot, generation_us, tick_ms, now);
-    receipt.spot = spot;
-    receipt.generation_us = generation_us;
-    receipt.tick_ms = tick_ms;
+    chk_price(receipt, price, now);
+    receipt.spot = price.spot();
+    receipt.tick_ms = price.envelope_us() / 1000;
+    receipt.generation_us = price.generation_us();
     if (!is_mint) return balance::zero();
     let rate = config.fee_incentive_subsidy_rate();
     let amount = math::mul_down(receipt.subsidy_bound, rate).min(
@@ -2270,9 +2269,12 @@ fun admit_gates(
     // τ sits on a supported channel's grid and at most one of its ticks before
     // now. A deadline at least the margin before expiry means no admitted order
     // can fill once the market expires, so settlement never waits for the queue.
-    let tick_ms = constants::lazer_tick_ms!(channel);
+    let tick_ms = lazer_price::channel_tick_ms!(channel);
     assert!(
-        (channel == constants::lazer_channel_50ms!() || channel == constants::lazer_channel_200ms!())
+        (
+            channel == lazer_price::channel_fixed_rate_50ms!()
+                || channel == lazer_price::channel_fixed_rate_200ms!()
+        )
             && tau_ms % tick_ms == 0
             && clock.timestamp_ms() <= tau_ms + tick_ms
             && tau_ms < deadline_ms
@@ -2503,25 +2505,26 @@ fun fill_close(
     (0, remainder, quote)
 }
 
-/// The bounds `commit` puts on a companion-reported price, which Predict does
-/// not decode: `τ <= generation <= tick <= τ + one channel tick`, the tick at
-/// or before now, and a pricing-safe spot within 10% of the order's own Block
-/// Scholes spot. The one place these checks live, so a verified-price input can
-/// replace them.
-fun chk_price(
-    receipt: &OrderReceipt,
-    spot: u64,
-    generation_us: u64,
-    tick_ms: u64,
-    now_ms: u64,
-) {
+/// The provenance `commit` requires of a `LazerPrice`: the receipt's Pyth feed
+/// and channel, an envelope at exactly τ or one channel tick later, `τ <=
+/// generation <= envelope <= now`, and a pricing-safe spot. The one place these
+/// checks live.
+fun chk_price(receipt: &OrderReceipt, price: &LazerPrice, now_ms: u64) {
+    let tau_us = receipt.tau_ms * 1000;
+    let envelope_us = price.envelope_us();
+    let generation_us = price.generation_us();
     assert!(
-        receipt.tau_ms * 1000 <= generation_us
-            && generation_us <= tick_ms * 1000
-            && tick_ms <= receipt.tau_ms + constants::lazer_tick_ms!(receipt.channel)
-            && tick_ms <= now_ms
-            && receipt.vol.can_commit(spot),
-        EPriceOutOfBounds,
+        price.feed_id() == receipt.vol.pyth_source_id()
+            && price.channel() == receipt.channel
+            && (
+                envelope_us == tau_us
+                    || envelope_us == tau_us + lazer_price::channel_tick_ms!(receipt.channel) * 1000
+            )
+            && tau_us <= generation_us
+            && generation_us <= envelope_us
+            && envelope_us <= now_ms * 1000
+            && pricing::safe_spot(price.spot()),
+        EWrongPrice,
     );
 }
 

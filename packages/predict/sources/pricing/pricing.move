@@ -422,14 +422,10 @@ public(package) fun pyth_source_id(snapshot: &VolSnapshot): u32 {
     snapshot.pyth_source_id
 }
 
-/// Whether a committed Pyth `spot` may price an order captured in `snapshot`:
-/// at most Predict's pricing-safe ceiling, which keeps `pricer_at`'s re-anchored
-/// forward inside `u64`, and within 10% of the snapshot's Block Scholes spot. A
-/// wrong feed, exponent, or unit moves a reported spot far outside that band,
-/// while Pyth and Block Scholes normally differ by well under 1% over the few
-/// seconds an order waits.
-public(package) fun can_commit(snapshot: &VolSnapshot, spot: u64): bool {
-    spot <= max_pricing_spot!() && spot.diff(snapshot.bs_spot) <= snapshot.bs_spot / 10
+/// Whether a committed Pyth `spot` is pricing-safe: positive and at most
+/// Predict's ceiling, which keeps `pricer_at`'s re-anchored forward inside `u64`.
+public(package) fun safe_spot(spot: u64): bool {
+    spot > 0 && spot <= max_pricing_spot!()
 }
 
 /// Rebuild a `Pricer` from a queued order's snapshot at a committed Pyth tick:

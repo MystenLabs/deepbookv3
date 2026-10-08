@@ -1,0 +1,14 @@
+[package]
+name = "deepbook_predict_math"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+fixed_math = { local = "../fixed_math" }
+# Pyth Lazer, for the verified `update::Update` a `LazerPrice` is decoded from. The
+# Mainnet replacement below matches `deepbook_predict`'s, so both packages resolve
+# one graph on every network.
+pyth_lazer = { local = "../../vendor/pyth_lazer" }
+
+[dep-replacements.mainnet]
+pyth_lazer = { local = "../../vendor/pyth_lazer_mainnet" }

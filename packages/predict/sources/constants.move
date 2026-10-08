@@ -179,8 +179,8 @@ public macro fun order_kind_sell(): u8 { 4 }
 /// Fill refund reason: the order missed its own limits at the tick. The order fee is kept.
 public macro fun fill_reason_limits(): u8 { 1 }
 
-/// Fill refund reason: the order failed mint admission, its tick times were out of order, or it
-/// could not be priced at the tick. The order fee is kept.
+/// Fill refund reason: the order failed mint admission or could not be priced at its committed
+/// tick. The order fee is kept.
 public macro fun fill_reason_admission(): u8 { 2 }
 
 /// Fill refund reason: a pinned payout-tree node was missing at the fill (a backstop).
@@ -200,18 +200,6 @@ public macro fun receipt_stage_open(): u8 { 2 }
 
 /// `OrderReceipt` stage: an early sell of the open position admitted and not yet filled or released.
 public macro fun receipt_stage_sell(): u8 { 3 }
-
-/// Pyth Lazer channel id of `fixed_rate@50ms`, a channel an order may be planned on.
-public macro fun lazer_channel_50ms(): u8 { 2 }
-
-/// Pyth Lazer channel id of `fixed_rate@200ms`, a channel an order may be planned on.
-public macro fun lazer_channel_200ms(): u8 { 3 }
-
-/// Tick period of a supported Lazer channel, in ms. τ sits on this grid, admission refuses a τ
-/// more than one tick before now, and commit accepts the update at τ or one tick later.
-public macro fun lazer_tick_ms($channel: u8): u64 {
-    if ($channel == lazer_channel_50ms!()) 50 else 200
-}
 
 /// Every admitted order's deadline falls at least this long before expiry, so no admitted order
 /// can fill once its market expires.
