@@ -914,3 +914,13 @@ public(package) fun new_order_for_testing(
         funds: sui::balance::zero(),
     }
 }
+
+#[test_only]
+/// Mark an unfinished record RefundDue with `reason`, the reserved status
+/// nothing sets at launch, so the tests can drive its refund.
+public(package) fun mark_refund_due_for_testing(book: &mut OrderBook, record_id: u64, reason: u8) {
+    let record = &mut book.orders[record_id];
+    assert!(is_unfinished(record.status));
+    record.status = STATUS_REFUND_DUE;
+    record.result.reason = reason;
+}

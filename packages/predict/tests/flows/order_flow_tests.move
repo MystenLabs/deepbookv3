@@ -226,15 +226,80 @@ fun a_mint_at_its_deadline_refunds_the_whole_escrow() {
     finish(fx, market, account);
 }
 
-/// The companion's own refunds release a mint receipt without filling it.
+/// The companion's own refunds release a mint receipt without filling it. A
+/// deadline release hands back the budget and the order fee whole.
 #[test]
 fun releasing_a_mint_unpins_prunes_and_consumes_it() {
     let (mut fx, mut market, mut account) = setup();
     let receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
-    let kept = release(&mut market, receipt, balance::zero(), true);
+    let cash_before = helpers::market(&market).cash_balance();
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, balance::zero()),
+        constants::fill_reason_deadline!(),
+        true,
+    );
     assert!(kept.is_none());
+    assert_eq!(change.value(), BUDGET + ORDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
     assert_flow_state(&market, 0, 0);
     kept.destroy_none();
+    destroy(change);
+    finish(fx, market, account);
+}
+
+/// A release with reason 1 or 2 keeps the order fee in market cash, as a
+/// refund out of `try_fill` does, and hands back the rest of the escrow.
+#[test]
+fun releasing_with_reason_1_keeps_the_order_fee_in_market_cash() {
+    let (mut fx, mut market, mut account) = setup();
+    fund_incentives(&mut fx, &mut market);
+    let incentives_before = helpers::market(&market).fee_incentive_balance();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+        constants::fill_reason_limits!(),
+        true,
+    );
+
+    kept.destroy_none();
+    assert_eq!(change.value(), BUDGET);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + ORDER_FEE);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), incentives_before);
+    assert_flow_state(&market, 0, 0);
+    destroy(change);
+    finish(fx, market, account);
+}
+
+/// A sell released with reason 2 keeps its order fee and reopens whole.
+#[test]
+fun releasing_a_sell_with_reason_2_keeps_the_fee_and_reopens_it() {
+    let (mut fx, mut market, mut account, mut receipt) = filled_mint();
+    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
+    admit_sell(&mut fx, &mut market, &mut account, &mut receipt, HALF, 0, SELL_TAU);
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(ORDER_FEE, balance::zero()),
+        constants::fill_reason_admission!(),
+        true,
+    );
+
+    assert_eq!(change.value(), 0);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + ORDER_FEE);
+    let receipt = kept.destroy_some();
+    assert_canonical_open(&receipt, QUANTITY);
+    assert_waiting(&market, 0);
+    destroy(receipt);
+    destroy(change);
     finish(fx, market, account);
 }
 
@@ -383,7 +448,15 @@ fun releasing_a_sell_after_a_partial_close_keeps_the_remainder() {
     let (_, _, _, remainder_order_id, _, _, _, _) = expiry_market::receipt_info(&receipt);
     fx.advance_live_oracle_bundle_to(&mut market, live_price(), SELL_TAU);
     admit_sell(&mut fx, &mut market, &mut account, &mut receipt, QUARTER, 0, SECOND_SELL_TAU);
-    let kept = release(&mut market, receipt, balance::zero(), false);
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(ORDER_FEE, balance::zero()),
+        constants::fill_reason_deadline!(),
+        false,
+    );
+    assert_eq!(change.value(), ORDER_FEE);
+    destroy(change);
     let receipt = kept.destroy_some();
     assert_canonical_open(&receipt, QUANTITY - HALF);
     let (_, _, _, order_id, _, _, _, _) = expiry_market::receipt_info(&receipt);
@@ -511,8 +584,15 @@ fun release_still_drains_after_the_witness_is_removed() {
     let (mut fx, mut market, mut account) = setup();
     let receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
     set_witness(&mut fx, &mut market, false);
-    let kept = release(&mut market, receipt, balance::zero(), true);
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, balance::zero()),
+        constants::fill_reason_deadline!(),
+        true,
+    );
     kept.destroy_none();
+    destroy(change);
     assert_flow_state(&market, 0, 0);
     finish(fx, market, account);
 }
@@ -698,11 +778,20 @@ fun filling_with_short_escrow_aborts() {
 }
 
 #[test, expected_failure(abort_code = expiry_market::EEscrowMismatch)]
-fun releasing_with_another_subsidy_aborts() {
+fun releasing_with_escrow_short_of_the_order_aborts() {
     let (mut fx, mut market, mut account) = setup();
-    let receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
-    let kept = release(&mut market, receipt, balance::create_for_testing(1), true);
+    fund_incentives(&mut fx, &mut market);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE - 1, subsidy),
+        constants::fill_reason_deadline!(),
+        true,
+    );
     destroy(kept);
+    destroy(change);
     abort 999
 }
 
@@ -788,11 +877,19 @@ fun releasing_a_committed_mint_returns_the_reservation() {
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
 
-    let kept = release(&mut market, receipt, subsidy, true);
+    let (kept, change) = release(
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+        constants::fill_reason_deadline!(),
+        true,
+    );
 
     kept.destroy_none();
+    assert_eq!(change.value(), BUDGET + ORDER_FEE);
     assert_eq!(helpers::market(&market).fee_incentive_balance(), incentives_before);
     assert_flow_state(&market, 0, 0);
+    destroy(change);
     finish(fx, market, account);
 }
 
@@ -1212,11 +1309,12 @@ fun fill(
 fun release(
     market: &mut MarketBundle,
     receipt: OrderReceipt,
-    subsidy: Balance<USDC>,
+    escrow: Balance<USDC>,
+    reason: u8,
     prune: bool,
-): Option<OrderReceipt> {
+): (Option<OrderReceipt>, Balance<USDC>) {
     let (em, config, _, _, _) = market.market_parts_mut();
-    em.release(config, receipt, subsidy, prune)
+    em.release(config, receipt, escrow, reason, prune)
 }
 
 /// The order's escrow: `amount` of fresh USDC plus its reserved subsidy.

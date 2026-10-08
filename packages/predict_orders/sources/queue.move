@@ -1203,15 +1203,7 @@ fun fill_record(
     let returned = change.value();
     send_or_destroy(change, view.receive_address());
     if (reason != 0) {
-        // Predict keeps the order fee for reasons 1 and 2 and returns the rest of
-        // the budget and fee with the escrow it hands back.
-        let order_fee_returned = if (
-            reason == order_queue::reason_limits() || reason == order_queue::reason_admission()
-        ) {
-            0
-        } else {
-            view.escrow().order_fee()
-        };
+        let order_fee_returned = fee_returned(reason, view);
         queue.finish_refund(
             market,
             record_id,
@@ -1326,11 +1318,12 @@ fun refund_walk(
 }
 
 /// Refund one unfinished record without filling it: Predict's `release` takes
-/// back the record's reserved subsidy and its ledger entries, and the budget and
-/// order fee go to the trader. A sell's record returns to Open holding its
-/// position. A RefundDue record keeps its stored reason. Returns whether it
-/// refunded a record: a missing or finished one is skipped. The caller owns
-/// `advance_heads`.
+/// back the record's reserved subsidy and its ledger entries, keeps the order
+/// fee in market cash for reasons 1 and 2 as `try_fill` does, and hands back the
+/// rest of the escrow, which goes to the trader. A sell's record returns to
+/// Open holding its position. A RefundDue record keeps its stored reason, and
+/// with it the fee rule. Returns whether it refunded a record: a missing or
+/// finished one is skipped. The caller owns `advance_heads`.
 fun release_record(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -1348,20 +1341,19 @@ fun release_record(
     let status = view.status();
     if (!order_queue::is_unfinished(status)) return false;
     let reason = if (status == order_queue::status_refund_due()) view.result().reason() else reason;
-    let (receipt, mut funds) = queue.book.take_order(record_id);
-    let subsidy = funds.split(view.escrow().subsidy_reserved());
-    let kept = market.release(config, receipt, subsidy, prune);
-    let returned = funds.value();
-    send_or_destroy(funds, view.receive_address());
-    let order_fee = view.escrow().order_fee();
+    let (receipt, funds) = queue.book.take_order(record_id);
+    let (kept, change) = market.release(config, receipt, funds, reason, prune);
+    let returned = change.value();
+    send_or_destroy(change, view.receive_address());
+    let order_fee_returned = fee_returned(reason, &view);
     queue.finish_refund(
         market,
         record_id,
         &view,
         kept,
         reason,
-        returned - order_fee,
-        order_fee,
+        returned - order_fee_returned,
+        order_fee_returned,
         count_account,
         sender,
         now_ms,
@@ -1491,6 +1483,17 @@ fun cash_figures(market: &ExpiryMarket): (u64, u64, u64) {
     (market.cash_balance(), market.required_cash(), waiting_cash_need)
 }
 
+/// The order fee a refund with `reason` hands back: none for reasons 1 and 2,
+/// whose fee Predict keeps in market cash (`try_fill`, `release`), and the whole
+/// fee otherwise.
+fun fee_returned(reason: u8, view: &OrderView): u64 {
+    if (reason == order_queue::reason_limits() || reason == order_queue::reason_admission()) {
+        0
+    } else {
+        view.escrow().order_fee()
+    }
+}
+
 /// Send `funds` to `recipient` through its address balance, or drop them when
 /// empty.
 fun send_or_destroy(funds: Balance<USDC>, recipient: address) {
@@ -1507,6 +1510,13 @@ fun send_or_destroy(funds: Balance<USDC>, recipient: address) {
 /// The receipt a record holds, for checks against Predict's admission.
 public(package) fun receipt_for_testing(queue: &MarketQueue, record_id: u64): &OrderReceipt {
     queue.book.receipt(record_id)
+}
+
+#[test_only]
+/// Mark an unfinished record RefundDue with `reason`; nothing sets that status
+/// at launch.
+public fun mark_refund_due_for_testing(queue: &mut MarketQueue, record_id: u64, reason: u8) {
+    queue.book.mark_refund_due_for_testing(record_id, reason);
 }
 
 #[test_only]

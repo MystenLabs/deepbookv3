@@ -6,7 +6,9 @@
 /// with this companion's witness removed, refund the whole budget and order fee
 /// (reasons 5 and 7), return a committed mint's reserved subsidy to the
 /// incentives, hand a sell's position back to its record, and skip records that
-/// already finished.
+/// already finished. A RefundDue record, a status nothing sets at launch (a
+/// test seam marks it), refunds with its stored reason and that reason's fee
+/// rule: reasons 1 and 2 keep the order fee in market cash.
 ///
 /// Orders are 100-contract mints over `(strike, +inf]` placed at 120_000 on the
 /// short-expiry market, so they share one cohort at τ 121_000 with deadline
@@ -14,13 +16,13 @@
 #[test_only]
 module deepbook_predict_orders::refund_flow_tests;
 
-use deepbook_predict::{constants, test_constants};
+use deepbook_predict::{constants, protocol_config, test_constants};
 use deepbook_predict_orders::{
     order_queue,
     queue_event_views as events,
     queue_fixture::{Self as fixture, QueueTest}
 };
-use std::unit_test::assert_eq;
+use std::unit_test::{assert_eq, destroy};
 
 /// More visits than any scenario here has records.
 const VISIT_ALL: u64 = 100;
@@ -42,6 +44,11 @@ const RESERVED_SUBSIDY: u64 = 100_000;
 /// ceil(100_000_000 * (1 - 0.31)) + 1.
 const SELL_CASH_NEED: u64 = 69_000_001;
 const SELL_PLACED_AT: u64 = 121_200;
+/// Pool liquidity, so a flush can start.
+const SUPPLY_AMOUNT: u64 = 100_000_000_000;
+/// A 4m at-the-money mint with a 3 USDC cap, for the default-expiry pool market.
+const SMALL_QUANTITY: u64 = 4_000_000;
+const SMALL_MAX_COST: u64 = 3_000_000;
 
 #[test]
 fun refund_waits_for_the_deadline_then_refunds_with_reason_5() {
@@ -267,6 +274,88 @@ fun admin_refund_of_a_waiting_sell_returns_its_position() {
     assert_eq!(q.record(resell_id).position(), held);
     q.assert_invariants();
     q.finish();
+}
+
+// === RefundDue ===
+
+/// A RefundDue mint with reason 1 refunds through `release` with that reason,
+/// which keeps the order fee in market cash and returns the budget, as a
+/// reason-1 refund out of `try_fill` does.
+#[test]
+fun a_refund_due_mint_with_reason_1_keeps_the_order_fee_in_market_cash() {
+    let mut q = fixture::new_at(test_constants::short_expiry_ms());
+    let account_id = q.account_id();
+    let record_id = enqueue(&mut q);
+    q.commit_at(TAU, fixture::live_price());
+    q.mark_refund_due(record_id, order_queue::reason_limits());
+    let cash_before = q.market().cash_balance();
+
+    assert_eq!(q.resolve(VISIT_ALL), 1);
+
+    assert_refunded_with(&q, record_id, order_queue::reason_limits(), TAU);
+    assert_eq!(q.market().cash_balance(), cash_before + ORDER_FEE);
+    assert_pending(&q, 0, 0);
+    assert_eq!(q.queue().waiting_orders(account_id), 0);
+    let (waiting_cash_need, nodes) = q.ledger();
+    assert_eq!(waiting_cash_need, 0);
+    assert_eq!(nodes, 0);
+    let refunds = events::refunds();
+    assert_eq!(refunds.length(), 1);
+    let refund = refunds[0];
+    assert_eq!(refund.refund_reason(), order_queue::reason_limits());
+    assert_eq!(refund.refund_escrow_returned(), MAX_COST);
+    assert_eq!(refund.refund_order_fee_returned(), 0);
+    assert_eq!(refund.refund_market_cash(), cash_before + ORDER_FEE);
+    q.assert_invariants();
+    q.finish();
+}
+
+/// A RefundDue sell with reason 2 keeps its order fee too, whichever refund
+/// reaches it (here the admin's, whose reason 7 the stored reason replaces),
+/// and returns its position to the record.
+#[test]
+fun a_refund_due_sell_with_reason_2_keeps_the_fee_and_returns_its_position() {
+    let mut q = fixture::new_at(test_constants::short_expiry_ms());
+    let mint_id = enqueue(&mut q);
+    q.commit_at(TAU, fixture::live_price());
+    q.resolve(VISIT_ALL);
+    let held = q.record(mint_id).position();
+    q.refresh_oracle_at(SELL_PLACED_AT);
+    let sell_id = q.enqueue_sell(mint_id, QUANTITY, 0, 0);
+    q.mark_refund_due(sell_id, order_queue::reason_admission());
+    let mut q = q.next_tx(test_constants::alice());
+    let cash_before = q.market().cash_balance();
+
+    q.admin_refund(vector[sell_id]);
+
+    let sell = q.record(sell_id);
+    assert_eq!(sell.status(), order_queue::status_open());
+    assert_eq!(sell.result().reason(), order_queue::reason_admission());
+    assert_eq!(sell.position(), held);
+    assert_eq!(sell.receipt_stage(), constants::receipt_stage_open!());
+    assert_eq!(sell.funds(), 0);
+    assert_eq!(q.market().cash_balance(), cash_before + ORDER_FEE);
+    let refund = events::refunds()[0];
+    assert_eq!(refund.refund_reason(), order_queue::reason_admission());
+    assert!(refund.refund_position_returned());
+    assert_eq!(refund.refund_escrow_returned(), 0);
+    assert_eq!(refund.refund_order_fee_returned(), 0);
+    q.assert_invariants();
+    q.finish();
+}
+
+/// Keeping the fee moves market cash, so like a fill it refuses the keeper's
+/// open snapshot stage.
+#[test, expected_failure(abort_code = protocol_config::ESnapshotInProgress)]
+fun a_fee_keeping_refund_inside_the_snapshot_stage_aborts() {
+    let mut q = fixture::new_with_pool(SUPPLY_AMOUNT);
+    let record_id = q.enqueue_atm(SMALL_QUANTITY, SMALL_MAX_COST);
+    q.commit_at(TAU, fixture::live_price());
+    q.mark_refund_due(record_id, order_queue::reason_limits());
+    let stage = q.start_snapshot();
+    q.resolve(VISIT_ALL);
+    destroy(stage);
+    abort 999
 }
 
 // === Helpers ===

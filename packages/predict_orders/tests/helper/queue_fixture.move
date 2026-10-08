@@ -616,6 +616,14 @@ public fun enqueue_sell(
     )
 }
 
+// === Seams ===
+
+/// Mark an unfinished record RefundDue with `reason`, a status nothing sets at
+/// launch.
+public fun mark_refund_due(q: &mut QueueTest, record_id: u64, reason: u8) {
+    q.queue.mark_refund_due_for_testing(record_id, reason);
+}
+
 // === Commit, resolve, refunds, settlement ===
 
 public fun commit(q: &mut QueueTest, updates: vector<TestUpdate>) {

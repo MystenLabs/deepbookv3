@@ -1349,33 +1349,37 @@ public fun try_fill<W: drop>(
             reason = fill_reason;
         };
     };
-    if (reason <= constants::fill_reason_admission!()) {
-        market.cash.receive(escrow.split(receipt.order_fee));
-    };
-    market.fee_incentive_balance.join(escrow.split(receipt.subsidy_reserved));
-    market.unwind(&receipt, true);
+    let kept = market.refund_order(config, receipt, &mut escrow, reason, true);
     let zero = 0;
-    (reason, reopen(receipt), escrow, zero, zero, zero, zero, zero, zero, zero)
+    (reason, kept, escrow, zero, zero, zero, zero, zero, zero, zero)
 }
 
 /// Take an admitted order out without filling it: the companion's deadline,
-/// admin, and settlement-drain refunds release their receipt here. Returns
-/// `subsidy`, the reservation the companion escrowed for the order, to the
+/// admin, and settlement-drain refunds release their receipt here. `escrow` is
+/// the order's escrowed budget, order fee, and reserved subsidy, and `reason`
+/// the refund's `constants::fill_reason_*` code. The order fee follows
+/// `try_fill`'s refund rule: reasons 1 and 2 keep it in market cash, and every
+/// other reason leaves it in the escrow returned. Returns the reservation to the
 /// incentive balance, subtracts the exact cash need from the ledger, and unpins
 /// a mint's boundary ticks, pruning emptied, unpinned, unretained nodes only
 /// when `prune` and the market is unsettled. Returns a sell's receipt open,
-/// still holding its position, and consumes a mint's. Needs no allowlisting and
-/// checks only the version floor, so the drain works while the protocol is
-/// frozen and after the witness is removed. Aborts on another market's receipt
-/// (`EWrongMarket`), a receipt not admitted (`EWrongStage`), or `subsidy` other
-/// than the reserved amount (`EEscrowMismatch`).
+/// still holding its position, or `none` for a mint's, which it consumes, and
+/// the rest of the escrow.
+///
+/// Needs no allowlisting and checks only the version floor, so the drain works
+/// while the protocol is frozen and after the witness is removed. Keeping an
+/// order fee moves market cash, so like a fill it aborts inside the keeper's
+/// snapshot stage (`ESnapshotInProgress`). Aborts on another market's receipt
+/// (`EWrongMarket`), a receipt not admitted (`EWrongStage`), or `escrow` below
+/// `budget + order_fee + subsidy_reserved` (`EEscrowMismatch`).
 public fun release(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     receipt: OrderReceipt,
-    subsidy: Balance<USDC>,
+    mut escrow: Balance<USDC>,
+    reason: u8,
     prune: bool,
-): Option<OrderReceipt> {
+): (Option<OrderReceipt>, Balance<USDC>) {
     config.chk_floor();
     assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
     assert!(
@@ -1383,10 +1387,12 @@ public fun release(
             || receipt.stage == constants::receipt_stage_sell!(),
         EWrongStage,
     );
-    assert!(subsidy.value() == receipt.subsidy_reserved, EEscrowMismatch);
-    market.fee_incentive_balance.join(subsidy);
-    market.unwind(&receipt, prune);
-    reopen(receipt)
+    assert!(
+        escrow.value() >= receipt.budget + receipt.order_fee + receipt.subsidy_reserved,
+        EEscrowMismatch,
+    );
+    let kept = market.refund_order(config, receipt, &mut escrow, reason, prune);
+    (kept, escrow)
 }
 
 /// Pay an open receipt's settled payout, zero for a loser, to its receive
@@ -2548,6 +2554,32 @@ fun unwind(market: &mut ExpiryMarket, receipt: &OrderReceipt, prune: bool) {
         market.strike_exposure.prune_node(receipt.lower_tick, &ledger.pins);
         market.strike_exposure.prune_node(receipt.higher_tick, &ledger.pins);
     };
+}
+
+/// The refund every unfilled order takes, from `try_fill` or `release`: keep
+/// the order fee in market cash for reasons 1 and 2 (a cash move, so never
+/// inside the keeper's snapshot stage), return the reserved subsidy to the
+/// incentive balance, and take the order out of the ledger. Both come out of
+/// `escrow`, which keeps the rest for the trader. Returns a sell's receipt open
+/// and consumes a mint's.
+fun refund_order(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    receipt: OrderReceipt,
+    escrow: &mut Balance<USDC>,
+    reason: u8,
+    prune: bool,
+): Option<OrderReceipt> {
+    if (
+        reason == constants::fill_reason_limits!()
+            || reason == constants::fill_reason_admission!()
+    ) {
+        config.chk_no_snap();
+        market.cash.receive(escrow.split(receipt.order_fee));
+    };
+    market.fee_incentive_balance.join(escrow.split(receipt.subsidy_reserved));
+    market.unwind(&receipt, prune);
+    reopen(receipt)
 }
 
 /// After a refund or a release: a sell's receipt returns to canonical open,
