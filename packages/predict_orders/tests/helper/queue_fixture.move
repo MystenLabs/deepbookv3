@@ -745,12 +745,7 @@ public fun update_on(channel: u8, envelope_ms: u64, spot: u64): TestUpdate {
 }
 
 /// One feed priced at `spot` with an explicit µs envelope and generation time.
-public fun update_with(
-    channel: u8,
-    envelope_us: u64,
-    generation_us: u64,
-    spot: u64,
-): TestUpdate {
+public fun update_with(channel: u8, envelope_us: u64, generation_us: u64, spot: u64): TestUpdate {
     let feed_id = test_constants::pyth_feed_id();
     queue::new_test_update(
         channel,

@@ -289,8 +289,7 @@ public(package) fun set_template_cadence_config(
     };
     chk_cadence(&config);
     let cadence_index = cad_index(cadence_id);
-    let cadence =
-        &mut manager.und_cfg_mut(propbook_underlying_id).cadences[cadence_index];
+    let cadence = &mut manager.und_cfg_mut(propbook_underlying_id).cadences[cadence_index];
     *cadence = config;
 }
 
@@ -316,18 +315,13 @@ public(package) fun note_expiry(
     assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
     manager.market_ids.add(key, expiry_market_id);
     let watermark =
-        &mut manager
-            .und_cfg_mut(propbook_underlying_id)
-            .last_deployed_expiries[cadence_index];
+        &mut manager.und_cfg_mut(propbook_underlying_id).last_deployed_expiries[cadence_index];
     *watermark = expiry;
 }
 
 // === Private Functions ===
 
-fun und_config(
-    manager: &MarketManager,
-    propbook_underlying_id: u32,
-): &UnderlyingMarketConfig {
+fun und_config(manager: &MarketManager, propbook_underlying_id: u32): &UnderlyingMarketConfig {
     assert!(manager.underlying_configs.contains(propbook_underlying_id), EUnderlyingNotRegistered);
     manager.underlying_configs.borrow(propbook_underlying_id)
 }
@@ -399,11 +393,7 @@ fun chk_cadence(config: &CadenceConfig) {
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 
-fun rank_overlap(
-    underlying: &UnderlyingMarketConfig,
-    cadence_id: u8,
-    expiry: u64,
-): bool {
+fun rank_overlap(underlying: &UnderlyingMarketConfig, cadence_id: u8, expiry: u64): bool {
     let mut higher_cadence_id = cadence_id + 1;
     while ((higher_cadence_id as u64) < underlying.cadences.length()) {
         let higher_cadence = &underlying.cadences[cad_index(higher_cadence_id)];

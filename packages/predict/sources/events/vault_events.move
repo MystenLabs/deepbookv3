@@ -633,11 +633,7 @@ public(package) fun incent_given(
     });
 }
 
-public(package) fun incent_out(
-    pool_vault_id: ID,
-    amount: u64,
-    reserve_after: u64,
-) {
+public(package) fun incent_out(pool_vault_id: ID, amount: u64, reserve_after: u64) {
     event::emit(FeeIncentivesWithdrawn { pool_vault_id, amount, reserve_after });
 }
 

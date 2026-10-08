@@ -552,11 +552,7 @@ public fun quote_mint_exact_cost_for_account(
 /// batches; and the snapshotted minimum entry probability the SDK computes a
 /// queued mint's cash need from. For SDK, keeper, and devInspect reads.
 public fun order_flow_state(market: &ExpiryMarket): (u64, u64, u64) {
-    (
-        market.wait_need(),
-        market.strike_exposure.tree_nodes(),
-        market.strike_exposure.min_prob(),
-    )
+    (market.wait_need(), market.strike_exposure.tree_nodes(), market.strike_exposure.min_prob())
 }
 
 /// Return a receipt's `(expiry_market_id, stage, account_id, order_id,
@@ -1045,10 +1041,7 @@ public fun admit_mint<W: drop>(
     };
     // Only this order's own need, against cash above required cash: one that
     // misses at its tick never touches cash, and the fill checks cash again.
-    assert!(
-        cash_need <= market.cash.balance() - market.required_cash(),
-        EInsufficientMarketCash,
-    );
+    assert!(cash_need <= market.cash.balance() - market.required_cash(), EInsufficientMarketCash);
     // Pinning both boundary nodes now means a fill never creates one.
     market.strike_exposure.ensure_nodes(lower_tick, higher_tick);
     let ledger = market.ledger_mut();
@@ -1223,9 +1216,9 @@ public fun commit<W: drop>(
     receipt.generation_us = price.generation_us();
     if (!is_mint) return balance::zero();
     let rate = config.fee_incentive_subsidy_rate();
-    let amount = math::mul_down(receipt.subsidy_bound, rate).min(
-        market.fee_incentive_balance.value(),
-    );
+    let amount = math::mul_down(receipt.subsidy_bound, rate).min(market
+        .fee_incentive_balance
+        .value());
     receipt.subsidy_rate = rate;
     receipt.subsidy_reserved = amount;
     market.fee_incentive_balance.split(amount)
@@ -1584,10 +1577,7 @@ public(package) fun create_and_share(
 /// change. The only way to reach the payout walk's skip branch, which
 /// production never reaches because backing keeps cash at or above the settled
 /// liability. Public so the order-flow companion's settlement tests reach it.
-public fun take_market_cash_for_testing(
-    market: &mut ExpiryMarket,
-    amount: u64,
-): Balance<USDC> {
+public fun take_market_cash_for_testing(market: &mut ExpiryMarket, amount: u64): Balance<USDC> {
     market.cash.pay_out(amount)
 }
 
@@ -2587,7 +2577,7 @@ fun to_open(receipt: OrderReceipt): OrderReceipt {
         root_id,
         opened_at_ms,
         held_quantity,
-        ..
+        ..,
     } = receipt;
     let zero = 0;
     OrderReceipt {
@@ -2876,9 +2866,7 @@ fun mint_q_at(
     tick_ms: u64,
 ): Option<MintQuote> {
     if (tick_ms >= market.expiry) return option::none();
-    let trading_fee = market
-        .strike_exposure
-        .fee_at(market.expiry, price, quantity, tick_ms);
+    let trading_fee = market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms);
     let fee_incentive_subsidy = math::mul_down(trading_fee, subsidy_rate).min(subsidy_cap);
     let builder_fee = bldr_fee_amt(builder_code_id, trading_fee, quantity);
     option::some(MintQuote {

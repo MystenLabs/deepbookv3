@@ -461,11 +461,7 @@ public(package) fun try_up_price(pricer: &Pricer, strike: Strike): Option<u64> {
 
 /// Non-aborting `range_price`, under the same rule as `try_up_price`. An empty
 /// range (`lower >= higher`) is `none` too.
-public(package) fun try_range(
-    pricer: &Pricer,
-    lower: Strike,
-    higher: Strike,
-): Option<RangePrice> {
+public(package) fun try_range(pricer: &Pricer, lower: Strike, higher: Strike): Option<RangePrice> {
     let (price, _) = eval_range(pricer, lower, higher);
     price
 }
@@ -579,11 +575,7 @@ fun bs_binding(
     binding.destroy_some()
 }
 
-fun chk_pyth(
-    propbook_registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-    pyth: &PythFeed,
-) {
+fun chk_pyth(propbook_registry: &OracleRegistry, propbook_underlying_id: u32, pyth: &PythFeed) {
     assert!(
         propbook_registry
             .propbook_pyth_id_for_underlying(propbook_underlying_id)
@@ -850,11 +842,7 @@ fun chk_inputs(spot: u64, forward: u64, svi: &RawSVI) {
 /// Evaluate `range_price` without aborting: the boundary prices, or `none` with the
 /// abort code `range_price` raises for the first failed precondition. The code is
 /// meaningless alongside a price.
-fun eval_range(
-    pricer: &Pricer,
-    lower: Strike,
-    higher: Strike,
-): (Option<RangePrice>, u64) {
+fun eval_range(pricer: &Pricer, lower: Strike, higher: Strike): (Option<RangePrice>, u64) {
     if (lower.value() >= higher.value()) return (option::none(), EInvalidRange);
     let mut lower_up = option::none();
     if (!lower.is_neg_inf()) {

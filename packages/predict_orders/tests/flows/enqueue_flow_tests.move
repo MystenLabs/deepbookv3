@@ -14,7 +14,12 @@
 #[test_only]
 module deepbook_predict_orders::enqueue_flow_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, pricing::VolSnapshot, test_constants};
+use deepbook_predict::{
+    constants,
+    flow_test_helpers as helpers,
+    pricing::VolSnapshot,
+    test_constants
+};
 use deepbook_predict_orders::{
     order_queue::{Self, OrderRequest, HeldPosition, OrderTiming, OrderView},
     queue_events,

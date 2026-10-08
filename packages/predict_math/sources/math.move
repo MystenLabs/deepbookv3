@@ -101,7 +101,8 @@ public fun digital(
     // and the root fits `u64`.
     let k_minus_m_magnitude = k_minus_m.magnitude() as u128;
     let sigma = sigma as u128;
-    let sq = fixed::sqrt_u128_down(k_minus_m_magnitude * k_minus_m_magnitude + sigma * sigma) as u64;
+    let sq =
+        fixed::sqrt_u128_down(k_minus_m_magnitude * k_minus_m_magnitude + sigma * sigma) as u64;
     let sq_i64 = i64::from_u64(sq);
 
     let rho_km = rho.mul_scaled(&k_minus_m);

@@ -175,10 +175,7 @@ public struct MarketSettled has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun template_upd(
-    config: &StrikeExposureConfig,
-    onchain_timestamp_ms: u64,
-) {
+public(package) fun template_upd(config: &StrikeExposureConfig, onchain_timestamp_ms: u64) {
     event::emit(StrikeExposureTemplateConfigUpdated {
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
@@ -228,17 +225,11 @@ public(package) fun plp_fees_upd(
     });
 }
 
-public(package) fun no_trade_upd(
-    no_trade_window_ms: u64,
-    onchain_timestamp_ms: u64,
-) {
+public(package) fun no_trade_upd(no_trade_window_ms: u64, onchain_timestamp_ms: u64) {
     event::emit(NoTradeWindowUpdated { no_trade_window_ms, onchain_timestamp_ms });
 }
 
-public(package) fun subsidy_upd(
-    fee_incentive_subsidy_rate: u64,
-    onchain_timestamp_ms: u64,
-) {
+public(package) fun subsidy_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_ms: u64) {
     event::emit(FeeIncentiveSubsidyRateUpdated {
         fee_incentive_subsidy_rate,
         onchain_timestamp_ms,
@@ -275,19 +266,11 @@ public(package) fun keeper_upd(keeper: address, allowed: bool) {
     event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
 }
 
-public(package) fun flow_upd(
-    order_flow: TypeName,
-    enabled: bool,
-    onchain_timestamp_ms: u64,
-) {
+public(package) fun flow_upd(order_flow: TypeName, enabled: bool, onchain_timestamp_ms: u64) {
     event::emit(OrderFlowUpdated { order_flow, enabled, onchain_timestamp_ms });
 }
 
-public(package) fun operator_upd(
-    operator: address,
-    added: bool,
-    onchain_timestamp_ms: u64,
-) {
+public(package) fun operator_upd(operator: address, added: bool, onchain_timestamp_ms: u64) {
     event::emit(FlushOperatorUpdated { operator, added, onchain_timestamp_ms });
 }
 

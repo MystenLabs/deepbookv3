@@ -122,11 +122,7 @@ public(package) fun rsv_terms(tree: &StrikePayoutTree): (u64, u64) {
 /// Return the highest payout prefix reachable inside `(lower_tick, higher_tick]`.
 /// This is the existing payout peak a candidate over the same range would stack
 /// onto.
-public(package) fun range_max(
-    tree: &StrikePayoutTree,
-    lower_tick: u64,
-    higher_tick: u64,
-): u64 {
+public(package) fun range_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
     // Prefix evaluation folds boundaries with `tick < limit`, so `lower + 1`
     // includes a start boundary exactly at `lower`. Tick zero is the open-lower
     // sentinel and lives in `base`, not in the node table.
@@ -148,11 +144,7 @@ public(package) fun range_max(
 }
 
 /// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun outside_max(
-    tree: &StrikePayoutTree,
-    lower_tick: u64,
-    higher_tick: u64,
-): u64 {
+public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
     let left = if (lower_tick == 0) {
         0
     } else {
@@ -169,11 +161,7 @@ public(package) fun outside_max(
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
-public(package) fun settled_liab(
-    tree: &StrikePayoutTree,
-    settlement: u64,
-    tick_size: u64,
-): u64 {
+public(package) fun settled_liab(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
     let limit_tick = range_codec::limit_tick(settlement, tick_size);
     prefix_pay(
         &tree.nodes,

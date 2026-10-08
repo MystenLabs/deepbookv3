@@ -446,10 +446,7 @@ fun resolve_refunds_with_reason_8_one_unit_short_of_required_cash() {
     let last = q.record(BOUNDARY_ORDERS - 1);
     assert_eq!(last.status(), order_queue::status_refunded());
     assert_eq!(last.result().reason(), order_queue::reason_no_cash());
-    assert_eq!(
-        q.market().cash_balance(),
-        BOUNDARY_CASH - 1 + (BOUNDARY_ORDERS - 1) * MINT_CASH,
-    );
+    assert_eq!(q.market().cash_balance(), BOUNDARY_CASH - 1 + (BOUNDARY_ORDERS - 1) * MINT_CASH);
     assert_eq!(q.market().required_cash(), (BOUNDARY_ORDERS - 1) * QUANTITY);
     q.assert_backed();
     q.finish();

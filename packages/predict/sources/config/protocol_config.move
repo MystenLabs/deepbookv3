@@ -842,9 +842,7 @@ public(package) fun is_cur_flush(config: &ProtocolConfig, stamp_seq: u64): bool 
     config.valuation_in_progress && config.flush_seq == stamp_seq
 }
 
-public(package) fun se_template(
-    config: &ProtocolConfig,
-): &StrikeExposureConfig {
+public(package) fun se_template(config: &ProtocolConfig): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 

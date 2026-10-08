@@ -151,10 +151,7 @@ fun partial_close_schedule_telescopes_without_rounding_dust() {
 
     let first_close = harness.exposure.quote_live_close(&pricer, &order, 400_000_000);
     let first_rebate = first_close.rebate();
-    let survivor = harness
-        .exposure
-        .apply_close(first_close, &vec_map::empty())
-        .destroy_some();
+    let survivor = harness.exposure.apply_close(first_close, &vec_map::empty()).destroy_some();
 
     let final_close = harness.exposure.quote_live_close(&pricer, &survivor, survivor.quantity());
     let final_rebate = final_close.rebate();

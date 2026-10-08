@@ -607,7 +607,13 @@ public fun set_ewma_penalty(
     z_score_threshold: u64,
     penalty_rate: u64,
 ) {
-    config.set_ewma_params_for_testing(&self.admin_cap, alpha, z_score_threshold, penalty_rate, &self.clock);
+    config.set_ewma_params_for_testing(
+        &self.admin_cap,
+        alpha,
+        z_score_threshold,
+        penalty_rate,
+        &self.clock,
+    );
     config.set_ewma_enabled_for_testing(&self.admin_cap, true, &self.clock);
 }
 

@@ -107,8 +107,7 @@ public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 
 public(package) fun deployed(ledger: &Ledger): u64 {
     let mut deployed = 0;
     ledger.active_expiry_markets.do_ref!(|m| {
-        deployed =
-            deployed + net_funding(ledger.registered_expiries.borrow(m.expiry_market_id));
+        deployed = deployed + net_funding(ledger.registered_expiries.borrow(m.expiry_market_id));
     });
     deployed
 }

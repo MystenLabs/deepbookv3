@@ -642,10 +642,7 @@ fun deselected_pyth_ignores_an_unseeded_feed() {
         test_constants::default_live_price(),
         test_constants::now_ms() + 1,
     );
-    assert_eq!(
-        fx.load_pricer_bundle(&market).pyth_ts(),
-        NO_PYTH_OBSERVATION_MS,
-    );
+    assert_eq!(fx.load_pricer_bundle(&market).pyth_ts(), NO_PYTH_OBSERVATION_MS);
 
     let remainder = fx.redeem_live_bundle(&mut market, &mut account, order, QUANTITY);
     assert!(remainder.is_none());

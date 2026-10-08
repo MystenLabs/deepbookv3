@@ -123,10 +123,7 @@ fun the_top_up_is_capped_by_the_markets_allocation() {
     q.rebalance();
 
     assert_eq!(q.market().cash_balance(), INITIAL_CASH + CAPPED_TOP_UP);
-    assert_eq!(
-        helpers::vault(q.bundle()).idle_balance(),
-        IDLE_SEED - INITIAL_CASH - CAPPED_TOP_UP,
-    );
+    assert_eq!(helpers::vault(q.bundle()).idle_balance(), IDLE_SEED - INITIAL_CASH - CAPPED_TOP_UP);
     q.assert_backed();
     q.finish();
 }

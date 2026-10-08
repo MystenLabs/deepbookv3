@@ -15,7 +15,7 @@ use deepbook_predict_orders::queue_events::{
     OpenRecordSettled,
     OpenRecordPayoutSkipped,
     MarketPayoutsCompleted,
-    QueuedOrdersCleaned
+    QueuedOrdersCleaned,
 };
 use std::bcs;
 use sui::{bcs as sui_bcs, event};

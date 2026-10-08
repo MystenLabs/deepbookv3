@@ -230,14 +230,8 @@ fun pricer_at_reports_the_generation_and_snapshot_timestamps() {
 
     assert_eq!(pricer.expiry_market_id(), fx.expiry_id());
     assert_eq!(pricer.pyth_ts(), GENERATION_MS);
-    assert_eq!(
-        pricer.bs_spot_ts(),
-        test_constants::live_source_timestamp_ms(),
-    );
-    assert_eq!(
-        pricer.bs_fwd_ts(),
-        test_constants::live_source_timestamp_ms(),
-    );
+    assert_eq!(pricer.bs_spot_ts(), test_constants::live_source_timestamp_ms());
+    assert_eq!(pricer.bs_fwd_ts(), test_constants::live_source_timestamp_ms());
     assert_eq!(pricer.bs_svi_ts(), tick_ref::svi_source_timestamp_ms());
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -343,10 +337,7 @@ fun try_reads_match_the_aborting_reads_where_those_price() {
         vector[strike(constants::neg_inf!()), strike(constants::pos_inf!())],
     ];
     ranges.do_ref!(|r| {
-        assert_eq!(
-            pricer.try_range(r[0], r[1]),
-            option::some(pricer.range_price(r[0], r[1])),
-        );
+        assert_eq!(pricer.try_range(r[0], r[1]), option::some(pricer.range_price(r[0], r[1])));
     });
 
     oracle_fixture::return_oracle_bundle(oracle);

@@ -112,14 +112,8 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
     );
 
     let snapshot = config.se_snapshot();
-    assert_eq!(
-        snapshot.min_prob(),
-        config_constants::default_max_entry_probability!() - 1,
-    );
-    assert_eq!(
-        snapshot.max_prob(),
-        config_constants::default_max_entry_probability!(),
-    );
+    assert_eq!(snapshot.min_prob(), config_constants::default_max_entry_probability!() - 1);
+    assert_eq!(snapshot.max_prob(), config_constants::default_max_entry_probability!());
     destroy(snapshot);
 
     return_shared(config);

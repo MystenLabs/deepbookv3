@@ -231,9 +231,7 @@ fun svi_one_ms_past_the_max_age_aborts() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
 fun svi_past_the_live_window_aborts_under_a_looser_policy_bound() {
     let (mut fx, mut oracle) = setup_live();
-    let svi_window_ms = oracle_fixture::config(&oracle)
-        .pricing_cfg()
-        .svi_age_ms();
+    let svi_window_ms = oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms();
     let now = test_constants::live_source_timestamp_ms() + svi_window_ms + 1;
     fx.set_clock_for_testing(now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());

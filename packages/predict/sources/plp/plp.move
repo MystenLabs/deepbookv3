@@ -1109,9 +1109,7 @@ fun sweep_live(
     target_cash: u64,
 ) {
     let returned_cash = market.release_cash(cash_balance - target_cash);
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .recv_expiry(returned_cash, expiry_market_id);
+    let returned_cash_amount = vault.expiry_accounting.recv_expiry(returned_cash, expiry_market_id);
     // Surplus just returned to idle — realize any protocol cut a prior settled
     // sweep could not cover because idle was deployed in other active markets.
     let realized_profit = vault.expiry_accounting.realize_pend();
@@ -1190,17 +1188,11 @@ fun cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
 /// materialize its terminal profit, and return unused fee incentives to the pool
 /// reserve. Idempotent — a settled market already swept returns zero cash, emits
 /// nothing, and recognizes no further profit, so a second pass is a no-op.
-fun sweep_done(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-) {
+fun sweep_done(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
     let expiry_market_id = market.id();
     let deactivated = vault.expiry_accounting.deactivate(expiry_market_id);
     let returned_cash = market.free_settled();
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .recv_expiry(returned_cash, expiry_market_id);
+    let returned_cash_amount = vault.expiry_accounting.recv_expiry(returned_cash, expiry_market_id);
     if (deactivated || returned_cash_amount > 0) {
         vault_events::cash_recv(
             vault.id(),
@@ -1259,11 +1251,7 @@ fun sweep_done(
 /// cut is realized from idle into the protocol reserve — capped at available idle,
 /// with any remainder carried in `pending_protocol_profit` and realized on a later
 /// sweep — while the LP cut stays in idle.
-fun materialize(
-    vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    expiry_market_id: ID,
-) {
+fun materialize(vault: &mut PoolVault, config: &ProtocolConfig, expiry_market_id: ID) {
     let profit = vault.expiry_accounting.materialize(expiry_market_id);
     if (profit == 0) {
         return

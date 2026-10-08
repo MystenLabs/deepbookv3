@@ -277,10 +277,7 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
     assert_eq!(pricer.pyth_ts(), PYTH_SOURCE_MS);
     assert_eq!(pricer.bs_spot_ts(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
     assert_eq!(pricer.bs_fwd_ts(), BLOCK_SCHOLES_FORWARD_SOURCE_MS);
-    assert_eq!(
-        pricer.bs_svi_ts(),
-        test_constants::live_source_timestamp_ms(),
-    );
+    assert_eq!(pricer.bs_svi_ts(), test_constants::live_source_timestamp_ms());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -294,14 +291,8 @@ fun newer_spot_does_not_change_the_basis_of_an_older_forward() {
     fx.prepare_live_oracle_bundle(&mut oracle, price);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_SPOT_SOURCE_MS, 2 * price);
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(
-        pricer.bs_spot_ts(),
-        test_constants::live_source_timestamp_ms(),
-    );
-    assert_eq!(
-        pricer.bs_fwd_ts(),
-        test_constants::live_source_timestamp_ms(),
-    );
+    assert_eq!(pricer.bs_spot_ts(), test_constants::live_source_timestamp_ms());
+    assert_eq!(pricer.bs_fwd_ts(), test_constants::live_source_timestamp_ms());
     // Matched basis remains one, rather than halving when only spot doubles.
     test_helpers::assert_within(
         pricer.up_price(strike(price)),
@@ -373,10 +364,7 @@ fun unpaired_spot_written_in_current_transaction_does_not_block_retained_pair() 
         BLOCK_SCHOLES_SPOT_SOURCE_MS,
         2 * price,
     );
-    assert_eq!(
-        pricer.bs_spot_ts(),
-        test_constants::live_source_timestamp_ms(),
-    );
+    assert_eq!(pricer.bs_spot_ts(), test_constants::live_source_timestamp_ms());
     test_helpers::assert_within(
         pricer.up_price(strike(price)),
         AT_THE_FORWARD_UP,
@@ -464,19 +452,10 @@ fun freeze_then_thaw_preserves_the_mark() {
     assert_eq!(thawed.up_price(atm), up_before);
     assert_eq!(thawed.range_price(atm, strike(constants::pos_inf!())).probability(), range_before);
     assert_eq!(thawed.expiry_market_id(), pricer.expiry_market_id());
-    assert_eq!(
-        thawed.bs_svi_ts(),
-        pricer.bs_svi_ts(),
-    );
+    assert_eq!(thawed.bs_svi_ts(), pricer.bs_svi_ts());
     assert_eq!(thawed.pyth_ts(), pricer.pyth_ts());
-    assert_eq!(
-        thawed.bs_spot_ts(),
-        pricer.bs_spot_ts(),
-    );
-    assert_eq!(
-        thawed.bs_fwd_ts(),
-        pricer.bs_fwd_ts(),
-    );
+    assert_eq!(thawed.bs_spot_ts(), pricer.bs_spot_ts());
+    assert_eq!(thawed.bs_fwd_ts(), pricer.bs_fwd_ts());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -703,9 +682,7 @@ fun fresh_pyth_remains_selected_when_block_scholes_is_newer() {
     );
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert!(
-        pricer.pyth_ts() < pricer.bs_spot_ts(),
-    );
+    assert!(pricer.pyth_ts() < pricer.bs_spot_ts());
     test_helpers::assert_within(
         pricer.up_price(strike(DIVERGED_PYTH_SPOT)),
         AT_THE_FORWARD_UP,
@@ -739,10 +716,8 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     // The stale-Pyth/fresh-Block-Scholes window exists because the test tightens
     // the Pyth budget strictly below the BS price budget.
     let pyth_budget = oracle_fixture::config(&oracle).pricing_cfg().pyth_age_ms();
-    assert!(
-        pyth_budget
-            < oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms(),
-    );
+    assert!(pyth_budget
+            < oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms());
 
     // AT the boundary (now − 99_500 == budget): Pyth is fresh (inclusive), so
     // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.

@@ -12,7 +12,10 @@
 module deepbook_predict_orders::order_flow;
 
 use account::account::Account;
-use deepbook_predict::{expiry_market::{Self, ExpiryMarket, OrderReceipt}, protocol_config::ProtocolConfig};
+use deepbook_predict::{
+    expiry_market::{Self, ExpiryMarket, OrderReceipt},
+    protocol_config::ProtocolConfig
+};
 use deepbook_predict_math::lazer_price::LazerPrice;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},

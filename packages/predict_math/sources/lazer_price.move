@@ -123,10 +123,7 @@ public(package) fun from_parts(
     exponent: Option<I16>,
     update_time: Option<Option<u64>>,
 ): Option<LazerPrice> {
-    assert!(
-        price.is_some() && exponent.is_some() && update_time.is_some(),
-        EPropertyNotRequested,
-    );
+    assert!(price.is_some() && exponent.is_some() && update_time.is_some(), EPropertyNotRequested);
     let generation_us = update_time.destroy_some();
     if (generation_us.is_none()) return option::none();
     let generation_us = generation_us.destroy_some();

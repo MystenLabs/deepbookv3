@@ -218,10 +218,7 @@ public(package) fun stop_snap(exposure: &mut StrikeExposure) {
 
 /// Consume the snapshot after its frozen walk was read, removing retained husks
 /// that no waiting order pins.
-public(package) fun drop_snap(
-    exposure: &mut StrikeExposure,
-    pins: &VecMap<u64, u64>,
-) {
+public(package) fun drop_snap(exposure: &mut StrikeExposure, pins: &VecMap<u64, u64>) {
     exposure.payout.snap_done(pins);
 }
 
@@ -319,11 +316,7 @@ public(package) fun nodes_exist(
 /// zeros would understate the result. The point max after the mint is the
 /// larger of the old max and the candidate's own range peak plus `quantity`,
 /// since only points inside the range move.
-public(package) fun liab_minted(
-    exposure: &StrikeExposure,
-    range: &MintRange,
-    quantity: u64,
-): u64 {
+public(package) fun liab_minted(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
     exposure.liab_of(
         range.max_payout.max(range.range_max_payout + quantity),
         range.total_payout + quantity,
@@ -416,11 +409,7 @@ public(package) fun impact_pot(exposure: &StrikeExposure): u64 {
 /// switch `q = M - R` both arms evaluate to `M + lambda * (T - R)` exactly. The
 /// two arms therefore agree where they meet and neither falls, independently of
 /// `backing_buffer_lambda`, and the potential is nondecreasing in liability.
-public(package) fun mint_impact(
-    exposure: &StrikeExposure,
-    range: &MintRange,
-    quantity: u64,
-): u64 {
+public(package) fun mint_impact(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
     if (exposure.config.inventory_impact_max_rate() == 0 || quantity == 0) return 0;
 
     let before = exposure.liab_of(range.max_payout, range.total_payout);
@@ -680,10 +669,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 /// already pinned, so the fill creates no tree node (`insert_exist`).
 /// Aborts `strike_payout_tree::ENodeMissing` if a boundary is missing; resolve
 /// checks `nodes_exist` first and refunds instead.
-public(package) fun allocate(
-    exposure: &mut StrikeExposure,
-    terms: MintTerms,
-): Order {
+public(package) fun allocate(exposure: &mut StrikeExposure, terms: MintTerms): Order {
     let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
@@ -698,11 +684,7 @@ public(package) fun allocate(
 
 /// Ensure both finite boundaries of a mint range exist as tree nodes, so a
 /// later resolve fill inserts over existing nodes only.
-public(package) fun ensure_nodes(
-    exposure: &mut StrikeExposure,
-    lower_tick: u64,
-    higher_tick: u64,
-) {
+public(package) fun ensure_nodes(exposure: &mut StrikeExposure, lower_tick: u64, higher_tick: u64) {
     exposure.payout.ensure_node(lower_tick);
     exposure.payout.ensure_node(higher_tick);
 }
@@ -815,10 +797,7 @@ public(package) fun settle_close(exposure: &mut StrikeExposure, order: &Order): 
 /// `none`, with nothing changed, when the payout would underflow settled
 /// liability, or when the exposure is not settled yet. A losing order returns
 /// `some(0)`.
-public(package) fun try_settled(
-    exposure: &mut StrikeExposure,
-    order: &Order,
-): Option<u64> {
+public(package) fun try_settled(exposure: &mut StrikeExposure, order: &Order): Option<u64> {
     if (!exposure.is_settled()) return option::none();
     let payout = exposure.settled_order_payout(order);
     if (payout > exposure.settled_payout_liability) return option::none();
@@ -905,11 +884,7 @@ fun pot_for_liab(exposure: &StrikeExposure, liability: u64): u64 {
 /// impact evaluates this on both the current and prospective terms: independently
 /// rounding `lambda * delta(T-M)` can miss a one-atom carry already accumulated in
 /// the book's buffered gap.
-fun liab_of(
-    exposure: &StrikeExposure,
-    max_payout: u64,
-    total_payout: u64,
-): u64 {
+fun liab_of(exposure: &StrikeExposure, max_payout: u64, total_payout: u64): u64 {
     // The point max is a subset-sum of the same non-negative per-order payouts.
     let gap = total_payout - max_payout;
     max_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)

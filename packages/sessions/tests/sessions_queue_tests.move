@@ -395,7 +395,9 @@ fun fill_cohort(fixture: &mut QueueSessionFixture, tau_ms: u64, record_ids: vect
             clock,
             ctx,
         );
-    let finished = tx_fields.queue.resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, clock, ctx);
+    let finished = tx_fields
+        .queue
+        .resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, clock, ctx);
     assert_eq!(finished, THREE_ORDERS);
     record_ids.do_ref!(|record_id| {
         assert_eq!(record(&tx, *record_id).status(), order_queue::status_open());

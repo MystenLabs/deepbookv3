@@ -420,9 +420,7 @@ public fun enqueue_redeem_open(
     queue.assert_open(record_id);
     let source = queue.book.view(record_id).destroy_some();
     assert!(source.account_id() == account_id, ENotRecordOwner);
-    let (lower_tick, higher_tick, held_quantity) = pmath::order_terms(
-        source.position().order_id(),
-    );
+    let (lower_tick, higher_tick, held_quantity) = pmath::order_terms(source.position().order_id());
     let min_sell_quantity = policy.min_sell_quantity();
     assert!(close_quantity >= min_sell_quantity, EBelowMinSell);
     // A partial sell leaves a sellable remainder. A close above the held
@@ -1535,18 +1533,8 @@ public fun commit_for_testing(
 ) {
     let channels = updates.map_ref!(|update| update.channel);
     let envelopes_us = updates.map_ref!(|update| update.envelope_us);
-    commit_updates!(
-        queue,
-        market,
-        desk,
-        config,
-        &channels,
-        &envelopes_us,
-        |index, feed_id| {
-            let update = &updates[index];
-            update.prices[update.feed_ids.find_index!(|id| *id == feed_id).destroy_some()]
-        },
-        clock,
-        ctx.sender(),
-    );
+    commit_updates!(queue, market, desk, config, &channels, &envelopes_us, |index, feed_id| {
+        let update = &updates[index];
+        update.prices[update.feed_ids.find_index!(|id| *id == feed_id).destroy_some()]
+    }, clock, ctx.sender());
 }

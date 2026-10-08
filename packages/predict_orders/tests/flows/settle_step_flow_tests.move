@@ -17,12 +17,7 @@
 #[test_only]
 module deepbook_predict_orders::settle_step_flow_tests;
 
-use deepbook_predict::{
-    constants,
-    expiry_market,
-    flow_test_helpers as helpers,
-    test_constants
-};
+use deepbook_predict::{constants, expiry_market, flow_test_helpers as helpers, test_constants};
 use deepbook_predict_orders::{
     order_queue,
     queue,

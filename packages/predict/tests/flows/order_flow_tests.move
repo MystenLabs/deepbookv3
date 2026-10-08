@@ -114,7 +114,16 @@ fun a_mint_admits_commits_and_fills_into_a_canonical_open_receipt() {
     // Admission pinned the finite boundary node.
     assert_eq!(nodes, 1);
     assert_eq!(min_probability, 10_000_000);
-    let (market_id, stage, _, order_id, feed_id, cash_need, subsidy_bound, _) = expiry_market::receipt_info(
+    let (
+        market_id,
+        stage,
+        _,
+        order_id,
+        feed_id,
+        cash_need,
+        subsidy_bound,
+        _,
+    ) = expiry_market::receipt_info(
         &receipt,
     );
     assert_eq!(market_id, helpers::market(&market).id());
@@ -848,10 +857,7 @@ fun a_referral_fee_comes_out_of_the_trading_fee() {
     assert_eq!(referral, REFERRAL_FEE);
     assert_eq!(amount, ALL_IN_COST);
     assert_eq!(change.value(), BUDGET - ALL_IN_COST);
-    assert_eq!(
-        helpers::market(&market).cash_balance(),
-        cash_before + MINT_CASH - REFERRAL_FEE,
-    );
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + MINT_CASH - REFERRAL_FEE);
     helpers::assert_market_backed_bundle(&market);
     destroy(change);
     destroy(kept);
@@ -1179,13 +1185,7 @@ fun commit_price(
 
 /// Admit at τ and commit a price at clock `now_ms` that the provenance checks
 /// refuse.
-fun commit_bad_price(
-    feed_id: u32,
-    channel: u8,
-    envelope_us: u64,
-    generation_us: u64,
-    now_ms: u64,
-) {
+fun commit_bad_price(feed_id: u32, channel: u8, envelope_us: u64, generation_us: u64, now_ms: u64) {
     let (mut fx, mut market, mut account) = setup();
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
     fx.set_clock_for_testing(now_ms);
@@ -1271,7 +1271,9 @@ fun assert_canonical_open(receipt: &OrderReceipt, held: u64) {
 /// The market's waiting cash need and payout-tree node count, with its 0.01
 /// minimum entry probability.
 fun assert_flow_state(market: &MarketBundle, waiting: u64, nodes: u64) {
-    let (waiting_cash_need, node_count, min_probability) = helpers::market(market).order_flow_state();
+    let (waiting_cash_need, node_count, min_probability) = helpers::market(
+        market,
+    ).order_flow_state();
     assert_eq!(waiting_cash_need, waiting);
     assert_eq!(node_count, nodes);
     assert_eq!(min_probability, 10_000_000);

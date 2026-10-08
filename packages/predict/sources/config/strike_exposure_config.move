@@ -100,10 +100,7 @@ public(package) fun trading_fee(
 /// Non-aborting policy half of `assert_mint_probability_policy`: whether
 /// `entry_probability` lies inside the inclusive entry band. The assert calls
 /// this, so the rule lives in one place.
-public(package) fun prob_ok(
-    config: &StrikeExposureConfig,
-    entry_probability: u64,
-): bool {
+public(package) fun prob_ok(config: &StrikeExposureConfig, entry_probability: u64): bool {
     entry_probability >= config.min_entry_probability
         && entry_probability <= config.max_entry_probability
 }
@@ -111,10 +108,7 @@ public(package) fun prob_ok(
 /// Non-aborting policy half of `assert_range_mint_probability_policy`: the
 /// entry band applied to the actual lower-ABOVE and upper-BELOW legs and to
 /// their combined range. An infinite boundary has no leg to check.
-public(package) fun range_ok(
-    config: &StrikeExposureConfig,
-    price: &RangePrice,
-): bool {
+public(package) fun range_ok(config: &StrikeExposureConfig, price: &RangePrice): bool {
     price.lower_up().map!(|p| config.prob_ok(p)).get_with_default(true)
         && price
             .higher_up()

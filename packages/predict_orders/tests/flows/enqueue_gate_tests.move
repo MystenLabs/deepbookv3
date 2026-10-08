@@ -9,7 +9,12 @@
 #[test_only]
 module deepbook_predict_orders::enqueue_gate_tests;
 
-use deepbook_predict::{expiry_market, flow_test_helpers as helpers, protocol_config, test_constants};
+use deepbook_predict::{
+    expiry_market,
+    flow_test_helpers as helpers,
+    protocol_config,
+    test_constants
+};
 use deepbook_predict_orders::queue_fixture::{Self as fixture, QueueTest};
 use std::unit_test::{assert_eq, destroy};
 
