@@ -185,13 +185,8 @@ public struct OrderReceipt has store {
     stage: u8,
     /// A `constants` mint kind, or `order_kind_sell` once a sell is admitted.
     kind: u8,
-    account_id: ID,
-    owner: address,
-    /// Sell proceeds and the settled payout go only here.
-    receive_address: address,
-    referrer_account_id: Option<ID>,
-    referrer_receive_address: Option<address>,
-    builder_code_id: Option<ID>,
+    /// The account's snapshot at the last admission.
+    parties: OrderParties,
     lower_tick: u64,
     higher_tick: u64,
     /// The exact mint quantity, or the sell's close quantity.
@@ -233,6 +228,19 @@ public struct OrderReceipt has store {
     /// `quantity` is the mint or close quantity, so a sell admission never
     /// overwrites the size it closes.
     held_quantity: u64,
+}
+
+/// The account an order-flow receipt belongs to, snapshotted at each admission.
+/// Grouped so a receipt stays within Sui's 32-field struct limit, and so a sell
+/// admission replaces the party snapshot whole.
+public struct OrderParties has copy, drop, store {
+    account_id: ID,
+    owner: address,
+    /// Sell proceeds and the settled payout go only here.
+    receive_address: address,
+    referrer_account_id: Option<ID>,
+    referrer_receive_address: Option<address>,
+    builder_code_id: Option<ID>,
 }
 
 /// Dynamic-field key of a market's `OrderFlowLedger` under its UID.
@@ -559,7 +567,7 @@ public fun receipt_info(receipt: &OrderReceipt): (ID, u8, ID, u256, u32, u64, u6
     (
         receipt.expiry_market_id,
         receipt.stage,
-        receipt.account_id,
+        receipt.parties.account_id,
         receipt.order_id,
         receipt.vol.pyth_source_id(),
         receipt.cash_need,
@@ -1052,12 +1060,7 @@ public fun admit_mint<W: drop>(
         expiry_market_id: market.id(),
         stage: constants::receipt_stage_mint!(),
         kind,
-        account_id: account.account_id(),
-        owner: account.owner(),
-        receive_address: account.receive_address(),
-        referrer_account_id: account.referrer_account_id(),
-        referrer_receive_address: account.referrer_receive_address(),
-        builder_code_id,
+        parties: parties(account, builder_code_id),
         lower_tick,
         higher_tick,
         quantity,
@@ -1146,7 +1149,7 @@ public fun admit_sell<W: drop>(
     assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
     let held = order::from_id(receipt.order_id);
     assert!(held.quantity() == receipt.held_quantity, EWrongStage);
-    assert!(receipt.account_id == account.account_id(), ENotRecordOwner);
+    assert!(receipt.parties.account_id == account.account_id(), ENotRecordOwner);
     let builder_code_id = predict_account::builder_code_id(account);
     let (_, _, reason) = market.price_close(
         &pricer,
@@ -1169,10 +1172,7 @@ public fun admit_sell<W: drop>(
     // stays, so a refund restores it whole.
     receipt.stage = constants::receipt_stage_sell!();
     receipt.kind = constants::order_kind_sell!();
-    receipt.owner = account.owner();
-    receipt.referrer_account_id = account.referrer_account_id();
-    receipt.referrer_receive_address = account.referrer_receive_address();
-    receipt.builder_code_id = builder_code_id;
+    receipt.parties = parties(account, builder_code_id);
     receipt.quantity = close_quantity;
     receipt.min_probability = min_probability;
     receipt.min_proceeds = min_proceeds;
@@ -1423,7 +1423,7 @@ public fun try_pay_settled(
         return (payout, option::some(receipt))
     };
     if (payout > 0) {
-        balance::send_funds(market.cash.pay_out(payout), receipt.receive_address);
+        balance::send_funds(market.cash.pay_out(payout), receipt.parties.receive_address);
     };
     drop_receipt(receipt);
     (payout, option::none())
@@ -1589,6 +1589,30 @@ public(package) fun take_market_cash_for_testing(
     amount: u64,
 ): Balance<USDC> {
     market.cash.pay_out(amount)
+}
+
+#[test_only]
+/// A receipt's stage, kind, request quantity, held quantity, escrow terms
+/// (budget, order fee, cash need, reserved subsidy), committed spot and tick,
+/// τ, deadline, and channel, for the canonical-stage checks.
+public(package) fun receipt_state_for_testing(
+    receipt: &OrderReceipt,
+): (u8, u8, u64, u64, u64, u64, u64, u64, u64, u64, u64, u64, u8) {
+    (
+        receipt.stage,
+        receipt.kind,
+        receipt.quantity,
+        receipt.held_quantity,
+        receipt.budget,
+        receipt.order_fee,
+        receipt.cash_need,
+        receipt.subsidy_reserved,
+        receipt.spot,
+        receipt.tick_ms,
+        receipt.tau_ms,
+        receipt.deadline_ms,
+        receipt.channel,
+    )
 }
 
 // === Private Functions ===
@@ -2350,7 +2374,7 @@ fun fill_mint(
         receipt.min_quantity,
         receipt.budget,
         receipt.max_probability,
-        &receipt.builder_code_id,
+        &receipt.parties.builder_code_id,
         receipt.subsidy_rate,
         receipt.subsidy_reserved,
         tick_ms,
@@ -2359,7 +2383,7 @@ fun fill_mint(
     if (!market.strike_exposure.nodes_exist(receipt.lower_tick, receipt.higher_tick)) {
         return (constants::fill_reason_missing_node!(), quote, 0)
     };
-    let referral_fee = if (receipt.referrer_receive_address.is_some()) {
+    let referral_fee = if (receipt.parties.referrer_receive_address.is_some()) {
         math::mul_down(quote.trading_fee - quote.fee_incentive_subsidy, config.referral_fee_rate())
     } else {
         0
@@ -2376,8 +2400,8 @@ fun fill_mint(
     if (cash_after < required_after) return (constants::fill_reason_no_cash!(), quote, 0);
 
     let mut payment = escrow.split(quote.all_in_cost);
-    pay_builder(receipt.builder_code_id, payment.split(quote.builder_fee));
-    pay_referral(receipt.referrer_receive_address, payment.split(referral_fee));
+    pay_builder(receipt.parties.builder_code_id, payment.split(quote.builder_fee));
+    pay_referral(receipt.parties.referrer_receive_address, payment.split(referral_fee));
     payment.join(escrow.split(quote.fee_incentive_subsidy));
     payment.join(escrow.split(receipt.order_fee));
     market.cash.receive(payment);
@@ -2389,10 +2413,10 @@ fun fill_mint(
     market.chk_backed();
     order_events::minted(
         market.id(),
-        receipt.account_id,
-        receipt.owner,
-        receipt.builder_code_id,
-        receipt.referrer_account_id,
+        receipt.parties.account_id,
+        receipt.parties.owner,
+        receipt.parties.builder_code_id,
+        receipt.parties.referrer_account_id,
         &minted_order,
         pricer,
         quote.entry_probability,
@@ -2434,7 +2458,7 @@ fun fill_close(
         close_quantity,
         receipt.min_probability,
         receipt.min_proceeds,
-        &receipt.builder_code_id,
+        &receipt.parties.builder_code_id,
         receipt.tick_ms,
     );
     if (reason != 0) return (reason, false, quote);
@@ -2463,9 +2487,9 @@ fun fill_close(
     let mut payout = market.cash.pay_out(redeem_amount);
     payout.join(market.cash.pay_rebate(quote.inventory_impact_rebate));
     market.cash.receive(payout.split(quote.trading_fee));
-    pay_builder(receipt.builder_code_id, payout.split(quote.builder_fee));
+    pay_builder(receipt.parties.builder_code_id, payout.split(quote.builder_fee));
     if (payout.value() > 0) {
-        balance::send_funds(payout, receipt.receive_address);
+        balance::send_funds(payout, receipt.parties.receive_address);
     } else {
         payout.destroy_zero();
     };
@@ -2474,9 +2498,9 @@ fun fill_close(
     let replacement_order_id = replacement_order.map!(|replacement| replacement.id());
     order_events::redeemed(
         market.id(),
-        receipt.account_id,
-        receipt.owner,
-        receipt.builder_code_id,
+        receipt.parties.account_id,
+        receipt.parties.owner,
+        receipt.parties.builder_code_id,
         &position_order,
         pricer,
         receipt.root_id,
@@ -2555,12 +2579,7 @@ fun reopen(receipt: OrderReceipt): Option<OrderReceipt> {
 fun to_open(receipt: OrderReceipt): OrderReceipt {
     let OrderReceipt {
         expiry_market_id,
-        account_id,
-        owner,
-        receive_address,
-        referrer_account_id,
-        referrer_receive_address,
-        builder_code_id,
+        parties,
         lower_tick,
         higher_tick,
         vol,
@@ -2575,12 +2594,7 @@ fun to_open(receipt: OrderReceipt): OrderReceipt {
         expiry_market_id,
         stage: constants::receipt_stage_open!(),
         kind: (zero as u8),
-        account_id,
-        owner,
-        receive_address,
-        referrer_account_id,
-        referrer_receive_address,
-        builder_code_id,
+        parties,
         lower_tick,
         higher_tick,
         quantity: zero,
@@ -2611,6 +2625,19 @@ fun to_open(receipt: OrderReceipt): OrderReceipt {
 
 fun drop_receipt(receipt: OrderReceipt) {
     let OrderReceipt { .. } = receipt;
+}
+
+/// The account's party snapshot for a receipt, with the builder code the
+/// caller already read for the dry run.
+fun parties(account: &Account, builder_code_id: Option<ID>): OrderParties {
+    OrderParties {
+        account_id: account.account_id(),
+        owner: account.owner(),
+        receive_address: account.receive_address(),
+        referrer_account_id: account.referrer_account_id(),
+        referrer_receive_address: account.referrer_receive_address(),
+        builder_code_id,
+    }
 }
 
 /// Borrow the market's `OrderFlowLedger`, creating it on the first admission.
