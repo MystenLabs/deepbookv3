@@ -21,11 +21,11 @@ python3 -m harness cleanup --instances
 | `smoke` | Stage and publish the package closure once. | Failure artifacts, or the full instance with `--keep`. |
 | `live` | Hold one localnet with keeper, signed oracle updater, and optional fuzz traders. | Deployment and actor traces. |
 | `campaign` | Run named strategies concurrently, one isolated localnet per strategy, from one market-data hub. | Atomic campaign manifest, hub metrics, and per-strategy traces. |
-| `parity` | Generate a seeded scenario and compare localnet contract behavior with the independent Python model. Not yet ported to delayed execution: it fails at the first mint row (see [the simulations README](../simulations/README.md)). | Exact scenario, manifest, local trace, economic outputs, and failures. |
+| `parity` | Generate a seeded scenario, run it on localnet through the delayed-execution queue, and compare the result with the independent Python model (see [the simulations README](../simulations/README.md)). | Exact scenario, manifest, local trace, economic outputs, and failures. |
 | `analyze` | Reduce retained campaign traces into measurements and a contract-bug verdict. | Terminal report and exit status. |
 | `status` / `cleanup` | Inspect or reclaim localnet slots. | Slot registry state. |
 
-The external gas-benchmark worker calls `python3 -m harness benchmark --source <downloaded-snapshot.csv> --results-output <path>`. It runs the same parity scenario, so it fails the same way until that scenario is ported. The worker passes the downloaded source path directly; the task runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
+The external gas-benchmark worker calls `python3 -m harness benchmark --source <downloaded-snapshot.csv> --results-output <path>`. It runs the same parity scenario. The worker passes the downloaded source path directly; the task runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
 
 ## Delayed execution
 

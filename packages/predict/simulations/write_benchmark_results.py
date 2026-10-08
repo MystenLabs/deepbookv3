@@ -43,11 +43,22 @@ def summarize(rows: list[dict[str, float]]) -> dict[str, Any]:
     }
 
 
+def filled(step: dict[str, Any]) -> bool:
+    # A queued mint step covers enqueue, commit, and resolve. It filled when resolve emitted
+    # QueuedOrderFilled; otherwise it was refunded at its tick or left waiting.
+    return any(event["type"] == "QueuedOrderFilled" for event in step["events"])
+
+
 def build_results(trace: dict[str, Any]) -> dict[str, Any]:
     by_action: dict[str, list[dict[str, float]]] = defaultdict(list)
+    successful_mints: list[dict[str, float]] = []
+    rejected_mints: list[dict[str, float]] = []
 
     for step in trace["steps"]:
-        by_action[step["action"]].append(execution_result(step))
+        result = execution_result(step)
+        by_action[step["action"]].append(result)
+        if step["action"] == "mint":
+            (successful_mints if filled(step) else rejected_mints).append(result)
 
     mints = by_action.get("mint", [])
     supplies = by_action.get("request_supply", [])
@@ -57,8 +68,8 @@ def build_results(trace: dict[str, Any]) -> dict[str, Any]:
         "summary": {
             "totalTxs": sum(len(rows) for rows in by_action.values()),
             "attemptedMints": len(mints),
-            "successfulMints": len(mints),
-            "rejectedMints": 0,
+            "successfulMints": len(successful_mints),
+            "rejectedMints": len(rejected_mints),
             "targetMints": len(mints),
             "byAction": {
                 action: summarize(rows)
@@ -66,9 +77,9 @@ def build_results(trace: dict[str, Any]) -> dict[str, Any]:
                 if rows
             },
         },
-        "mints": mints,
+        "mints": successful_mints,
         "supplies": supplies,
-        "rejectedMints": [],
+        "rejectedMints": rejected_mints,
     }
 
 

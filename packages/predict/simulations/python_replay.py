@@ -18,31 +18,44 @@ from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v5"
-LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v6"
+LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v6"
+# Every trade is queued: a mint or redeem_open row enqueues, then commits its scenario spot as
+# the price for the order's τ and resolves. `settle` refunds waiting orders and settles,
+# `settle_payout` pays the Open records, and the next rebalance sweeps the settled market.
 EXPECTED_ACTION_SEQUENCE = (
     "mint",
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "flush",
     "request_withdraw",
     "flush",
     "mint",
-    "redeem_live",
+    "redeem_open",
     "rebalance_expiry_cash",
     "mint",
     "mint",
+    "mint",
+    "mint",
     "settle",
-    "redeem_settled",
-    "redeem_settled",
-    "redeem_settled",
-    "redeem_settled",
+    "settle_payout",
+    "rebalance_expiry_cash",
     "flush",
     "request_supply",
     "flush",
 )
-EXPECTED_SETTLED_REDEMPTION_MODES = (False, True, False, True)
+# A fill at τ, a refund at τ on the order's own max_probability (order fee kept), and an order
+# never committed, which settlement refunds at its deadline (order fee returned).
+EXPECTED_MINT_ROLES = (
+    "fill",
+    "fill",
+    "fill",
+    "fill",
+    "fill",
+    "limit_refund",
+    "deadline_refund",
+)
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
     "schema_version": int,
@@ -111,15 +124,16 @@ SCENARIO_COLUMNS = (
     "is_up",
     "higher_strike",
     "quantity",
+    "max_probability",
     "order_ref",
     "close_quantity",
     "replacement_order_ref",
+    "commit_spot",
     "amount",
     "shares",
     "min_output",
     "lp_ref",
     "settlement_price",
-    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -164,6 +178,25 @@ PLP_SUPPLY_FEE_RATE = 1_000_000
 PLP_WITHDRAW_FEE_RATE = 2_000_000
 LP_REQUEST_LIMIT_FLUSH_ATTEMPTS = 1
 MAX_LP_POOL_VALUE = (1 << 64) - 1
+U64_MAX = (1 << 64) - 1
+
+# Delayed-execution policy: the compiled defaults `init_delayed_execution_policy` writes at
+# setup. The scenario never changes them.
+ORDER_FEE = 20_000
+MIN_SELL_QUANTITY = POSITION_LOT_SIZE
+# `order_queue` codes.
+KIND_EXACT_QUANTITY = 0
+KIND_REDEEM_OPEN = 4
+STATUS_PENDING = 0
+STATUS_COMMITTED = 1
+STATUS_OPEN = 2
+STATUS_REFUNDED = 3
+STATUS_CLOSED = 4
+REASON_LIMITS = 1
+REASON_ADMISSION = 2
+REASON_DEADLINE = 5
+REASON_NO_CASH = 8
+FEE_KEEPING_REASONS = (REASON_LIMITS, REASON_ADMISSION)
 
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
@@ -561,10 +594,14 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "isUp": _bool(row, "is_up", index),
                     "higherStrike": _uint(row, "higher_strike", index) if row.get("higher_strike") else None,
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
+                    "maxProbability": (
+                        _uint(row, "max_probability", index) if row.get("max_probability") else None
+                    ),
                     "orderRef": _ref(row, "order_ref", index),
+                    "commitSpot": _uint(row, "commit_spot", index) if row.get("commit_spot") else None,
                 }
             )
-        elif action == "redeem_live":
+        elif action == "redeem_open":
             rows.append(
                 {
                     "action": action,
@@ -575,6 +612,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "orderRef": _ref(row, "order_ref", index),
                     "closeQuantity": parse_mint_quantity(_uint(row, "close_quantity", index), index, "close_quantity"),
                     "replacementOrderRef": _optional_str(row, "replacement_order_ref"),
+                    "commitSpot": _uint(row, "commit_spot", index),
                 }
             )
         elif action == "request_supply":
@@ -621,16 +659,8 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "settlementPrice": _uint(row, "settlement_price", index),
                 }
             )
-        elif action == "redeem_settled":
-            rows.append(
-                {
-                    "action": action,
-                    "lineNumber": index,
-                    "step": tx,
-                    "orderRef": _ref(row, "order_ref", index),
-                    "permissionless": _bool(row, "permissionless", index),
-                }
-            )
+        elif action == "settle_payout":
+            rows.append({"action": action, "lineNumber": index, "step": tx})
         else:
             raise ValueError(f'Scenario line {index}: unsupported action "{action}"')
     return rows
@@ -654,13 +684,15 @@ def validate_complete_scenario(rows: list[dict[str, Any]]) -> None:
             raise ValueError(
                 f"scenario step {index} must be {expected_action}, got {row['action']}"
             )
-    settled_redemption_modes = tuple(
-        row["permissionless"] for row in rows if row["action"] == "redeem_settled"
-    )
-    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
-        raise ValueError(
-            "scenario settled redemptions must be owner/permissionless/owner/permissionless"
-        )
+    mint_roles = tuple(mint_role(row) for row in rows if row["action"] == "mint")
+    if mint_roles != EXPECTED_MINT_ROLES:
+        raise ValueError(f"scenario mint roles must be {'/'.join(EXPECTED_MINT_ROLES)}")
+
+
+def mint_role(row: dict[str, Any]) -> str:
+    if row["commitSpot"] is None:
+        return "deadline_refund"
+    return "fill" if row["maxProbability"] is None else "limit_refund"
 
 
 def deepbook_div(x: int, y: int) -> int:
@@ -1077,13 +1109,13 @@ def compute_range_price(svi: dict[str, Any], forward: int, lower: int, higher: i
 
 REQUIRED_ACTIONS = [
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "request_withdraw",
     "flush",
     "rebalance_expiry_cash",
     "settle",
-    "redeem_settled",
+    "settle_payout",
 ]
 
 
@@ -1182,13 +1214,16 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
             "lower_tick": str(lower_tick),
             "higher_tick": str(higher_tick),
             "quantity": str(row["quantity"]),
+            "max_probability": _optional_decimal(row["maxProbability"]),
+            "commit_spot": _optional_decimal(row["commitSpot"]),
         }
-    if action == "redeem_live":
+    if action == "redeem_open":
         return {
             **oracle_input,
             "order_ref": row["orderRef"],
             "close_quantity": str(row["closeQuantity"]),
             "replacement_order_ref": row["replacementOrderRef"],
+            "commit_spot": str(row["commitSpot"]),
         }
     if action == "request_supply":
         return {
@@ -1204,12 +1239,11 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
         }
     if action == "settle":
         return {"settlement_price": str(row["settlementPrice"])}
-    if action == "redeem_settled":
-        return {
-            "order_ref": row["orderRef"],
-            "permissionless": row["permissionless"],
-        }
     return oracle_input
+
+
+def _optional_decimal(value: int | None) -> str | None:
+    return None if value is None else str(value)
 
 
 def initial_state() -> dict[str, int]:
@@ -1231,6 +1265,11 @@ def initial_state() -> dict[str, int]:
         "withdraw_requests_pending": 0,
         "is_settled": 0,
         "active_market_count": 1,
+        "waiting_cash_need": 0,
+        "pending_mints": 0,
+        "pending_sells": 0,
+        "payout_cursor": 0,
+        "queue_next_id": 0,
         "sent_to_expiry": INITIAL_EXPIRY_CASH,
         "received_from_expiry": 0,
     }
@@ -1255,6 +1294,11 @@ def state_snapshot(state: dict[str, int]) -> dict[str, str]:
         "withdraw_requests_pending",
         "is_settled",
         "active_market_count",
+        "waiting_cash_need",
+        "pending_mints",
+        "pending_sells",
+        "payout_cursor",
+        "queue_next_id",
     )
     return {key: str(state[key]) for key in visible}
 
@@ -1263,7 +1307,10 @@ def initial_model(expiry_ms: int) -> dict[str, Any]:
     return {
         "expiry_ms": expiry_ms,
         "tree": StrikePayoutTree(tick_size=ORACLE_TICK_SIZE, pos_inf_tick=POS_INF_TICK),
+        # Live positions by order ref; each names the queue record that holds it.
         "orders": {},
+        # Queue records by record ID, in placement order.
+        "records": {},
         "next_order_sequence": 0,
         "last_oracle": None,
         "settlement_price": None,
@@ -1319,6 +1366,7 @@ def apply_oracle(
             if timing
             else row.get("sourceTimestampMs", snapshot["pricingTimestampMs"])
         )
+        snapshot["priceSourceTimestampMs"] = row.get("priceSourceTimestampMs", 0)
         model["last_oracle"] = snapshot
 
 
@@ -1408,105 +1456,410 @@ def price_range(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> int:
     return range_probability(range_prices(row_or_order, oracle))
 
 
-def mint_order(
+def range_entry_allowed(prices: tuple[int | None, int | None]) -> bool:
+    try:
+        assert_range_entry_bounds(prices)
+    except ValueError:
+        return False
+    return True
+
+
+def cash_need_exact_quantity(quantity: int) -> int:
+    # order_queue::cash_need_exact_quantity: a fill pays at least the minimum entry probability
+    # per contract into market cash.
+    return mul_div_round_up(quantity, FLOAT_SCALING - MIN_ENTRY_PROBABILITY, FLOAT_SCALING) + 1
+
+
+def cash_need_sell(close_quantity: int) -> int:
+    # order_queue::cash_need_sell: a close lowers liability by at least lambda per contract.
+    return mul_div_round_up(close_quantity, FLOAT_SCALING - BACKING_BUFFER_LAMBDA, FLOAT_SCALING) + 1
+
+
+def has_positive_min_variance(svi: dict[str, Any]) -> bool:
+    # pricing::has_positive_min_variance on the rolled 1e18 surface: the smallest smile inner
+    # term is sigma * sqrt(1 - rho^2), or 0 at |rho| == 1.
+    rho = svi["rho"]
+    if rho == FLOAT_SCALING:
+        min_inner = 0
+    else:
+        min_inner = deepbook_mul(svi["sigma"], sqrt_down(FLOAT_SCALING - deepbook_mul(rho, rho)))
+    increment = svi["b"] * min_inner // FLOAT_SCALING
+    if svi["aNegative"]:
+        return increment > svi["a"]
+    return increment + svi["a"] > 0
+
+
+def tick_oracle(record: dict[str, Any], commit_spot: int, tick_ms: int) -> dict[str, Any] | None:
+    """The pricer resolve rebuilds from an order's volatility snapshot at its committed tick.
+
+    Mirrors `pricing::pricer_at`: the snapshot's Block Scholes forward re-anchored on the
+    committed spot, with the raw SVI rolled from its source time to the tick. `None` where the
+    contract returns none: at or past expiry, on a zero forward, or when the rolled surface's
+    minimum total variance is not positive.
+    """
+    vol = record["vol"]
+    if tick_ms >= vol["expiryMs"]:
+        return None
+    forward = mul_div_round_down(commit_spot, vol["forward"], vol["spot"])
+    if forward == 0 or forward >= 1 << 64:
+        return None
+    oracle = {**vol, "spot": commit_spot, "forward": forward, "pricingTimestampMs": tick_ms}
+    if not has_positive_min_variance(pricing_svi(oracle)):
+        return None
+    return oracle
+
+
+def append_record(model: dict[str, Any], state: dict[str, int], record: dict[str, Any]) -> int:
+    record_id = state["queue_next_id"]
+    state["queue_next_id"] += 1
+    record["record_id"] = record_id
+    model["records"][record_id] = record
+    state["waiting_cash_need"] += record["cash_need"]
+    state["pending_mints" if record["kind"] != KIND_REDEEM_OPEN else "pending_sells"] += 1
+    return record_id
+
+
+def release_record(state: dict[str, int], record: dict[str, Any]) -> None:
+    state["waiting_cash_need"] -= record["cash_need"]
+    state["pending_mints" if record["kind"] != KIND_REDEEM_OPEN else "pending_sells"] -= 1
+
+
+def order_enqueued_update(record: dict[str, Any], source_record_id: int | None) -> dict[str, Any]:
+    return {
+        "type": "order_enqueued",
+        "order_ref": record["order_ref"],
+        "record_id": str(record["record_id"]),
+        "kind": str(record["kind"]),
+        "quantity": str(record["quantity"]),
+        "budget": str(record["budget"]),
+        "order_fee": str(record["order_fee"]),
+        "cash_need": str(record["cash_need"]),
+        "source_record_id": None if source_record_id is None else str(source_record_id),
+    }
+
+
+def volatility_snapshot(model: dict[str, Any]) -> dict[str, Any]:
+    oracle = model["last_oracle"]
+    if oracle is None:
+        raise ValueError("enqueue requires an oracle snapshot")
+    return dict(oracle)
+
+
+def enqueue_mint(
     model: dict[str, Any],
     state: dict[str, int],
     row: dict[str, Any],
-    timestamp_ms: int,
-) -> list[dict[str, Any]]:
-    oracle = model["last_oracle"]
-    if oracle is None:
-        raise ValueError("mint requires an oracle snapshot")
-    prices = range_prices(row, oracle)
-    assert_range_entry_bounds(prices)
-    probability = range_probability(prices)
-    quantity = row["quantity"]
-    premium = deepbook_mul(probability, quantity)
-    if premium < MIN_PREMIUM:
-        raise ValueError("premium below minimum")
-    fee = range_trading_fee(prices, quantity, model_fee_time_to_expiry_ms(model, timestamp_ms))
-    lower_tick, higher_tick = mint_range_ticks(row)
-    before = live_payout_liability(model)
-    quoted_model = {**model, "tree": deepcopy(model["tree"])}
-    quoted_model["tree"].insert_range(lower_tick, higher_tick, quantity)
-    after = live_payout_liability(quoted_model)
-    impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
-    total_cost = premium + fee + impact_charge
-    if total_cost > quantity:
-        raise ValueError("mint cost above maximum payout")
-    if total_cost > state["account_usdc_balance"]:
-        raise ValueError("insufficient account balance for mint")
+) -> tuple[int, list[dict[str, Any]]]:
+    """`enqueue_exact_quantity` with `max_cost = quantity`, the cap the executor passes.
 
-    model["tree"] = quoted_model["tree"]
-    sequence = model["next_order_sequence"]
-    model["next_order_sequence"] += 1
-    model["orders"][row["orderRef"]] = {
+    Escrows the budget, `min(max_cost, available - order_fee, quantity)`, and the order fee.
+    The t0 dry run changes nothing when it passes, and an order it refuses aborts the chain
+    transaction, so the model does not repeat it.
+    """
+    if model["settlement_price"] is not None:
+        raise ValueError("enqueue on a settled market")
+    available = state["account_usdc_balance"]
+    if available <= ORDER_FEE:
+        raise ValueError("balance does not cover the order fee")
+    quantity = row["quantity"]
+    max_cost = quantity
+    budget = min(max_cost, available - ORDER_FEE, quantity)
+    cash_need = cash_need_exact_quantity(quantity)
+    update_required_cash(model, state)
+    if cash_need > state["expiry_cash_balance"] - state["required_cash"]:
+        raise ValueError("cash need above the market's spare cash")
+    lower_tick, higher_tick = mint_range_ticks(row)
+    record = {
+        "order_ref": row["orderRef"],
+        "kind": KIND_EXACT_QUANTITY,
+        "status": STATUS_PENDING,
         "lower_tick": lower_tick,
         "higher_tick": higher_tick,
         "quantity": quantity,
-        "sequence": sequence,
-        "position_root_sequence": sequence,
+        "max_cost": max_cost,
+        "max_probability": U64_MAX if row["maxProbability"] is None else row["maxProbability"],
+        "budget": budget,
+        "order_fee": ORDER_FEE,
+        "cash_need": cash_need,
+        "vol": volatility_snapshot(model),
     }
-    state["account_usdc_balance"] -= total_cost
-    state["expiry_cash_balance"] += total_cost
-    state["inventory_impact_reserve"] += impact_charge
+    state["account_usdc_balance"] -= budget + ORDER_FEE
+    record_id = append_record(model, state, record)
+    return record_id, [order_enqueued_update(record, None)]
+
+
+def enqueue_redeem_open(
+    model: dict[str, Any],
+    state: dict[str, int],
+    row: dict[str, Any],
+) -> tuple[int, list[dict[str, Any]]]:
+    """`enqueue_redeem_open` with zero floors: escrow the order fee, close the source record,
+    and move the whole position into the new record."""
+    order = model["orders"].get(row["orderRef"])
+    if order is None:
+        raise ValueError(f"unknown order_ref {row['orderRef']}")
+    source = model["records"][order["record_id"]]
+    if source["status"] != STATUS_OPEN:
+        raise ValueError("source record is not Open")
+    if state["account_usdc_balance"] < ORDER_FEE:
+        raise ValueError("balance does not cover the order fee")
+    close_quantity = row["closeQuantity"]
+    remaining = order["quantity"] - close_quantity
+    if close_quantity < MIN_SELL_QUANTITY or (0 < remaining < MIN_SELL_QUANTITY):
+        raise ValueError("sell below the minimum sell quantity")
+    if close_quantity > order["quantity"]:
+        raise ValueError("close quantity exceeds the held position")
+    record = {
+        "order_ref": row["orderRef"],
+        "kind": KIND_REDEEM_OPEN,
+        "status": STATUS_PENDING,
+        "quantity": close_quantity,
+        "budget": 0,
+        "order_fee": ORDER_FEE,
+        "cash_need": cash_need_sell(close_quantity),
+        "vol": volatility_snapshot(model),
+    }
+    state["account_usdc_balance"] -= ORDER_FEE
+    source["status"] = STATUS_CLOSED
+    record_id = append_record(model, state, record)
+    order["record_id"] = record_id
+    return record_id, [order_enqueued_update(record, source["record_id"])]
+
+
+def refund_record(
+    model: dict[str, Any],
+    state: dict[str, int],
+    record: dict[str, Any],
+    reason: int,
+    timestamp_ms: int,
+) -> list[dict[str, Any]]:
+    """`order_queue::refund_order` with full escrow: the budget back to the trader, the order
+    fee kept in market cash on reasons 1 and 2 and returned otherwise. A refunded mint becomes
+    Refunded; a refunded sell returns to Open holding its position."""
+    keeps_fee = reason in FEE_KEEPING_REASONS
+    fee_returned = 0 if keeps_fee else record["order_fee"]
+    state["account_usdc_balance"] += record["budget"] + fee_returned
+    if keeps_fee:
+        state["expiry_cash_balance"] += record["order_fee"]
+    release_record(state, record)
+    sell = record["kind"] == KIND_REDEEM_OPEN
+    record["status"] = STATUS_OPEN if sell else STATUS_REFUNDED
     update_required_cash(model, state)
     return [
         {
-            "type": "order_minted",
-            "order_ref": row["orderRef"],
-            "order_sequence": str(sequence),
-            "lower_tick": str(lower_tick),
-            "higher_tick": str(higher_tick),
-            "entry_probability": str(probability),
-            "quantity": str(quantity),
-            "premium": str(premium),
-            "trading_fee": str(fee),
-            "fee_incentive_subsidy": "0",
-            "builder_fee": "0",
-            "penalty_fee": "0",
-            "referral_fee": "0",
-            "inventory_impact_charge": str(impact_charge),
+            "type": "queued_order_refunded",
+            "order_ref": record["order_ref"],
+            "record_id": str(record["record_id"]),
+            "kind": str(record["kind"]),
+            "reason": str(reason),
+            "escrow_returned": str(record["budget"]),
+            "order_fee_returned": str(fee_returned),
+            "subsidy_returned": "0",
+            "position_returned": sell,
             "onchain_timestamp_ms": str(timestamp_ms),
-            "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
-            "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
-            "block_scholes_forward_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
-            "block_scholes_svi_source_timestamp_ms": str(row["sourceTimestampMs"]),
         }
     ]
 
 
-def redeem_live(
+def queued_fill_update(
+    record: dict[str, Any],
+    quantity: int,
+    amount: int,
+    trading_fee: int,
+    inventory_impact: int,
+    position_quantity: int,
+    tick_ms: int,
+) -> dict[str, Any]:
+    return {
+        "type": "queued_order_filled",
+        "order_ref": record["order_ref"],
+        "record_id": str(record["record_id"]),
+        "kind": str(record["kind"]),
+        "quantity": str(quantity),
+        "amount": str(amount),
+        "trading_fee": str(trading_fee),
+        "builder_fee": "0",
+        "referral_fee": "0",
+        "order_fee": str(record["order_fee"]),
+        "subsidy_used": "0",
+        "inventory_impact": str(inventory_impact),
+        "position_quantity": str(position_quantity),
+        "tau_ms": str(tick_ms),
+        "tick_ms": str(tick_ms),
+        "onchain_timestamp_ms": str(tick_ms),
+    }
+
+
+def oracle_source_timestamps(oracle: dict[str, Any], tick_ms: int) -> dict[str, str]:
+    # A queued fill's Pyth source time is its committed price's generation time, which the
+    # local signer stamps at τ; the Block Scholes times are the order's snapshot.
+    return {
+        "pyth_spot_source_timestamp_ms": str(tick_ms),
+        "block_scholes_spot_source_timestamp_ms": str(oracle["priceSourceTimestampMs"]),
+        "block_scholes_forward_source_timestamp_ms": str(oracle["priceSourceTimestampMs"]),
+        "block_scholes_svi_source_timestamp_ms": str(oracle["sviSourceTimestampMs"]),
+    }
+
+
+def quote_queued_mint(
+    model: dict[str, Any],
+    record: dict[str, Any],
+    oracle: dict[str, Any],
+    tick_ms: int,
+) -> tuple[dict[str, Any] | None, int]:
+    """`expiry_market::quote_queued_mint` for an exact-quantity order without subsidy, builder,
+    or referral: the quote, or the refund reason, checked in the contract's order."""
+    try:
+        prices = range_prices(record, oracle)
+    except ValueError:
+        return None, REASON_ADMISSION
+    if not range_entry_allowed(prices):
+        return None, REASON_ADMISSION
+    quantity = record["quantity"]
+    probability = range_probability(prices)
+    premium = deepbook_mul(probability, quantity)
+    if premium < MIN_PREMIUM:
+        return None, REASON_ADMISSION
+    before = live_payout_liability(model)
+    tree = deepcopy(model["tree"])
+    tree.insert_range(record["lower_tick"], record["higher_tick"], quantity)
+    liability_after = live_payout_liability({**model, "tree": tree})
+    impact_charge = inventory_impact_potential(liability_after) - inventory_impact_potential(before)
+    fee = range_trading_fee(prices, quantity, model_fee_time_to_expiry_ms(model, tick_ms))
+    all_in_cost = premium + fee + impact_charge
+    if probability > record["max_probability"]:
+        return None, REASON_LIMITS
+    if all_in_cost > quantity:
+        return None, REASON_ADMISSION
+    if all_in_cost > min(record["max_cost"], record["budget"]):
+        return None, REASON_LIMITS
+    return {
+        "probability": probability,
+        "premium": premium,
+        "trading_fee": fee,
+        "inventory_impact_charge": impact_charge,
+        "all_in_cost": all_in_cost,
+        "tree": tree,
+        "liability_after": liability_after,
+    }, 0
+
+
+def fill_queued_mint(
     model: dict[str, Any],
     state: dict[str, int],
-    row: dict[str, Any],
-    timestamp_ms: int,
-) -> list[dict[str, Any]]:
-    order = model["orders"].pop(row["orderRef"], None)
-    if order is None:
-        raise ValueError(f"unknown order_ref {row['orderRef']}")
-    close_quantity = row["closeQuantity"]
-    if close_quantity > order["quantity"]:
-        raise ValueError("close quantity exceeds order")
-    oracle = model["last_oracle"]
-    if oracle is None:
-        raise ValueError("live redeem requires an oracle snapshot")
-    prices = range_prices(order, oracle)
+    record: dict[str, Any],
+    oracle: dict[str, Any],
+    tick_ms: int,
+) -> list[dict[str, Any]] | int:
+    """Fill a committed mint at its tick, or return the refund reason before anything moves.
+
+    Market cash takes the all-in cost and the order fee, the impact charge joins its reserve,
+    and the unused budget returns to the trader. The record becomes Open.
+    """
+    quote, reason = quote_queued_mint(model, record, oracle, tick_ms)
+    if quote is None:
+        return reason
+    cash_after = (
+        state["expiry_cash_balance"] + quote["all_in_cost"] + record["order_fee"]
+    )
+    required_after = (
+        quote["liability_after"] + state["inventory_impact_reserve"] + quote["inventory_impact_charge"]
+    )
+    if cash_after < required_after:
+        return REASON_NO_CASH
+
+    model["tree"] = quote["tree"]
+    sequence = model["next_order_sequence"]
+    model["next_order_sequence"] += 1
+    model["orders"][record["order_ref"]] = {
+        "lower_tick": record["lower_tick"],
+        "higher_tick": record["higher_tick"],
+        "quantity": record["quantity"],
+        "sequence": sequence,
+        "record_id": record["record_id"],
+    }
+    state["account_usdc_balance"] += record["budget"] - quote["all_in_cost"]
+    state["expiry_cash_balance"] += quote["all_in_cost"] + record["order_fee"]
+    state["inventory_impact_reserve"] += quote["inventory_impact_charge"]
+    release_record(state, record)
+    record["status"] = STATUS_OPEN
+    update_required_cash(model, state)
+    return [
+        {
+            "type": "order_minted",
+            "order_ref": record["order_ref"],
+            "order_sequence": str(sequence),
+            "lower_tick": str(record["lower_tick"]),
+            "higher_tick": str(record["higher_tick"]),
+            "entry_probability": str(quote["probability"]),
+            "quantity": str(record["quantity"]),
+            "premium": str(quote["premium"]),
+            "trading_fee": str(quote["trading_fee"]),
+            "fee_incentive_subsidy": "0",
+            "builder_fee": "0",
+            "penalty_fee": "0",
+            "referral_fee": "0",
+            "inventory_impact_charge": str(quote["inventory_impact_charge"]),
+            "onchain_timestamp_ms": str(tick_ms),
+            **oracle_source_timestamps(oracle, tick_ms),
+        },
+        queued_fill_update(
+            record,
+            record["quantity"],
+            quote["all_in_cost"],
+            quote["trading_fee"],
+            quote["inventory_impact_charge"],
+            record["quantity"],
+            tick_ms,
+        ),
+    ]
+
+
+def fill_queued_sell(
+    model: dict[str, Any],
+    state: dict[str, int],
+    record: dict[str, Any],
+    oracle: dict[str, Any],
+    tick_ms: int,
+    replacement_order_ref: str | None,
+) -> list[dict[str, Any]] | int:
+    """Fill a committed early sell at its tick, or return the refund reason.
+
+    The trader receives the redeem value plus the inventory-impact rebate, less the trading
+    fee, which stays in market cash with the order fee. A partial close leaves the remainder,
+    under a new order sequence, in this record; a full close marks it Closed.
+    """
+    order_ref = record["order_ref"]
+    order = model["orders"][order_ref]
+    close_quantity = record["quantity"]
+    try:
+        prices = range_prices(order, oracle)
+    except ValueError:
+        return REASON_ADMISSION
     probability = range_probability(prices)
     redeem_amount = deepbook_mul(probability, close_quantity)
     fee = min(
         redeem_amount,
-        range_trading_fee(prices, close_quantity, model_fee_time_to_expiry_ms(model, timestamp_ms)),
+        range_trading_fee(prices, close_quantity, model_fee_time_to_expiry_ms(model, tick_ms)),
     )
     before = live_payout_liability(model)
-    model["tree"].remove_range(order["lower_tick"], order["higher_tick"], close_quantity)
-    after = live_payout_liability(model)
-    impact_rebate = inventory_impact_potential(before) - inventory_impact_potential(after)
+    tree = deepcopy(model["tree"])
+    tree.remove_range(order["lower_tick"], order["higher_tick"], close_quantity)
+    liability_after = live_payout_liability({**model, "tree": tree})
+    impact_rebate = inventory_impact_potential(before) - inventory_impact_potential(liability_after)
+    if (
+        state["expiry_cash_balance"] + fee + record["order_fee"]
+        < liability_after + state["inventory_impact_reserve"] + redeem_amount
+    ):
+        return REASON_NO_CASH
+
+    model["tree"] = tree
     remaining = order["quantity"] - close_quantity
     replacement_ref = None
     replacement_sequence = None
+    del model["orders"][order_ref]
     if remaining > 0:
-        replacement_ref = row["replacementOrderRef"] or row["orderRef"]
+        replacement_ref = replacement_order_ref or order_ref
         replacement_sequence = model["next_order_sequence"]
         model["next_order_sequence"] += 1
         model["orders"][replacement_ref] = {
@@ -1514,15 +1867,22 @@ def redeem_live(
             "quantity": remaining,
             "sequence": replacement_sequence,
         }
-
-    state["account_usdc_balance"] += redeem_amount + impact_rebate - fee
-    state["expiry_cash_balance"] += fee - redeem_amount - impact_rebate
+        record["order_ref"] = replacement_ref
+    proceeds = redeem_amount + impact_rebate - fee
+    state["account_usdc_balance"] += proceeds
+    state["expiry_cash_balance"] += fee + record["order_fee"] - redeem_amount - impact_rebate
     state["inventory_impact_reserve"] -= impact_rebate
+    release_record(state, record)
+    record["status"] = STATUS_OPEN if remaining > 0 else STATUS_CLOSED
     update_required_cash(model, state)
+    filled = queued_fill_update(
+        record, close_quantity, proceeds, fee, impact_rebate, remaining, tick_ms
+    )
+    filled["order_ref"] = order_ref
     return [
         {
             "type": "live_order_redeemed",
-            "order_ref": row["orderRef"],
+            "order_ref": order_ref,
             "order_sequence": str(order["sequence"]),
             "quantity_closed": str(close_quantity),
             "remaining_quantity": str(remaining),
@@ -1535,13 +1895,39 @@ def redeem_live(
             "builder_fee": "0",
             "penalty_fee": "0",
             "inventory_impact_rebate": str(impact_rebate),
-            "onchain_timestamp_ms": str(timestamp_ms),
-            "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
-            "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
-            "block_scholes_forward_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
-            "block_scholes_svi_source_timestamp_ms": str(row["sourceTimestampMs"]),
-        }
+            "onchain_timestamp_ms": str(tick_ms),
+            **oracle_source_timestamps(oracle, tick_ms),
+        },
+        filled,
     ]
+
+
+def commit_and_resolve(
+    model: dict[str, Any],
+    state: dict[str, int],
+    record_id: int,
+    commit_spot: int,
+    tick_ms: int,
+    replacement_order_ref: str | None = None,
+) -> list[dict[str, Any]]:
+    """Commit `commit_spot` as the price for the record's τ, `tick_ms`, then resolve it.
+
+    The executor fails the run unless the commit landed at τ and resolve ran before the
+    order's deadline, so the record is priced at its tick and filled or refunded with the
+    reason its fill failed on.
+    """
+    record = model["records"][record_id]
+    record["status"] = STATUS_COMMITTED
+    oracle = tick_oracle(record, commit_spot, tick_ms)
+    if oracle is None:
+        result: list[dict[str, Any]] | int = REASON_ADMISSION
+    elif record["kind"] == KIND_REDEEM_OPEN:
+        result = fill_queued_sell(model, state, record, oracle, tick_ms, replacement_order_ref)
+    else:
+        result = fill_queued_mint(model, state, record, oracle, tick_ms)
+    if isinstance(result, int):
+        return refund_record(model, state, record, result, tick_ms)
+    return result
 
 
 def request_supply(
@@ -1618,14 +2004,26 @@ def realize_pending_protocol_profit(state: dict[str, int]) -> int:
 def rebalance_expiry(
     model: dict[str, Any],
     state: dict[str, int],
+    timestamp_ms: int,
 ) -> list[dict[str, Any]]:
-    if state["active_market_count"] == 0 or model["settlement_price"] is not None:
+    """`plp::rebalance_expiry_cash`: sweep a settled market, rebalance a live one, and leave an
+    expired unsettled market alone. A live market targets at least required cash plus the
+    waiting orders' cash need, and its sweep never leaves less."""
+    if state["active_market_count"] == 0:
+        return []
+    if model["settlement_price"] is not None:
+        return sweep_settled_expiry(model, state)
+    if timestamp_ms >= model["expiry_ms"]:
         return []
     update_required_cash(model, state)
     required = state["required_cash"]
     target_buffer = deepbook_mul(required, EXPIRY_REBALANCE_PCT)
-    target = max(INITIAL_EXPIRY_CASH, required + target_buffer)
-    threshold = max(INITIAL_EXPIRY_CASH, required + target_buffer + target_buffer)
+    target = max(
+        required + target_buffer,
+        INITIAL_EXPIRY_CASH,
+        required + state["waiting_cash_need"],
+    )
+    threshold = max(required + target_buffer + target_buffer, INITIAL_EXPIRY_CASH, target)
     cash = state["expiry_cash_balance"]
     if cash < target:
         funding_room = max(
@@ -1666,6 +2064,46 @@ def rebalance_expiry(
             }
         ]
     return []
+
+
+def sweep_settled_expiry(
+    model: dict[str, Any],
+    state: dict[str, int],
+) -> list[dict[str, Any]]:
+    """`plp::sweep_settled_expiry` on the first sweep: deactivate the market, return its cash
+    above the unpaid settled liability to idle, and materialize the expiry's profit."""
+    state["active_market_count"] = 0
+    returned = state["expiry_cash_balance"] - model["settled_liability"]
+    state["expiry_cash_balance"] = model["settled_liability"]
+    state["vault_idle_balance"] += returned
+    state["received_from_expiry"] += returned
+    state["profit_basis_credits"] += returned
+    updates: list[dict[str, Any]] = [
+        {
+            "type": "expiry_cash_received",
+            "settlement_price": str(model["settlement_price"]),
+            "amount": str(returned),
+        }
+    ]
+    profit = max(0, state["received_from_expiry"] - state["sent_to_expiry"])
+    if profit:
+        state["profit_basis_debits"] += profit
+        protocol_profit = deepbook_mul(profit, PROTOCOL_RESERVE_PROFIT_SHARE)
+        lp_profit = profit - protocol_profit
+        state["vault_pending_protocol_profit"] += protocol_profit
+        realize_pending_protocol_profit(state)
+        updates.append(
+            {
+                "type": "expiry_profit_materialized",
+                "lp_profit": str(lp_profit),
+                "protocol_profit": str(protocol_profit),
+                "protocol_reserve_balance_after": str(state["vault_protocol_reserve_balance"]),
+                "profit_basis_after": str(state["profit_basis_debits"]),
+                "pending_protocol_profit_after": str(state["vault_pending_protocol_profit"]),
+            }
+        )
+    update_required_cash(model, state)
+    return updates
 
 
 def drain_supply_queue(
@@ -1898,57 +2336,32 @@ def settle_market(
     row: dict[str, Any],
     timestamp_ms: int,
 ) -> list[dict[str, Any]]:
+    """`try_settle` until the market is settled: the refund phase refunds every waiting order
+    at its deadline (reason 5, order fee returned), then the settling call records the price,
+    releases the inventory-impact reserve, and closes the queue. It pays nothing."""
     if model["settlement_price"] is not None:
         raise ValueError("market already settled")
+    updates: list[dict[str, Any]] = []
+    for record in model["records"].values():
+        if record["status"] in (STATUS_PENDING, STATUS_COMMITTED):
+            updates.extend(refund_record(model, state, record, REASON_DEADLINE, timestamp_ms))
     settlement_price = row["settlementPrice"]
     model["settlement_price"] = settlement_price
     model["settled_liability"] = model["tree"].settled_payout_liability(settlement_price)
     state["inventory_impact_reserve"] = 0
     state["is_settled"] = 1
-    update_required_cash(model, state)
-    updates = [
+    updates.append(
         {
             "type": "market_settled",
             "settlement_price": str(settlement_price),
             "settlement_source": "0",
             "onchain_timestamp_ms": str(timestamp_ms),
         }
-    ]
-
-    state["active_market_count"] = 0
-    returned = state["expiry_cash_balance"] - model["settled_liability"]
-    state["expiry_cash_balance"] = model["settled_liability"]
-    state["vault_idle_balance"] += returned
-    state["received_from_expiry"] += returned
-    state["profit_basis_credits"] += returned
-    updates.append(
-        {
-            "type": "expiry_cash_received",
-            "settlement_price": str(settlement_price),
-            "amount": str(returned),
-        }
     )
-
-    profit = max(0, state["received_from_expiry"] - state["sent_to_expiry"])
-    if profit:
-        state["profit_basis_debits"] += profit
-        protocol_profit = deepbook_mul(profit, PROTOCOL_RESERVE_PROFIT_SHARE)
-        lp_profit = profit - protocol_profit
-        state["vault_pending_protocol_profit"] += protocol_profit
-        realize_pending_protocol_profit(state)
+    # A market that never had a queue has no payout walk, so its settling call completes it.
+    if state["queue_next_id"] == 0:
         updates.append(
-            {
-                "type": "expiry_profit_materialized",
-                "lp_profit": str(lp_profit),
-                "protocol_profit": str(protocol_profit),
-                "protocol_reserve_balance_after": str(
-                    state["vault_protocol_reserve_balance"]
-                ),
-                "profit_basis_after": str(state["profit_basis_debits"]),
-                "pending_protocol_profit_after": str(
-                    state["vault_pending_protocol_profit"]
-                ),
-            }
+            {"type": "market_payouts_completed", "onchain_timestamp_ms": str(timestamp_ms)}
         )
     update_required_cash(model, state)
     return updates
@@ -1965,35 +2378,48 @@ def settlement_in_range(order: dict[str, Any], settlement_price: int) -> bool:
     return lower_ok and higher_ok
 
 
-def redeem_settled(
+def settle_payout(
     model: dict[str, Any],
     state: dict[str, int],
-    row: dict[str, Any],
     timestamp_ms: int,
 ) -> list[dict[str, Any]]:
+    """The `try_settle` payout walk: every Open record, in record order, is paid its settled
+    payout from market cash (zero for a loser) and marked Closed."""
     if model["settlement_price"] is None:
         raise ValueError("market is not settled")
-    order = model["orders"].pop(row["orderRef"], None)
-    if order is None:
-        raise ValueError(f"unknown order_ref {row['orderRef']}")
-    payout = (
-        order["quantity"]
-        if settlement_in_range(order, model["settlement_price"])
-        else 0
-    )
-    model["settled_liability"] -= payout
-    state["expiry_cash_balance"] -= payout
-    state["account_usdc_balance"] += payout
+    positions = {order["record_id"]: (ref, order) for ref, order in model["orders"].items()}
+    updates: list[dict[str, Any]] = []
+    for record_id in range(state["payout_cursor"], state["queue_next_id"]):
+        record = model["records"][record_id]
+        if record["status"] != STATUS_OPEN:
+            continue
+        order_ref, order = positions[record_id]
+        payout = (
+            order["quantity"]
+            if settlement_in_range(order, model["settlement_price"])
+            else 0
+        )
+        if payout > state["expiry_cash_balance"] or payout > model["settled_liability"]:
+            raise ValueError(f"record {record_id} payout {payout} cannot be paid")
+        model["settled_liability"] -= payout
+        state["expiry_cash_balance"] -= payout
+        state["account_usdc_balance"] += payout
+        record["status"] = STATUS_CLOSED
+        del model["orders"][order_ref]
+        updates.append(
+            {
+                "type": "open_record_settled",
+                "order_ref": order_ref,
+                "record_id": str(record_id),
+                "order_sequence": str(order["sequence"]),
+                "payout": str(payout),
+                "onchain_timestamp_ms": str(timestamp_ms),
+            }
+        )
+    state["payout_cursor"] = state["queue_next_id"]
+    updates.append({"type": "market_payouts_completed", "onchain_timestamp_ms": str(timestamp_ms)})
     update_required_cash(model, state)
-    return [
-        {
-            "type": "settled_order_redeemed",
-            "order_ref": row["orderRef"],
-            "order_sequence": str(order["sequence"]),
-            "payout_amount": str(payout),
-            "onchain_timestamp_ms": str(timestamp_ms),
-        }
-    ]
+    return updates
 
 
 def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
@@ -2050,9 +2476,25 @@ def replay(
         apply_oracle(model, row, timing)
         updates: list[dict[str, Any]] = []
         if action == "mint":
-            updates.extend(mint_order(model, state, row, timestamp_ms))
-        elif action == "redeem_live":
-            updates.extend(redeem_live(model, state, row, timestamp_ms))
+            record_id, enqueued = enqueue_mint(model, state, row)
+            updates.extend(enqueued)
+            if row["commitSpot"] is not None:
+                updates.extend(
+                    commit_and_resolve(model, state, record_id, row["commitSpot"], timestamp_ms)
+                )
+        elif action == "redeem_open":
+            record_id, enqueued = enqueue_redeem_open(model, state, row)
+            updates.extend(enqueued)
+            updates.extend(
+                commit_and_resolve(
+                    model,
+                    state,
+                    record_id,
+                    row["commitSpot"],
+                    timestamp_ms,
+                    row["replacementOrderRef"],
+                )
+            )
         elif action == "request_supply":
             updates.extend(request_supply(model, state, row))
         elif action == "request_withdraw":
@@ -2060,11 +2502,11 @@ def replay(
         elif action == "flush":
             updates.extend(flush(model, state))
         elif action == "rebalance_expiry_cash":
-            updates.extend(rebalance_expiry(model, state))
+            updates.extend(rebalance_expiry(model, state, timestamp_ms))
         elif action == "settle":
             updates.extend(settle_market(model, state, row, timestamp_ms))
-        elif action == "redeem_settled":
-            updates.extend(redeem_settled(model, state, row, timestamp_ms))
+        elif action == "settle_payout":
+            updates.extend(settle_payout(model, state, timestamp_ms))
         else:
             raise ValueError(f"unsupported action {action}")
         update_required_cash(model, state)

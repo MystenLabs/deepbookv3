@@ -545,7 +545,7 @@ function aggregateGas(usages: GasUsage[]): GasUsage {
 // Preserve the observable contents of the former single-PTB operation after splitting
 // refresh from pricing: gas, events, and object changes cover every leg in submission
 // order, while the final priced operation remains the scalar digest/effects/Clock authority.
-function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceipt {
+export function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceipt {
     const last = receipts[receipts.length - 1]!;
     return {
         ...last,
@@ -700,9 +700,9 @@ function parseU64LE(bytes: number[]): bigint {
     return v;
 }
 
-function commandReturnBytes(result: any, cmdIndex: number): number[] {
-    const value = result.commandResults?.[cmdIndex]?.returnValues?.[0]?.bcs;
-    if (!value) throw new Error(`devInspect: no return value at command ${cmdIndex}`);
+function commandReturnBytes(result: any, cmdIndex: number, valueIndex = 0): number[] {
+    const value = result.commandResults?.[cmdIndex]?.returnValues?.[valueIndex]?.bcs;
+    if (!value) throw new Error(`devInspect: no return value ${valueIndex} at command ${cmdIndex}`);
     return Array.from(value as Uint8Array);
 }
 
@@ -818,6 +818,13 @@ export interface PredictEconomicState {
     withdrawRequestsPending: bigint;
     isSettled: boolean;
     activeMarketCount: bigint;
+    // The market's delayed-execution queue: the summed cash need and counts of unfinished
+    // orders, and the settlement payout walk's `(payout_cursor, next_id)`.
+    waitingCashNeed: bigint;
+    pendingMints: bigint;
+    pendingSells: bigint;
+    payoutCursor: bigint;
+    queueNextId: bigint;
 }
 
 // Read every material parity field from one devInspect snapshot. The simulation
@@ -860,6 +867,9 @@ export async function readPredictEconomicState(params: {
         typeArguments: [`${PACKAGE_ID}::plp::PLP`],
         arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
     });
+    tx.moveCall({ target: target("expiry_market", "waiting_cash_need"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "pending_counts"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "payout_progress"), arguments: [market] });
     tx.setSenderIfNotSet(address);
     const result = await simulateGrpc(tx);
     if (!isSuccessStatus(result.effects?.status)) {
@@ -886,6 +896,11 @@ export async function readPredictEconomicState(params: {
         activeMarketCount: BigInt(parseVectorId(commandReturnBytes(result, 14)).length),
         accountUsdcBalance: u64(16),
         accountPlpBalance: u64(17),
+        waitingCashNeed: u64(18),
+        pendingMints: u64(19),
+        pendingSells: parseU64LE(commandReturnBytes(result, 19, 1)),
+        payoutCursor: u64(20),
+        queueNextId: parseU64LE(commandReturnBytes(result, 20, 1)),
     };
 }
 
@@ -1467,8 +1482,8 @@ function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }
 // Pre-cutover live mint. A fresh localnet publish starts past the delayed-execution
 // cutover, where `mint_exact_quantity` aborts `EDelayedExecutionRequired`
 // (expiry_market:13); queued trading uses `enqueueMintTx` + `commitAndResolveTx`. The
-// mint builders below remain only for the parity simulation and the capacity and cleanup
-// measurement strategies, which still need a queued-flow redesign.
+// mint builders below remain only for the capacity and cleanup measurement strategies,
+// which still need a queued-flow redesign.
 function addMint(tx: Transaction, params: MintParams): void {
     const { lowerTick, higherTick } = mintRangeTicks(
         params.strike,
@@ -1504,9 +1519,8 @@ function addMint(tx: Transaction, params: MintParams): void {
 // Pre-cutover live close; aborts like `addMint` after the cutover. The queued early sell
 // is `enqueueRedeemOpenTx`, which sells an Open queue record rather than an account position.
 function addRedeem(tx: Transaction, params: RedeemParams): void {
-    // The sim always acts as the account owner, so it uses the owner-authorized
-    // `redeem_live` (auth consumed). The benchmark harness does not drive the
-    // permissionless settled redeem path.
+    // The caller acts as the account owner, so this uses the owner-authorized
+    // `redeem_live` (auth consumed).
     const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);
     tx.moveCall({
@@ -1572,34 +1586,6 @@ function addRedeemSettledPermissionless(
             tx.object(CLOCK_ID),
         ],
     });
-}
-
-export function redeemSettledTx(params: {
-    expiryMarketId: string;
-    protocolConfigId: string;
-    wrapperId: string;
-    orderId: string;
-    permissionless: boolean;
-}): Transaction {
-    const tx = new Transaction();
-    if (params.permissionless) {
-        addRedeemSettledPermissionless(tx, params);
-    } else {
-        const auth = generateAuth(tx);
-        tx.moveCall({
-            target: target("expiry_market", "redeem_settled"),
-            arguments: [
-                tx.object(params.expiryMarketId),
-                tx.object(params.wrapperId),
-                auth,
-                tx.object(params.protocolConfigId),
-                tx.pure.u256(BigInt(params.orderId)),
-                tx.object(ACCUMULATOR_ROOT_ID),
-                tx.object(CLOCK_ID),
-            ],
-        });
-    }
-    return tx;
 }
 
 export function cleanoutAccountTx(params: CleanoutParams): Transaction {
@@ -2305,16 +2291,19 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     return tx;
 }
 
-export async function refreshOracleAndMintTxs(
-    params: OracleRefreshParams & MintParams,
+// Refresh the oracle, then enqueue in a second transaction: enqueue loads its volatility
+// snapshot from the feeds, and a priced operation may not read an observation written in its
+// own transaction.
+export async function refreshOracleAndEnqueueMintTxs(
+    params: OracleRefreshParams & EnqueueMintParams,
 ): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addMint(tx, params));
+    return refreshThen(params, (tx) => addEnqueueMint(tx, params));
 }
 
-export async function refreshOracleAndRedeemTxs(
-    params: OracleRefreshParams & RedeemParams,
+export async function refreshOracleAndEnqueueRedeemOpenTxs(
+    params: OracleRefreshParams & EnqueueSellParams,
 ): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addRedeem(tx, params));
+    return refreshThen(params, (tx) => addEnqueueRedeemOpen(tx, params));
 }
 
 // Mint test USDC and transfer it to `toAddress`. The TreasuryCap is owned by the
@@ -2441,13 +2430,18 @@ export interface EnqueueMintParams extends OracleFeedIds {
 // updater-maintained feeds, so it needs no live Pricer; like every priced operation it must
 // not share a transaction with an oracle write.
 export function enqueueMintTx(params: EnqueueMintParams): Transaction {
+    const tx = new Transaction();
+    addEnqueueMint(tx, params);
+    return tx;
+}
+
+function addEnqueueMint(tx: Transaction, params: EnqueueMintParams): void {
     const { lowerTick, higherTick } = mintRangeTicks(
         params.strike,
         params.isUp,
         params.tickSize,
         params.higherStrike,
     );
-    const tx = new Transaction();
     const auth = generateAuth(tx);
     tx.moveCall({
         target: target("expiry_market", "enqueue_exact_quantity"),
@@ -2469,7 +2463,6 @@ export function enqueueMintTx(params: EnqueueMintParams): Transaction {
             tx.object(CLOCK_ID),
         ],
     });
-    return tx;
 }
 
 export interface EnqueueSellParams extends OracleFeedIds {
@@ -2487,6 +2480,11 @@ export interface EnqueueSellParams extends OracleFeedIds {
 // after the cutover: a position held in the account has none.
 export function enqueueRedeemOpenTx(params: EnqueueSellParams): Transaction {
     const tx = new Transaction();
+    addEnqueueRedeemOpen(tx, params);
+    return tx;
+}
+
+function addEnqueueRedeemOpen(tx: Transaction, params: EnqueueSellParams): void {
     const auth = generateAuth(tx);
     tx.moveCall({
         target: target("expiry_market", "enqueue_redeem_open"),
@@ -2507,7 +2505,6 @@ export function enqueueRedeemOpenTx(params: EnqueueSellParams): Transaction {
             tx.object(CLOCK_ID),
         ],
     });
-    return tx;
 }
 
 // One cohort price: the spot the local signer attests for envelope τ on the cohort's

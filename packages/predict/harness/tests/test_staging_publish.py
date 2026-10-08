@@ -382,6 +382,35 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--with-unpublished-dependencies", args)
             self.assertNotIn("--publish-unpublished-deps", args)
 
+    def test_failed_publish_reports_the_sui_error_line(self) -> None:
+        # sui prints an execution failure as a plain line whose payload is in braces, so the
+        # lenient JSON slice is not JSON. The error must name the failure, not a decode error.
+        error_line = (
+            "Error executing transaction 'GLV5PZvzKwbDAsrsppmNh9uFzVF4yTczHVi3vCDrzdbc': "
+            "MovePackageTooBig { object_size: 139004, max_object_size: 102400 } in command 0"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            package = workspace / "packages" / "predict"
+            package.mkdir(parents=True)
+            response = subprocess.CompletedProcess(
+                args=[], returncode=1, stdout=error_line, stderr=""
+            )
+
+            with (
+                mock.patch.object(publish.suicli, "run", return_value=response),
+                self.assertRaisesRegex(publish.suicli.SuiError, "MovePackageTooBig"),
+            ):
+                publish._test_publish(
+                    root / "client.yaml",
+                    workspace,
+                    package,
+                    root / "Pub.sim.toml",
+                    config.GAS_BUDGET,
+                )
+
+
 class LocalnetQueryTests(unittest.TestCase):
     def test_balance_unwraps_the_cli_coin_list(self) -> None:
         # `sui client balance --json` returns [coin_entries, has_more] — the coin list is the FIRST

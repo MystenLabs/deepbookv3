@@ -10,47 +10,53 @@ from pathlib import Path
 from typing import Any
 
 
+# Chain-time telemetry. `tau_ms` and `tick_ms` come from the chain itself: the executor commits
+# each order at its τ, and the replay prices at the τ it reads from the local trace.
 OBSERVATIONAL_EVENT_FIELDS = {
     "onchain_timestamp_ms",
+    "tau_ms",
+    "tick_ms",
     "pyth_spot_source_timestamp_ms",
     "block_scholes_spot_source_timestamp_ms",
     "block_scholes_forward_source_timestamp_ms",
     "block_scholes_svi_source_timestamp_ms",
 }
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v5"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v6"
 REQUIRED_ACTIONS = [
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "request_withdraw",
     "flush",
     "rebalance_expiry_cash",
     "settle",
-    "redeem_settled",
+    "settle_payout",
 ]
 EXPECTED_ACTION_SEQUENCE = [
     "mint",
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "flush",
     "request_withdraw",
     "flush",
     "mint",
-    "redeem_live",
+    "redeem_open",
     "rebalance_expiry_cash",
     "mint",
     "mint",
+    "mint",
+    "mint",
     "settle",
-    "redeem_settled",
-    "redeem_settled",
-    "redeem_settled",
-    "redeem_settled",
+    "settle_payout",
+    "rebalance_expiry_cash",
     "flush",
     "request_supply",
     "flush",
 ]
-EXPECTED_SETTLED_REDEMPTION_MODES = [False, True, False, True]
+# `order_queue` refund reasons that keep the order fee in market cash; every other reason
+# returns it.
+FEE_KEEPING_REASONS = {"1", "2"}
 TOP_LEVEL_FIELDS = {"schema_version", "scenario", "records"}
 SCENARIO_FIELDS = {"quantity_scale", "required_actions", "observed_actions"}
 RECORD_FIELDS = {"step", "action", "input", "updates", "state"}
@@ -74,12 +80,15 @@ INPUT_SCHEMAS = {
         "lower_tick": "decimal",
         "higher_tick": "decimal",
         "quantity": "decimal",
+        "max_probability": "nullable_decimal",
+        "commit_spot": "nullable_decimal",
     },
-    "redeem_live": {
+    "redeem_open": {
         **ORACLE_INPUT_FIELDS,
         "order_ref": "string",
         "close_quantity": "decimal",
         "replacement_order_ref": "nullable_string",
+        "commit_spot": "decimal",
     },
     "request_supply": {
         "amount": "decimal",
@@ -93,7 +102,7 @@ INPUT_SCHEMAS = {
     },
     "rebalance_expiry_cash": {},
     "settle": {"settlement_price": "decimal"},
-    "redeem_settled": {"order_ref": "string", "permissionless": "boolean"},
+    "settle_payout": {},
 }
 STATE_FIELDS = {
     field: "decimal"
@@ -115,9 +124,60 @@ STATE_FIELDS = {
         "withdraw_requests_pending",
         "is_settled",
         "active_market_count",
+        "waiting_cash_need",
+        "pending_mints",
+        "pending_sells",
+        "payout_cursor",
+        "queue_next_id",
     }
 }
 UPDATE_SCHEMAS = {
+    "order_enqueued": {
+        "order_ref": "string",
+        "record_id": "decimal",
+        "kind": "decimal",
+        "quantity": "decimal",
+        "budget": "decimal",
+        "order_fee": "decimal",
+        "cash_need": "decimal",
+        "source_record_id": "nullable_decimal",
+    },
+    "queued_order_filled": {
+        "order_ref": "string",
+        "record_id": "decimal",
+        "kind": "decimal",
+        "quantity": "decimal",
+        "amount": "decimal",
+        "trading_fee": "decimal",
+        "builder_fee": "decimal",
+        "referral_fee": "decimal",
+        "order_fee": "decimal",
+        "subsidy_used": "decimal",
+        "inventory_impact": "decimal",
+        "position_quantity": "decimal",
+        "tau_ms": "decimal",
+        "tick_ms": "decimal",
+        "onchain_timestamp_ms": "decimal",
+    },
+    "queued_order_refunded": {
+        "order_ref": "string",
+        "record_id": "decimal",
+        "kind": "decimal",
+        "reason": "decimal",
+        "escrow_returned": "decimal",
+        "order_fee_returned": "decimal",
+        "subsidy_returned": "decimal",
+        "position_returned": "boolean",
+        "onchain_timestamp_ms": "decimal",
+    },
+    "open_record_settled": {
+        "order_ref": "string",
+        "record_id": "decimal",
+        "order_sequence": "decimal",
+        "payout": "decimal",
+        "onchain_timestamp_ms": "decimal",
+    },
+    "market_payouts_completed": {"onchain_timestamp_ms": "decimal"},
     "order_minted": {
         "order_ref": "string",
         "order_sequence": "decimal",
@@ -229,16 +289,20 @@ UPDATE_SCHEMAS = {
         "profit_basis_after": "decimal",
         "pending_protocol_profit_after": "decimal",
     },
-    "settled_order_redeemed": {
-        "order_ref": "string",
-        "order_sequence": "decimal",
-        "payout_amount": "decimal",
-        "onchain_timestamp_ms": "decimal",
-    },
 }
 ACTION_UPDATE_TYPES = {
-    "mint": {"order_minted"},
-    "redeem_live": {"live_order_redeemed"},
+    "mint": {
+        "order_enqueued",
+        "order_minted",
+        "queued_order_filled",
+        "queued_order_refunded",
+    },
+    "redeem_open": {
+        "order_enqueued",
+        "live_order_redeemed",
+        "queued_order_filled",
+        "queued_order_refunded",
+    },
     "request_supply": {"supply_requested"},
     "request_withdraw": {"withdraw_requested"},
     "flush": {
@@ -248,25 +312,39 @@ ACTION_UPDATE_TYPES = {
         "flush_executed",
         "expiry_cash_rebalanced",
     },
-    "rebalance_expiry_cash": {"expiry_cash_rebalanced"},
-    "settle": {
-        "market_settled",
+    "rebalance_expiry_cash": {
+        "expiry_cash_rebalanced",
         "expiry_cash_received",
         "expiry_profit_materialized",
     },
-    "redeem_settled": {"settled_order_redeemed"},
+    "settle": {"queued_order_refunded", "market_settled", "market_payouts_completed"},
+    "settle_payout": {"open_record_settled", "market_payouts_completed"},
 }
 REQUIRED_SINGLE_UPDATE_TYPES = {
-    "mint": {"order_minted"},
-    "redeem_live": {"live_order_redeemed"},
+    "mint": {"order_enqueued"},
+    "redeem_open": {"order_enqueued"},
     "request_supply": {"supply_requested"},
     "request_withdraw": {"withdraw_requested"},
     "flush": {"flush_executed"},
-    "rebalance_expiry_cash": {"expiry_cash_rebalanced"},
-    "settle": {"market_settled", "expiry_cash_received"},
-    "redeem_settled": {"settled_order_redeemed"},
+    "rebalance_expiry_cash": set(),
+    "settle": {"market_settled"},
+    "settle_payout": {"market_payouts_completed"},
 }
-OPTIONAL_SINGLE_UPDATE_TYPES = {"settle": {"expiry_profit_materialized"}}
+OPTIONAL_SINGLE_UPDATE_TYPES = {
+    "mint": {"order_minted", "queued_order_filled", "queued_order_refunded"},
+    "redeem_open": {"live_order_redeemed", "queued_order_filled", "queued_order_refunded"},
+    "rebalance_expiry_cash": {
+        "expiry_cash_rebalanced",
+        "expiry_cash_received",
+        "expiry_profit_materialized",
+    },
+}
+# Exactly one of these per record: a queued order fills or refunds at its tick, and a
+# rebalance either moves a live market's cash or sweeps a settled one.
+EXACTLY_ONE_OF_UPDATE_TYPES = {
+    "redeem_open": {"queued_order_filled", "queued_order_refunded"},
+    "rebalance_expiry_cash": {"expiry_cash_rebalanced", "expiry_cash_received"},
+}
 
 
 def parity_projection(payload: dict[str, Any]) -> dict[str, Any]:
@@ -350,7 +428,8 @@ def validate_economic_payload(payload: Any, label: str) -> None:
             f"must contain exactly {len(EXPECTED_ACTION_SEQUENCE)} scenario steps",
         )
     derived_observed: list[str] = []
-    settled_redemption_modes: list[bool] = []
+    refund_fee_kept: set[bool] = set()
+    open_record_payouts: list[str] = []
     for index, raw_record in enumerate(records):
         path = f"$.records[{index}]"
         record = _exact_fields(raw_record, RECORD_FIELDS, label, path)
@@ -384,8 +463,6 @@ def validate_economic_payload(payload: Any, label: str) -> None:
             expected = " or ".join(str(sorted(schema)) for schema in input_schemas)
             _fail(label, f"{path}.input", f"fields must equal {expected}")
         _validate_typed_object(record["input"], matching_input, label, f"{path}.input")
-        if action == "redeem_settled":
-            settled_redemption_modes.append(record["input"]["permissionless"])
 
         updates = record["updates"]
         if not isinstance(updates, list) or not updates:
@@ -419,6 +496,20 @@ def validate_economic_payload(payload: Any, label: str) -> None:
                     f"{path}.updates",
                     f"must contain at most one {optional_type}",
                 )
+        exactly_one = EXACTLY_ONE_OF_UPDATE_TYPES.get(action)
+        if exactly_one and sum(update_types.count(kind) for kind in exactly_one) != 1:
+            _fail(
+                label,
+                f"{path}.updates",
+                f"must contain exactly one of {', '.join(sorted(exactly_one))}",
+            )
+        if action == "mint":
+            _validate_mint_outcome(updates, record["input"], label, path)
+        for update in updates:
+            if update["type"] == "queued_order_refunded":
+                refund_fee_kept.add(update["reason"] in FEE_KEEPING_REASONS)
+            elif update["type"] == "open_record_settled":
+                open_record_payouts.append(update["payout"])
 
         _validate_typed_object(record["state"], STATE_FIELDS, label, f"{path}.state")
         if record["state"]["is_settled"] not in {"0", "1"}:
@@ -426,15 +517,45 @@ def validate_economic_payload(payload: Any, label: str) -> None:
 
     if observed != derived_observed:
         _fail(label, "$.scenario.observed_actions", "does not match record actions")
-    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
+    if refund_fee_kept != {True, False}:
         _fail(
             label,
             "$.records",
-            "settled redemptions must cover owner/permissionless/owner/permissionless",
+            "queued refunds must cover a kept order fee (reason 1 or 2) and a returned one",
         )
+    if "0" not in open_record_payouts or all(payout == "0" for payout in open_record_payouts):
+        _fail(label, "$.records", "the settlement payout walk must pay a winner and a loser")
     missing = [action for action in REQUIRED_ACTIONS if action not in derived_observed]
     if missing:
         _fail(label, "$.records", f"missing required actions: {','.join(missing)}")
+
+
+def _validate_mint_outcome(
+    updates: list[dict[str, Any]],
+    input_value: dict[str, Any],
+    label: str,
+    path: str,
+) -> None:
+    """Each mint must show the outcome its role exists to cover. An ordinary committed mint
+    fills, a committed mint with a `max_probability` cap is refunded at its tick with the
+    order fee kept, and an uncommitted mint only enqueues (settlement refunds it later). A
+    matching replay is not enough: a fill that turned into a refund on both sides would pass
+    parity while losing the coverage."""
+    types = [update["type"] for update in updates]
+    if input_value["commit_spot"] is None:
+        if types != ["order_enqueued"]:
+            _fail(label, f"{path}.updates", "an uncommitted mint must only enqueue")
+    elif input_value["max_probability"] is None:
+        if types != ["order_enqueued", "order_minted", "queued_order_filled"]:
+            _fail(label, f"{path}.updates", "a committed mint must fill at its tick")
+    elif types != ["order_enqueued", "queued_order_refunded"] or (
+        updates[1]["reason"] not in FEE_KEEPING_REASONS
+    ):
+        _fail(
+            label,
+            f"{path}.updates",
+            "a capped mint must be refunded at its tick with the order fee kept",
+        )
 
 
 def first_difference(left: Any, right: Any, path: str = "$") -> str | None:
