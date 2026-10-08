@@ -21,6 +21,16 @@ GUARD_MODULES = {
     "pyth_feed",
     "block_scholes_store",
     "verify",
+    # `deepbook_predict_orders`, the order-flow companion: queue placement, commit, and resolve
+    # refusals (a stuck or full queue, the per-account cap, the cutoff, a record that is no
+    # longer Open), the desk's version floor and freeze, and the policy bounds.
+    "queue",
+    "order_queue",
+    "desk",
+    "delayed_execution_config",
+    # `deepbook_predict_math::lazer_price`: a Lazer update that lacks the order's feed or a
+    # requested property, which the caller chose.
+    "lazer_price",
 }
 INVARIANT_MODULES = {
     "math",

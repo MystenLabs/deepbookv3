@@ -424,6 +424,35 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--with-unpublished-dependencies", args)
             self.assertNotIn("--publish-unpublished-deps", args)
 
+    def test_failed_publish_reports_the_sui_error_line(self) -> None:
+        # sui prints an execution failure as a plain line whose payload is in braces, so the
+        # lenient JSON slice is not JSON. The error must name the failure, not a decode error.
+        error_line = (
+            "Error executing transaction 'GLV5PZvzKwbDAsrsppmNh9uFzVF4yTczHVi3vCDrzdbc': "
+            "MovePackageTooBig { object_size: 139004, max_object_size: 102400 } in command 0"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            package = workspace / "packages" / "predict"
+            package.mkdir(parents=True)
+            response = subprocess.CompletedProcess(
+                args=[], returncode=1, stdout=error_line, stderr=""
+            )
+
+            with (
+                mock.patch.object(publish.suicli, "run", return_value=response),
+                self.assertRaisesRegex(publish.suicli.SuiError, "MovePackageTooBig"),
+            ):
+                publish._test_publish(
+                    root / "client.yaml",
+                    workspace,
+                    package,
+                    root / "Pub.sim.toml",
+                    config.GAS_BUDGET,
+                )
+
+
 class LocalnetQueryTests(unittest.TestCase):
     def test_balance_unwraps_the_cli_coin_list(self) -> None:
         # `sui client balance --json` returns [coin_entries, has_more] — the coin list is the FIRST
@@ -708,6 +737,7 @@ class LifecycleTests(unittest.TestCase):
             name: f"0x-{name}"
             for name in (
                 "predict",
+                "predict_orders",
                 "account",
                 "fixed_math",
                 "block_scholes_oracle",
@@ -724,6 +754,7 @@ class LifecycleTests(unittest.TestCase):
                 "admin_cap",
                 "protocol_config",
                 "pool_vault",
+                "order_desk",
                 "account_registry",
                 "account_admin_cap",
                 "bs_signer_registry",
@@ -762,7 +793,10 @@ class LifecycleTests(unittest.TestCase):
             env_path = instance / ".env.localnet"
 
             self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
-            self.assertIn("LOCAL_BS_SIGNER_PRIVATE_KEY=bs-secret", env_path.read_text())
+            env_text = env_path.read_text()
+            self.assertIn("LOCAL_BS_SIGNER_PRIVATE_KEY=bs-secret", env_text)
+            self.assertIn("ORDERS_PACKAGE_ID=0x-predict_orders", env_text)
+            self.assertIn("ORDER_DESK_ID=0x-order_desk", env_text)
             self.assertNotIn("local_pyth", deployment)
 
     def test_cleanup_instances_keeps_active_slot_and_removes_orphan(self) -> None:

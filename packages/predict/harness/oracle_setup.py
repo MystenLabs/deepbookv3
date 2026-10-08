@@ -112,6 +112,10 @@ def write_env_localnet(
     p, o, lp = deployment["packages"], deployment["objects"], local_signers
     env = {
         "PACKAGE_ID": p["predict"],
+        # The order-flow companion: the queue, the OrderDesk its publish shares, and every
+        # order entry point.
+        "ORDERS_PACKAGE_ID": p["predict_orders"],
+        "ORDER_DESK_ID": o["order_desk"],
         "REGISTRY_ID": o["registry"],
         "ADMIN_CAP_ID": o["admin_cap"],
         "PROTOCOL_CONFIG_ID": o["protocol_config"],

@@ -2,14 +2,14 @@
 // ordering rules can be unit-tested without a localnet. `keeperService.ts` supplies the real
 // chain; the tests supply a model of it.
 //
-// The rule both lanes keep: a market whose settlement payout walk is unfinished never leaves
-// `plp::active_expiry_markets`. The keeper rebuilds its work list from that set every tick
+// The rule both lanes keep: a market whose queue's settlement payout walk is unfinished never
+// leaves `plp::active_expiry_markets`. The keeper rebuilds its work list from that set every tick
 // (and after a restart), so a settled market swept out of it with Open queue records still
 // unpaid would never be revisited. Two things sweep a settled market: the settlement lane's
 // `rebalance_expiry_cash`, and the flush snapshot, which sweeps every settled market it
 // snapshots. So the settlement lane sweeps only after the walk completes, and the flush runs
 // only once every expired market's walk has completed and settles nothing itself.
-import { type QueueEvent, settlementComplete, settlementMadeProgress } from "./queueEvents.js";
+import { type QueueEvent, marketSettledIn } from "./queueEvents.js";
 
 export interface LaneMarket {
   id: string;
@@ -18,7 +18,9 @@ export interface LaneMarket {
 
 export interface SettlementProgress {
   settled: boolean;
-  payoutCursor: bigint;
+  // `queue::payout_progress`'s `payouts_completed`, true for a market without a queue.
+  payoutsCompleted: boolean;
+  // The queue's `next_id`: every record ID below it may be cleaned up once the walk completes.
   nextId: bigint;
 }
 
@@ -27,34 +29,51 @@ export interface KeeperChain {
   // The chain's active expiry markets with their expiries: the keeper's only work list.
   activeMarkets(): Promise<LaneMarket[]>;
   settlementProgress(marketId: string): Promise<SettlementProgress>;
-  // One PTB: insert the exact expiry spot, call try_settle once, and, with `sweep`, call
-  // rebalance_expiry_cash. Returns the transaction's events.
-  settlePhase(market: LaneMarket, sweep: boolean): Promise<QueueEvent[] | undefined>;
+  // One PTB: insert the exact expiry spot and call Predict's try_settle. Returns its events.
+  trySettle(market: LaneMarket): Promise<QueueEvent[] | undefined>;
+  // One PTB with one `queue::settle_step` call.
+  settleStep(market: LaneMarket): Promise<unknown>;
+  // `queue::cleanup` of every record ID below `nextId`, in bounded batches.
+  cleanup(market: LaneMarket, nextId: bigint): Promise<unknown>;
+  // `rebalance_expiry_cash`, which sweeps the settled market out of the active set.
+  sweep(market: LaneMarket): Promise<unknown>;
   // The staged flush (snapshot, one value_expiry per market, finish) over `marketIds`.
   flush(marketIds: string[]): Promise<unknown>;
 }
 
-// try_settle calls one market may take in one pass: refund batches (450 records), the
-// settling call, then payout batches (900 records). Far above what a harness queue needs.
+// Settlement transactions one market may take in one pass: try_settle, then queue settle_step
+// calls (refund batches of 450 records, then payout batches of 900). Far above what a harness
+// queue needs.
 export const MAX_SETTLE_PHASES = 32;
 
-// Drive one market's settlement to completion, one try_settle phase per PTB, then sweep it.
-// Returns the number of phases it ran before the sweep. A throw (a failed PTB, a phase that
-// made no progress, or the phase cap) leaves the market unswept, so it stays in the active set
-// and the next pass resumes it from chain state.
+// Drive one market's settlement to completion, one call per PTB, then clean up and sweep it:
+// Predict's try_settle until the market is settled, the queue's settle_step until its payout
+// walk completes, cleanup of its finished records, and the sweep. Returns the number of settle
+// transactions it sent before the cleanup. A throw (a failed PTB, a try_settle that did not
+// settle, or the phase cap) leaves the market unswept, so it stays in the active set and the
+// next pass resumes it from chain state.
 export async function settleMarket(chain: KeeperChain, market: LaneMarket): Promise<number> {
-  for (let phase = 0; phase < MAX_SETTLE_PHASES; phase++) {
-    if (settlementComplete(await chain.settlementProgress(market.id))) {
-      // try_settle on a complete market is a no-op returning true; the sweep is the point.
-      await chain.settlePhase(market, true);
-      return phase;
-    }
-    const events = await chain.settlePhase(market, false);
-    if (!settlementMadeProgress(events)) {
-      throw new Error(`settlement of ${market.id.slice(0, 10)} made no progress in phase ${phase}`);
+  let phases = 0;
+  let progress = await chain.settlementProgress(market.id);
+  if (!progress.settled) {
+    phases += 1;
+    const events = await chain.trySettle(market);
+    progress = await chain.settlementProgress(market.id);
+    if (!progress.settled || !marketSettledIn(events)) {
+      throw new Error(`settlement of ${market.id.slice(0, 10)} made no progress: try_settle did not settle`);
     }
   }
-  throw new Error(`settlement of ${market.id.slice(0, 10)} unfinished after ${MAX_SETTLE_PHASES} phases`);
+  while (!progress.payoutsCompleted) {
+    if (phases >= MAX_SETTLE_PHASES) {
+      throw new Error(`settlement of ${market.id.slice(0, 10)} unfinished after ${MAX_SETTLE_PHASES} phases`);
+    }
+    phases += 1;
+    await chain.settleStep(market);
+    progress = await chain.settlementProgress(market.id);
+  }
+  if (progress.nextId > 0n) await chain.cleanup(market, progress.nextId);
+  await chain.sweep(market);
+  return phases;
 }
 
 export type SettleResult =
