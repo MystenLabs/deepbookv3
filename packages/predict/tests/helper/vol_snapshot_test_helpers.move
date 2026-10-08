@@ -7,7 +7,6 @@
 module deepbook_predict::vol_snapshot_test_helpers;
 
 use deepbook_predict::{
-    config_constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::{Self, Pricer, VolSnapshot},
     protocol_config::ProtocolConfig,
@@ -20,8 +19,12 @@ use propbook::{
 };
 use sui::clock;
 
-/// The delayed-execution policy's default SVI age bound.
-public fun default_svi_max_age_ms(): u64 { config_constants::default_svi_max_age_ms!() }
+/// The order-flow policy's launch SVI age bound. The policy and its defaults
+/// live in the order-flow companion; Predict only caps the bound at
+/// `constants::max_svi_max_age_ms`.
+const DEFAULT_SVI_MAX_AGE_MS: u64 = 60_000;
+
+public fun default_svi_max_age_ms(): u64 { DEFAULT_SVI_MAX_AGE_MS }
 
 /// Load a snapshot and its t₀ Pricer from the bundled feeds at the fixture clock.
 public fun load_snapshot(

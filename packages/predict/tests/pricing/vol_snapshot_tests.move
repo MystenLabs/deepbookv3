@@ -17,7 +17,7 @@ module deepbook_predict::vol_snapshot_tests;
 
 use bs_oracle::verify;
 use deepbook_predict::{
-    config_constants,
+    constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
     pricing_reference_data as ref_data,
@@ -438,7 +438,7 @@ fun fresh_pyth_spot_above_the_ceiling_aborts() {
 
 // === Helpers ===
 
-fun config_max_svi_max_age_ms(): u64 { config_constants::max_svi_max_age_ms!() }
+fun config_max_svi_max_age_ms(): u64 { constants::max_svi_max_age_ms!() }
 
 /// The default live oracle: Pyth, Block Scholes spot and forward at 100e9 sourced at
 /// 119_000, the default surface sourced at 119_000, fixture clock 120_000.
