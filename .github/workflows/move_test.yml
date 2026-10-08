@@ -58,7 +58,7 @@ jobs:
 
       - name: Build and test the Mainnet Predict dependency graph
         run: |
-          for package in fixed_math account propbook predict deepbook_core_account sessions; do
+          for package in fixed_math account propbook predict_math predict predict_orders deepbook_core_account sessions; do
             sui move build --path "packages/$package" --build-env mainnet --warnings-are-errors
             sui move test --path "packages/$package" --build-env mainnet --gas-limit 100000000000 --package-size 64
           done
