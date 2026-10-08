@@ -1,20 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Delayed-execution queue events moved out of `deepbook_predict::order_events`
-/// for the companion package port. Not yet ported. Per the split design these
-/// events originate at the companion package. `OrderMinted` and
-/// `LiveOrderRedeemed` stay Predict events, emitted by Predict's fills. The
-/// queue events (`OrderEnqueued`, `QueuedOrderFilled`, `QueuedOrderRefunded`)
-/// carry the market's post-call cash, required cash, and waiting cash need, so
-/// the keeper tracks spare cash from events alone.
+/// The order-flow companion's events. Predict still emits `OrderMinted` and
+/// `LiveOrderRedeemed` from its fills; these sit next to them. The placement,
+/// fill, and refund events carry the market's post-call cash, required cash,
+/// and waiting cash need, so the keeper tracks spare cash from events alone.
 module deepbook_predict_orders::queue_events;
 
 use deepbook_predict::pricing::VolSnapshot;
-use deepbook_predict_orders::order_queue::{OrderRequest, HeldPosition, OrderTiming};
+use deepbook_predict_orders::{
+    delayed_execution_config::DelayedExecutionPolicy,
+    order_queue::{OrderRequest, HeldPosition, OrderTiming}
+};
 use sui::event;
 
-/// Emitted when a mint or early sell joins the delayed-execution queue.
+/// Emitted when a mint or early sell joins a market's queue.
 public struct OrderEnqueued has copy, drop, store {
     expiry_market_id: ID,
     record_id: u64,
@@ -39,23 +39,20 @@ public struct OrderEnqueued has copy, drop, store {
     market_cash: u64,
     required_cash: u64,
     waiting_cash_need: u64,
+    onchain_timestamp_ms: u64,
 }
 
-/// Emitted when commit attaches a Pyth Lazer price to one cohort. Price and
-/// exponent are magnitude and sign, so the layout does not depend on Pyth's
-/// integer types.
+/// Emitted when commit attaches a verified Pyth Lazer price to one cohort.
 public struct CohortCommitted has copy, drop, store {
     expiry_market_id: ID,
     tau_ms: u64,
-    /// The update's envelope in ms: τ, or a later backup tick.
+    /// The update's envelope in ms: τ, or the backup tick one channel tick later.
     tick_ms: u64,
     first_record_id: u64,
     last_record_id: u64,
-    price_magnitude: u64,
-    price_is_negative: bool,
-    exponent_magnitude: u16,
-    exponent_is_negative: bool,
-    /// The feed's own update time, in µs.
+    /// The committed price of the cohort's first order, normalized to 1e9.
+    spot: u64,
+    /// That price's own update time, in µs.
     generation_us: u64,
     pyth_source_id: u32,
     pyth_channel: u8,
@@ -64,8 +61,8 @@ public struct CohortCommitted has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted when resolve fills a queued order, next to the unchanged
-/// `OrderMinted` or `LiveOrderRedeemed`.
+/// Emitted when resolve fills a queued order, next to Predict's `OrderMinted` or
+/// `LiveOrderRedeemed`.
 public struct QueuedOrderFilled has copy, drop, store {
     /// The market's cash, required cash, and waiting cash need after the call.
     market_cash: u64,
@@ -95,8 +92,7 @@ public struct QueuedOrderFilled has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted after every call to the shared refund routine. `sender` is `@0x0`
-/// when `try_settle`, which has no transaction context, refunded the order.
+/// Emitted for every refunded order, whichever path refunded it.
 public struct QueuedOrderRefunded has copy, drop, store {
     /// The market's cash, required cash, and waiting cash need after the call.
     market_cash: u64,
@@ -111,20 +107,9 @@ public struct QueuedOrderRefunded has copy, drop, store {
     escrow_returned: u64,
     order_fee_returned: u64,
     subsidy_returned: u64,
-    /// True when a sell's position went back to its Open record.
+    /// True when a sell's record went back to Open holding its position.
     position_returned: bool,
     sender: address,
-    onchain_timestamp_ms: u64,
-}
-
-/// Emitted next to `QueuedOrderRefunded` when escrow held less than the record
-/// was owed. `owed` is budget plus order fee plus reserved subsidy; `paid` is
-/// what escrow covered.
-public struct EscrowShortfall has copy, drop, store {
-    expiry_market_id: ID,
-    record_id: u64,
-    owed: u64,
-    paid: u64,
     onchain_timestamp_ms: u64,
 }
 
@@ -135,15 +120,8 @@ public struct QueuedOrdersCleaned has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted when settlement moves leftover queue escrow into market cash.
-public struct QueueEscrowSwept has copy, drop, store {
-    expiry_market_id: ID,
-    amount: u64,
-    onchain_timestamp_ms: u64,
-}
-
-/// Emitted when the `try_settle` payout walk pays an Open record, with
-/// `payout` 0 for a loser.
+/// Emitted when the settlement payout walk pays an Open record, with `payout`
+/// 0 for a loser.
 public struct OpenRecordSettled has copy, drop, store {
     expiry_market_id: ID,
     record_id: u64,
@@ -153,7 +131,7 @@ public struct OpenRecordSettled has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted when the `try_settle` payout walk cannot pay an Open record. The
+/// Emitted when the settlement payout walk cannot pay an Open record. The
 /// record stays Open.
 public struct OpenRecordPayoutSkipped has copy, drop, store {
     expiry_market_id: ID,
@@ -164,10 +142,18 @@ public struct OpenRecordPayoutSkipped has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted once per market, by the `try_settle` call that finishes the payout
-/// walk (or by the settling call of a market without a queue).
+/// Emitted once per queue, by the `settle_step` call that finishes the payout
+/// walk.
 public struct MarketPayoutsCompleted has copy, drop, store {
     expiry_market_id: ID,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted by desk creation and every policy setter, with the complete
+/// post-state.
+public struct DelayedExecutionPolicyUpdated has copy, drop, store {
+    desk_id: ID,
+    policy: DelayedExecutionPolicy,
     onchain_timestamp_ms: u64,
 }
 
@@ -192,6 +178,7 @@ public(package) fun emit_order_enqueued(
     market_cash: u64,
     required_cash: u64,
     waiting_cash_need: u64,
+    onchain_timestamp_ms: u64,
 ) {
     event::emit(OrderEnqueued {
         expiry_market_id,
@@ -212,6 +199,7 @@ public(package) fun emit_order_enqueued(
         market_cash,
         required_cash,
         waiting_cash_need,
+        onchain_timestamp_ms,
     });
 }
 
@@ -221,10 +209,7 @@ public(package) fun emit_cohort_committed(
     tick_ms: u64,
     first_record_id: u64,
     last_record_id: u64,
-    price_magnitude: u64,
-    price_is_negative: bool,
-    exponent_magnitude: u16,
-    exponent_is_negative: bool,
+    spot: u64,
     generation_us: u64,
     pyth_source_id: u32,
     pyth_channel: u8,
@@ -237,10 +222,7 @@ public(package) fun emit_cohort_committed(
         tick_ms,
         first_record_id,
         last_record_id,
-        price_magnitude,
-        price_is_negative,
-        exponent_magnitude,
-        exponent_is_negative,
+        spot,
         generation_us,
         pyth_source_id,
         pyth_channel,
@@ -329,30 +311,12 @@ public(package) fun emit_queued_order_refunded(
     });
 }
 
-public(package) fun emit_escrow_shortfall(
-    expiry_market_id: ID,
-    record_id: u64,
-    owed: u64,
-    paid: u64,
-    onchain_timestamp_ms: u64,
-) {
-    event::emit(EscrowShortfall { expiry_market_id, record_id, owed, paid, onchain_timestamp_ms });
-}
-
 public(package) fun emit_queued_orders_cleaned(
     expiry_market_id: ID,
     record_ids: vector<u64>,
     onchain_timestamp_ms: u64,
 ) {
     event::emit(QueuedOrdersCleaned { expiry_market_id, record_ids, onchain_timestamp_ms });
-}
-
-public(package) fun emit_queue_escrow_swept(
-    expiry_market_id: ID,
-    amount: u64,
-    onchain_timestamp_ms: u64,
-) {
-    event::emit(QueueEscrowSwept { expiry_market_id, amount, onchain_timestamp_ms });
 }
 
 public(package) fun emit_open_record_settled(
@@ -393,4 +357,12 @@ public(package) fun emit_open_record_payout_skipped(
 
 public(package) fun emit_market_payouts_completed(expiry_market_id: ID, onchain_timestamp_ms: u64) {
     event::emit(MarketPayoutsCompleted { expiry_market_id, onchain_timestamp_ms });
+}
+
+public(package) fun emit_policy_updated(
+    desk_id: ID,
+    policy: DelayedExecutionPolicy,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(DelayedExecutionPolicyUpdated { desk_id, policy, onchain_timestamp_ms });
 }

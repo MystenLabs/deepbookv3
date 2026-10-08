@@ -1,0 +1,28 @@
+[package]
+name = "deepbook_predict_orders"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+# The order-flow primitives this package drives: admission, commit, fill,
+# release, and the settled payout of `expiry_market::OrderReceipt`s.
+deepbook_predict = { local = "../predict" }
+# `lazer_price::LazerPrice`, decoded from Pyth-verified Lazer updates, and the
+# order-ID decode for sell sizing.
+deepbook_predict_math = { local = "../predict_math" }
+account = { local = "../account" }
+usdc = { local = "../usdc" }
+propbook = { local = "../propbook" }
+fixed_math = { local = "../fixed_math" }
+# Commit takes the verified `pyth_lazer::update::Update`s. Kept direct so this
+# publishable root declares the Mainnet replacement below, as Predict does.
+pyth_lazer = { local = "../../vendor/pyth_lazer" }
+# Test fixtures mint verifier-authenticated Block Scholes batches through
+# Predict's oracle fixture.
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
+
+[dep-replacements.mainnet]
+# Predict's Mainnet replacements, so both packages resolve one graph.
+usdc = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/usdc", rev = "23fff2ed82a7fdc26e408a56553b1e1d0ba7b06f" }
+pyth_lazer = { local = "../../vendor/pyth_lazer_mainnet" }
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
