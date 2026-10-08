@@ -2,6 +2,8 @@
 
 This workflow publishes, wires, capitalizes, and verifies a Predict contract suite on an explicit Sui network. It does not deploy keepers or indexers. It creates one operational capability pair for setup; handoff of that same pair is a separate command with an explicit recipient.
 
+From package version 4, Predict depends on `deepbook_predict_math`, and the delayed-execution order flow lives in `deepbook_predict_orders`, which depends on Predict and which Sessions links. Moving an existing deployment to version 4 is a package upgrade, not this workflow: its publish, allowlist, queue-creation, relink, and watermark order is in [architecture](../docs/design/architecture.md#version-gating).
+
 ## Execution gates
 
 Legacy Testnet Pyth source and its reconstructed publication record are [vendored with provenance](../../../vendor/pyth_lazer/README.md). [Mainnet Pyth v2](../../../vendor/pyth_lazer_mainnet/README.md) records its generated version metadata and exact Wormhole Mainnet source. Both network closures resolve without cache metadata patches.
