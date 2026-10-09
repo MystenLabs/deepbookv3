@@ -31,7 +31,7 @@ Predict version 4 compiles `current_version!() == 4`. `ProtocolConfig.version_wa
 - `mint_exact_quantity`, `mint_exact_amount`, `mint_exact_cost`, and `redeem_live` keep their signatures and abort `EDelayedExecutionRequired` at any watermark. Trading is paused before the upgrade, so no window needs them.
 - The mint quotes (`quote_mint`, `quote_mint_for_account`, `quote_mint_exact_cost_for_account`) keep their signatures and are re-bodied on the queued fill's pricing at the clock. See [Reads](#reads).
 - The EWMA setters `set_ewma_params` and `set_ewma_enabled` abort `EEwmaRetired`. The congestion surcharge no longer applies anywhere. Each market still seeds its EWMA state at creation, because that layout is published.
-- `redeem_settled` and `redeem_settled_permissionless` are unchanged. They pay positions that immediate mints left in accounts before the cutover. A queued fill never enters an account, so they never pay one.
+- `redeem_settled` and `redeem_settled_permissionless` keep their signatures and abort `EDelayedExecutionRequired` at any watermark. A queued fill never enters an account, and settlement pays its Open record. A position an immediate mint left in an account must be redeemed through an older package before the watermark bump, and the bump's go/no-go checks that none is left.
 - `finish_flush` accepts only flush operators in package version 4, so the flush keeper's address goes on the [flush-operator allowlist](#the-flush-operator-allowlist) before the keeper moves to it.
 
 The watermark only moves up, so the cutover cannot be undone.
