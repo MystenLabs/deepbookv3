@@ -16,7 +16,21 @@
 /// order's own escrow, so a refund pays exactly that record's escrow.
 ///
 /// A queued fill never enters the account: it stays an Open record until
-/// `enqueue_redeem_open` sells it or the settlement payout walk pays it.
+/// `enqueue_redeem_open` sells it or the settlement payout walk or `pay_open`
+/// pays it.
+///
+/// Mainnet USDC is a regulated coin: Sui aborts a transaction that sends it to
+/// an address on its deny list for the current epoch, or to anyone while it is
+/// globally paused. Every walker restarts at the same head record, so one such
+/// send would block the market's fills, refunds, and payouts for good. So
+/// nothing here, and nothing in Predict's primitives, sends to a denied
+/// address. Predict refuses a fill for a denied receive address (reason 9), keeps
+/// a denied builder's or referrer's fee in market cash, and skips a denied
+/// winner's payout. The queue parks change and refunds it cannot send in the
+/// record, which finishes as usual with the funds kept (`RecordFundsParked`).
+/// `claim_parked` sends them, and `pay_open` pays a skipped Open record, once
+/// the address is clear. While USDC is globally paused every address counts as
+/// denied: fills refuse, refunds park, and payouts skip until the pause lifts.
 module deepbook_predict_orders::queue;
 
 use account::account::{AccountWrapper, Auth};
@@ -41,7 +55,14 @@ use propbook::{
     registry::OracleRegistry
 };
 use pyth_lazer::update::Update;
-use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, derived_object};
+use sui::{
+    accumulator::AccumulatorRoot,
+    balance::{Self, Balance},
+    clock::Clock,
+    coin,
+    deny_list::DenyList,
+    derived_object
+};
 use usdc::usdc::USDC;
 
 const EWrongDesk: u64 = 0;
@@ -60,15 +81,17 @@ const EMarketNotExpired: u64 = 12;
 
 /// Most records one `resolve` or `refund` call visits, whatever `max_orders`
 /// asks. A resolved record emits at most two events: a fill emits Predict's
-/// `OrderMinted` or `LiveOrderRedeemed` and `QueuedOrderFilled`, and a refund
-/// emits `QueuedOrderRefunded` only. So one call emits at most 900 of the 1,024
-/// events Sui allows a transaction, even with both queues full (600 orders).
-/// The cap bounds events only, not the objects a call loads: each visited
-/// record loads its own dynamic child, each distinct account one `per_account`
-/// row, and each fill or pruning refund the payout-tree nodes it walks. A full
-/// call over distinct accounts and ranges can pass Sui's per-transaction object
-/// limit, so callers size `max_orders` from measured costs (the keeper's
-/// batches, DBU-892) rather than from this cap.
+/// `OrderMinted` or `LiveOrderRedeemed` and `QueuedOrderFilled` (Predict
+/// refuses a fill whose receive address is denied, so a fill parks nothing),
+/// and a refund emits `QueuedOrderRefunded` and at most one `RecordFundsParked`.
+/// So one call emits at most 900 of the 1,024 events Sui allows a transaction,
+/// even with both queues full (600 orders). The cap bounds events only, not
+/// the objects a call loads: each visited record loads its own dynamic child,
+/// each distinct account one `per_account` row, and each fill or pruning refund
+/// the payout-tree nodes it walks. A full call over distinct accounts and
+/// ranges can pass Sui's per-transaction object limit, so callers size
+/// `max_orders` from measured costs (the keeper's batches, DBU-892) rather
+/// than from this cap.
 const MAX_ORDERS_PER_CALL: u64 = 450;
 
 // `settle_step` phases. Never renumbered after publish.
@@ -576,15 +599,17 @@ public fun commit(
 /// (`MAX_ORDERS_PER_CALL`), so the caller sizes `max_orders` to stay inside
 /// Sui's per-transaction object limit. An order at or past its deadline is
 /// refunded (reason 5), never filled. A committed order goes to Predict's
-/// `try_fill`, which fills it or returns the refund reason (1, 2, 4, or 8); the
-/// queue returns the escrow Predict hands back to the trader. Returns 0 on a
-/// settled market, whose waiting orders the settlement drain refunds.
+/// `try_fill`, which fills it or returns the refund reason (1, 2, 4, 8, or 9);
+/// the queue returns the escrow Predict hands back to the trader, or parks it
+/// in the record when the receive address is denied. Returns 0 on a settled
+/// market, whose waiting orders the settlement drain refunds.
 public fun resolve(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     desk: &OrderDesk,
     config: &ProtocolConfig,
     max_orders: u64,
+    deny_list: &DenyList,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
@@ -607,7 +632,18 @@ public fun resolve(
             let mut record_id = span.span_first_id();
             while (unfinished > 0 && record_id < end_id && visited < max_orders) {
                 visited = visited + 1;
-                if (queue.resolve_record(market, config, record_id, clock, sender, now_ms)) {
+                if (
+                    queue.resolve_record(
+                        market,
+                        config,
+                        record_id,
+                        deny_list,
+                        clock,
+                        ctx,
+                        sender,
+                        now_ms,
+                    )
+                ) {
                     finished = finished + 1;
                     unfinished = unfinished - 1;
                 };
@@ -632,26 +668,29 @@ public fun resolve(
 /// does. It walks the cohorts in τ order and stops at the first one not yet due,
 /// since deadlines never decrease along the queue. Permissionless, and
 /// available while Predict is frozen or this companion's witness is disabled:
-/// Predict's `release` checks only its version floor. Returns how many orders
-/// it refunded: `0`, without aborting, when none is due.
+/// Predict's `release` checks only its version floor. A refund the receive
+/// address cannot take is parked in its record. Returns how many orders it
+/// refunded: `0`, without aborting, when none is due.
 public fun refund(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     desk: &OrderDesk,
     config: &ProtocolConfig,
     max_orders: u64,
+    deny_list: &DenyList,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
     queue.assert_bound(desk, market);
     let now_ms = clock.timestamp_ms();
     let max_orders = max_orders.min(MAX_ORDERS_PER_CALL);
-    queue.refund_walk(market, config, now_ms, max_orders, true, true, ctx.sender(), now_ms)
+    queue.refund_walk(market, config, now_ms, max_orders, true, true, deny_list, ctx, now_ms)
 }
 
 /// Refund the listed waiting orders at once (reason 7), wherever they sit in
 /// the queue. Predict's `AdminCap` only, and available while Predict is frozen.
-/// Missing and finished IDs are skipped.
+/// Missing and finished IDs are skipped, and a refund the receive address cannot
+/// take is parked in its record.
 public fun admin_refund(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -659,6 +698,7 @@ public fun admin_refund(
     desk: &OrderDesk,
     config: &ProtocolConfig,
     record_ids: vector<u64>,
+    deny_list: &DenyList,
     clock: &Clock,
     ctx: &TxContext,
 ) {
@@ -673,6 +713,8 @@ public fun admin_refund(
             order_queue::reason_admin(),
             true,
             true,
+            deny_list,
+            ctx,
             sender,
             now_ms,
         );
@@ -682,9 +724,9 @@ public fun admin_refund(
 
 /// Delete Refunded and Closed records of a settled market. Permissionless; the
 /// storage rebate goes to the caller. Missing IDs, other statuses, and records
-/// still holding a receipt or escrow are skipped; `QueuedOrdersCleaned` is
-/// emitted only when a record was deleted. Takes `&Clock` only to stamp the
-/// event.
+/// still holding a receipt or funds (parked funds included, until
+/// `claim_parked`) are skipped; `QueuedOrdersCleaned` is emitted only when a
+/// record was deleted. Takes `&Clock` only to stamp the event.
 public fun cleanup(
     queue: &mut MarketQueue,
     market: &ExpiryMarket,
@@ -716,16 +758,19 @@ public fun cleanup(
 ///
 /// - DRAIN, while unfinished orders remain: refund them in τ order with reason
 ///   5, visiting at most the policy's `settle_refund_batch` records, refunded
-///   or not. No pruning and no account rows, so each refund loads one record.
+///   or not. No pruning and no account rows, so each refund loads its record
+///   alone. A refund the receive address cannot take is parked in its record.
 ///   Runs before and after Predict settles, and while Predict is frozen.
 /// - PAY, once nothing is unfinished and Predict has settled the market: from
 ///   the payout cursor, visit at most `settle_payout_batch` records. Each Open
 ///   record is paid its settled payout through `try_pay_settled` (zero for a
 ///   loser), marked Closed, and reported with `OpenRecordSettled`. A record the
-///   market cannot pay stays Open with `OpenRecordPayoutSkipped`. Before Predict
+///   market cannot pay, or whose receive address is denied, stays Open with
+///   `OpenRecordPayoutSkipped`, and `pay_open` pays it later. Before Predict
 ///   settles, a PAY call changes nothing.
 /// - DONE: the call whose walk reaches the last record emits
-///   `MarketPayoutsCompleted`; later calls change nothing.
+///   `MarketPayoutsCompleted`; later calls change nothing. Skipped records are
+///   still paid through `pay_open`.
 ///
 /// The keeper sends one call per transaction until it returns `phase_done()`.
 public fun settle_step(
@@ -733,6 +778,7 @@ public fun settle_step(
     market: &mut ExpiryMarket,
     desk: &OrderDesk,
     config: &ProtocolConfig,
+    deny_list: &DenyList,
     clock: &Clock,
     ctx: &TxContext,
 ): u8 {
@@ -751,7 +797,8 @@ public fun settle_step(
             policy.settle_refund_batch(),
             false,
             false,
-            ctx.sender(),
+            deny_list,
+            ctx,
             now_ms,
         );
         return if (queue.book.oldest_unfinished_tau().is_some()) PHASE_DRAIN else PHASE_PAY
@@ -764,7 +811,7 @@ public fun settle_step(
     let end_id = payout_cursor + policy.settle_payout_batch().min(next_id - payout_cursor);
     let mut record_id = payout_cursor;
     while (record_id < end_id) {
-        queue.pay_open_record(market, config, record_id, now_ms);
+        queue.pay_open_record(market, config, record_id, deny_list, ctx, now_ms);
         record_id = record_id + 1;
     };
     queue.book.set_payout_cursor(end_id);
@@ -772,6 +819,67 @@ public fun settle_step(
     queue.payouts_completed = true;
     queue_events::emit_market_payouts_completed(queue.expiry_market_id, now_ms);
     PHASE_DONE
+}
+
+/// Pay one Open record of a settled market its settled payout through
+/// Predict's `try_pay_settled`, at any time after settlement, before or after
+/// `settle_step` completes: the record the payout walk skipped because the
+/// market was short of cash or its receive address was denied. Permissionless.
+/// Emits `OpenRecordSettled` and closes the record, or emits
+/// `OpenRecordPayoutSkipped` and leaves it Open if the cause persists. A
+/// missing or non-Open record is left alone. Aborts `EMarketNotSettled` before
+/// Predict settles the market.
+public fun pay_open(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    record_id: u64,
+    deny_list: &DenyList,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    queue.assert_bound(desk, market);
+    assert!(market.is_settled(), EMarketNotSettled);
+    queue.pay_open_record(market, config, record_id, deny_list, ctx, clock.timestamp_ms());
+}
+
+/// Send a finished record's parked funds, change or a refund its receive
+/// address could not take, to that address once a send would go through
+/// (`denied` is false). Permissionless: the funds go only to the record's own
+/// receive address. Emits `RecordFundsClaimed` and returns the amount sent, or
+/// returns `0` and changes nothing for a missing or unfinished record, one with
+/// nothing parked, or an address still denied.
+public fun claim_parked(
+    queue: &mut MarketQueue,
+    desk: &OrderDesk,
+    record_id: u64,
+    deny_list: &DenyList,
+    clock: &Clock,
+    ctx: &TxContext,
+): u64 {
+    queue.assert_desk(desk);
+    let view = queue.book.view(record_id);
+    if (view.is_none()) return 0;
+    let view = view.destroy_some();
+    let recipient = view.receive_address();
+    if (
+        order_queue::is_unfinished(view.status())
+            || view.funds() == 0
+            || denied(deny_list, recipient, ctx)
+    ) return 0;
+    let funds = queue.book.take_parked(record_id);
+    let amount = funds.value();
+    balance::send_funds(funds, recipient);
+    queue_events::emit_record_funds_claimed(
+        queue.expiry_market_id,
+        record_id,
+        view.account_id(),
+        recipient,
+        amount,
+        clock.timestamp_ms(),
+    );
+    amount
 }
 
 // === Private Functions ===
@@ -1174,7 +1282,9 @@ fun resolve_record(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     record_id: u64,
+    deny_list: &DenyList,
     clock: &Clock,
+    ctx: &TxContext,
     sender: address,
     now_ms: u64,
 ): bool {
@@ -1193,27 +1303,31 @@ fun resolve_record(
             order_queue::reason_deadline(),
             true,
             true,
+            deny_list,
+            ctx,
             sender,
             now_ms,
         )
     };
     if (status != order_queue::status_committed()) return false;
-    queue.fill_record(market, config, record_id, &view, clock, sender, now_ms);
+    queue.fill_record(market, config, record_id, &view, deny_list, clock, ctx, sender, now_ms);
     true
 }
 
 /// Hand a Committed record's receipt and escrow to Predict's `try_fill`, return
-/// the escrow it hands back to the trader, and record the outcome: the position
-/// a fill leaves (a mint's new position, a partial sell's replacement, or none
-/// after a full close) with `QueuedOrderFilled`, or the refund with
-/// `QueuedOrderRefunded`.
+/// the escrow it hands back to the trader (or park it), and record the outcome:
+/// the position a fill leaves (a mint's new position, a partial sell's
+/// replacement, or none after a full close) with `QueuedOrderFilled`, or the
+/// refund with `QueuedOrderRefunded`.
 fun fill_record(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     record_id: u64,
     view: &OrderView,
+    deny_list: &DenyList,
     clock: &Clock,
+    ctx: &TxContext,
     sender: address,
     now_ms: u64,
 ) {
@@ -1229,9 +1343,9 @@ fun fill_record(
         referral_fee,
         subsidy_used,
         inventory_impact,
-    ) = order_flow::try_fill(market, config, receipt, funds, clock);
+    ) = order_flow::try_fill(market, config, receipt, funds, deny_list, clock, ctx);
     let returned = change.value();
-    send_or_destroy(change, view.receive_address());
+    queue.send_or_park(record_id, view, change, deny_list, ctx, now_ms);
     if (reason != 0) {
         let order_fee_returned = fee_returned(reason, view);
         queue.finish_refund(
@@ -1302,10 +1416,12 @@ fun refund_walk(
     max_orders: u64,
     prune: bool,
     count_account: bool,
-    sender: address,
+    deny_list: &DenyList,
+    ctx: &TxContext,
     now_ms: u64,
 ): u64 {
     let reason = order_queue::reason_deadline();
+    let sender = ctx.sender();
     let cohort_count = queue.book.cohort_count();
     let mut visited = 0;
     let mut refunded = 0;
@@ -1328,6 +1444,8 @@ fun refund_walk(
                     reason,
                     prune,
                     count_account,
+                    deny_list,
+                    ctx,
                     sender,
                     now_ms,
                 )
@@ -1350,10 +1468,11 @@ fun refund_walk(
 /// Refund one unfinished record without filling it: Predict's `release` takes
 /// back the record's reserved subsidy and its ledger entries, keeps the order
 /// fee in market cash for reasons 1 and 2 as `try_fill` does, and hands back the
-/// rest of the escrow, which goes to the trader. A sell's record returns to
-/// Open holding its position. A RefundDue record keeps its stored reason, and
-/// with it the fee rule. Returns whether it refunded a record: a missing or
-/// finished one is skipped. The caller owns `advance_heads`.
+/// rest of the escrow, which goes to the trader or is parked in the record. A
+/// sell's record returns to Open holding its position. A RefundDue record keeps
+/// its stored reason, and with it the fee rule. Returns whether it refunded a
+/// record: a missing or finished one is skipped. The caller owns
+/// `advance_heads`.
 fun release_record(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -1362,6 +1481,8 @@ fun release_record(
     reason: u8,
     prune: bool,
     count_account: bool,
+    deny_list: &DenyList,
+    ctx: &TxContext,
     sender: address,
     now_ms: u64,
 ): bool {
@@ -1374,7 +1495,7 @@ fun release_record(
     let (receipt, funds) = queue.book.take_order(record_id);
     let (kept, change) = market.release(config, receipt, funds, reason, prune);
     let returned = change.value();
-    send_or_destroy(change, view.receive_address());
+    queue.send_or_park(record_id, &view, change, deny_list, ctx, now_ms);
     let order_fee_returned = fee_returned(reason, &view);
     queue.finish_refund(
         market,
@@ -1446,17 +1567,20 @@ fun finish_refund(
 
 // --- Settlement ---
 
-/// Pay one record of the payout walk if it is Open: Predict's `try_pay_settled`
-/// sends its settled payout (zero for a loser) to the receipt's receive address
-/// and consumes the receipt, and the record is marked Closed with
-/// `OpenRecordSettled`. Deleted IDs and other statuses are skipped. A record the
-/// market cannot pay keeps its receipt and stays Open with
-/// `OpenRecordPayoutSkipped` for a later upgrade to pay, and the walk moves on.
+/// Pay one record if it is Open, for the payout walk and `pay_open`: Predict's
+/// `try_pay_settled` sends its settled payout (zero for a loser) to the
+/// receipt's receive address and consumes the receipt, and the record is marked
+/// Closed with `OpenRecordSettled`. Deleted IDs and other statuses are skipped.
+/// A record the market cannot pay, or whose receive address is denied, keeps
+/// its receipt and stays Open with `OpenRecordPayoutSkipped` until `pay_open`
+/// pays it, and the walk moves on.
 fun pay_open_record(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     record_id: u64,
+    deny_list: &DenyList,
+    ctx: &TxContext,
     now_ms: u64,
 ) {
     let view = queue.book.view(record_id);
@@ -1464,7 +1588,7 @@ fun pay_open_record(
     let view = view.destroy_some();
     let order_id = view.position().order_id();
     let receipt = queue.book.take_open_receipt(record_id);
-    let (payout, kept) = market.try_pay_settled(config, receipt);
+    let (payout, kept) = market.try_pay_settled(config, receipt, deny_list, ctx);
     if (kept.is_some()) {
         queue.book.restore_receipt(record_id, kept.destroy_some());
         queue_events::emit_open_record_payout_skipped(
@@ -1493,9 +1617,14 @@ fun pay_open_record(
 
 /// The desk floor, and this queue's desk and market.
 fun assert_bound(queue: &MarketQueue, desk: &OrderDesk, market: &ExpiryMarket) {
+    queue.assert_desk(desk);
+    assert!(queue.expiry_market_id == market.id(), EWrongMarket);
+}
+
+/// The desk floor, and this queue's desk.
+fun assert_desk(queue: &MarketQueue, desk: &OrderDesk) {
     desk.assert_version();
     assert!(queue.desk_id == desk.id(), EWrongDesk);
-    assert!(queue.expiry_market_id == market.id(), EWrongMarket);
 }
 
 fun assert_open(queue: &MarketQueue, record_id: u64) {
@@ -1524,14 +1653,46 @@ fun fee_returned(reason: u8, view: &OrderView): u64 {
     }
 }
 
-/// Send `funds` to `recipient` through its address balance, or drop them when
-/// empty.
-fun send_or_destroy(funds: Balance<USDC>, recipient: address) {
-    if (funds.value() == 0) {
+/// Send a finished record's change or refund to its receive address through
+/// the address balance, drop it when empty, or park it in the record with
+/// `RecordFundsParked` when the send would abort the transaction (`denied`).
+fun send_or_park(
+    queue: &mut MarketQueue,
+    record_id: u64,
+    view: &OrderView,
+    funds: Balance<USDC>,
+    deny_list: &DenyList,
+    ctx: &TxContext,
+    now_ms: u64,
+) {
+    let amount = funds.value();
+    if (amount == 0) {
         funds.destroy_zero();
         return
     };
-    balance::send_funds(funds, recipient);
+    let recipient = view.receive_address();
+    if (!denied(deny_list, recipient, ctx)) {
+        balance::send_funds(funds, recipient);
+        return
+    };
+    queue.book.park_funds(record_id, funds);
+    queue_events::emit_record_funds_parked(
+        queue.expiry_market_id,
+        record_id,
+        view.account_id(),
+        recipient,
+        amount,
+        now_ms,
+    );
+}
+
+/// Whether USDC sent to `recipient` would abort this transaction: the address
+/// is on USDC's deny list, or USDC is globally paused, both for the current
+/// epoch as Sui's own check reads them. The same rule Predict's fills and
+/// settled payouts apply.
+fun denied(deny_list: &DenyList, recipient: address, ctx: &TxContext): bool {
+    coin::deny_list_v2_contains_current_epoch<USDC>(deny_list, recipient, ctx)
+        || coin::deny_list_v2_is_global_pause_enabled_current_epoch<USDC>(deny_list, ctx)
 }
 
 // === Test-Only Functions ===

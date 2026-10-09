@@ -115,6 +115,15 @@ public struct ExpectedOpenRecordPayout has copy, drop {
     onchain_timestamp_ms: u64,
 }
 
+public struct ExpectedRecordFunds has copy, drop {
+    expiry_market_id: ID,
+    record_id: u64,
+    account_id: ID,
+    receive_address: address,
+    amount: u64,
+    onchain_timestamp_ms: u64,
+}
+
 public struct ExpectedMarketPayoutsCompleted has copy, drop {
     expiry_market_id: ID,
     onchain_timestamp_ms: u64,
@@ -397,6 +406,51 @@ fun market_payouts_completed_layout() {
     let events = event::events_by_type<queue_events::MarketPayoutsCompleted>();
     assert_eq!(events.length(), ONE_EVENT);
     assert_eq!(bcs::to_bytes(&events[FIRST]), bcs::to_bytes(&expected));
+}
+
+/// `RecordFundsParked` and `RecordFundsClaimed` share one layout.
+#[test]
+fun record_funds_parked_and_claimed_layouts() {
+    let parked = ExpectedRecordFunds {
+        expiry_market_id: market_id(),
+        record_id: 1,
+        account_id: h::account(0),
+        receive_address: @0xA11,
+        amount: 2,
+        onchain_timestamp_ms: ONCHAIN_MS,
+    };
+    let claimed = ExpectedRecordFunds {
+        expiry_market_id: market_id(),
+        record_id: 3,
+        account_id: h::account(1),
+        receive_address: @0xB22,
+        amount: 4,
+        onchain_timestamp_ms: ONCHAIN_MS + 1,
+    };
+
+    queue_events::emit_record_funds_parked(
+        parked.expiry_market_id,
+        parked.record_id,
+        parked.account_id,
+        parked.receive_address,
+        parked.amount,
+        parked.onchain_timestamp_ms,
+    );
+    queue_events::emit_record_funds_claimed(
+        claimed.expiry_market_id,
+        claimed.record_id,
+        claimed.account_id,
+        claimed.receive_address,
+        claimed.amount,
+        claimed.onchain_timestamp_ms,
+    );
+
+    let parked_events = event::events_by_type<queue_events::RecordFundsParked>();
+    assert_eq!(parked_events.length(), ONE_EVENT);
+    assert_eq!(bcs::to_bytes(&parked_events[FIRST]), bcs::to_bytes(&parked));
+    let claimed_events = event::events_by_type<queue_events::RecordFundsClaimed>();
+    assert_eq!(claimed_events.length(), ONE_EVENT);
+    assert_eq!(bcs::to_bytes(&claimed_events[FIRST]), bcs::to_bytes(&claimed));
 }
 
 fun market_id(): ID {

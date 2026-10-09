@@ -31,7 +31,11 @@ use deepbook_sessions::{
     sessions::{Self as sessions, SessionsApp}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{accumulator::AccumulatorRoot, test_scenario::{most_recent_id_shared, return_shared}};
+use sui::{
+    accumulator::AccumulatorRoot,
+    deny_list,
+    test_scenario::{most_recent_id_shared, return_shared}
+};
 use usdc::usdc::USDC;
 
 const SESSION: address = @0x5E5510;
@@ -395,9 +399,13 @@ fun fill_cohort(fixture: &mut QueueSessionFixture, tau_ms: u64, record_ids: vect
             clock,
             ctx,
         );
+    // No USDC address is denied here, so an empty deny list stands in for
+    // Sui's shared one.
+    let deny_list = deny_list::new_for_testing(ctx);
     let finished = tx_fields
         .queue
-        .resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, clock, ctx);
+        .resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, &deny_list, clock, ctx);
+    destroy(deny_list);
     assert_eq!(finished, THREE_ORDERS);
     record_ids.do_ref!(|record_id| {
         assert_eq!(record(&tx, *record_id).status(), order_queue::status_open());

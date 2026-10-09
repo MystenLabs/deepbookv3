@@ -197,6 +197,11 @@ public macro fun fill_reason_deadline(): u8 { 5 }
 /// Fill refund reason: the market's cash could not cover the fill.
 public macro fun fill_reason_no_cash(): u8 { 8 }
 
+/// Fill refund reason: USDC sent to the order's receive address would abort the transaction,
+/// because the address is on USDC's deny list for the current epoch or USDC is globally paused.
+/// The fill is refused before anything moves, and the order fee is returned.
+public macro fun fill_reason_recipient_denied(): u8 { 9 }
+
 /// `OrderReceipt` stage: a mint admitted and not yet filled or released.
 public macro fun receipt_stage_mint(): u8 { 1 }
 

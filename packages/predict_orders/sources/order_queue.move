@@ -61,6 +61,11 @@ const REASON_FREEZE: u8 = 6;
 const REASON_ADMIN: u8 = 7;
 /// The market's cash could not cover the fill. Fee returned.
 const REASON_NO_CASH: u8 = 8;
+/// USDC sent to the receive address would abort the transaction: the address
+/// is on USDC's deny list, or USDC is globally paused. The fill is refused
+/// before anything moves. Fee returned, and parked in the record with the rest
+/// of the escrow, since the same check refuses that send.
+const REASON_RECIPIENT_DENIED: u8 = 9;
 
 /// One market's delayed-execution queue state.
 public struct OrderBook has store {
@@ -133,7 +138,8 @@ public struct QueuedOrder has store {
     /// holds a position, `none` once the order is refunded or fully closed.
     receipt: Option<OrderReceipt>,
     /// The order's escrow: its budget, order fee, and reserved subsidy while it
-    /// waits, zero once it finishes.
+    /// waits. Once it finishes, only what the record could not send to its
+    /// receive address (parked funds), until `queue::claim_parked` sends it.
     funds: Balance<USDC>,
 }
 
@@ -153,7 +159,7 @@ public struct OrderView has copy, drop {
     /// The receipt's Predict stage (`constants::receipt_stage_*`), `0` when the
     /// record holds none.
     receipt_stage: u8,
-    /// USDC the record escrows now.
+    /// USDC the record holds now: escrow while unfinished, parked funds after.
     funds: u64,
 }
 
@@ -276,6 +282,8 @@ public fun reason_freeze(): u8 { REASON_FREEZE }
 public fun reason_admin(): u8 { REASON_ADMIN }
 
 public fun reason_no_cash(): u8 { REASON_NO_CASH }
+
+public fun reason_recipient_denied(): u8 { REASON_RECIPIENT_DENIED }
 
 // === OrderView Getters ===
 // Public for SDK and devInspect reads of `queue::order`.
@@ -783,6 +791,16 @@ public(package) fun take_order(
     (record.receipt.extract(), record.funds.withdraw_all())
 }
 
+/// Keep funds the record could not send to its receive address in the record.
+public(package) fun park_funds(book: &mut OrderBook, record_id: u64, funds: Balance<USDC>) {
+    book.orders[record_id].funds.join(funds);
+}
+
+/// Take a finished record's parked funds whole.
+public(package) fun take_parked(book: &mut OrderBook, record_id: u64): Balance<USDC> {
+    book.orders[record_id].funds.withdraw_all()
+}
+
 /// Finish an unfinished record once: drop its pending count, its span's
 /// `unfinished`, and (with `count_account`) the account's waiting count; then
 /// record its status, position, and result, and put back the receipt it keeps.
@@ -861,8 +879,9 @@ public(package) fun set_payout_cursor(book: &mut OrderBook, cursor: u64) {
     book.payout_cursor = book.payout_cursor.max(cursor.min(book.next_id));
 }
 
-/// Delete a Refunded or Closed record that holds no receipt and no escrow.
-/// Returns whether it deleted one.
+/// Delete a Refunded or Closed record that holds no receipt and no funds, so a
+/// record with parked funds stays until they are claimed. Returns whether it
+/// deleted one.
 public(package) fun remove_finished_record(book: &mut OrderBook, record_id: u64): bool {
     if (!book.orders.contains(record_id)) return false;
     let record = &book.orders[record_id];

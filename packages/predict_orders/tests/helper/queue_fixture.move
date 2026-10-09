@@ -3,8 +3,9 @@
 
 /// Flow fixture for the companion's queue tests: Predict's live test market
 /// past the cutover with this package's `OrderFlow` witness allowlisted, an
-/// `OrderDesk` and its `QueueRegistry`, and the market's `MarketQueue`, held
-/// together with one trader's account for the current transaction.
+/// `OrderDesk` and its `QueueRegistry`, the market's `MarketQueue`, and Sui's
+/// deny list over a regulated test USDC (`usdc_deny_list`), held together with
+/// one trader's account for the current transaction.
 ///
 /// The desk runs the launch policy except for a 1_000 ms delay, which the
 /// hand-derived fixtures assume: from the fixture clock 120_000, τ =
@@ -14,14 +15,15 @@
 #[test_only]
 module deepbook_predict_orders::queue_fixture;
 
-use account::account;
+use account::account::{Self, AccountWrapper};
 use deepbook_predict::{
     expiry_market::{ExpiryMarket, RedeemQuote},
     flow_test_helpers::{Self as helpers, Fixture, Trader, MarketBundle, AccountBundle},
     plp::SnapshotStage,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
-    test_constants
+    test_constants,
+    usdc_deny_list
 };
 use deepbook_predict_math::lazer_price;
 use deepbook_predict_orders::{
@@ -31,7 +33,11 @@ use deepbook_predict_orders::{
     queue::{Self, MarketQueue, TestUpdate}
 };
 use std::unit_test::assert_eq;
-use sui::{clock, test_scenario::{most_recent_id_shared, return_shared}};
+use sui::{
+    clock,
+    deny_list::DenyList,
+    test_scenario::{Scenario, most_recent_id_shared, return_shared}
+};
 use usdc::usdc::USDC;
 
 const CHANNEL_200MS: u8 = 3;
@@ -53,6 +59,7 @@ public struct QueueTest {
     account: AccountBundle,
     desk: OrderDesk,
     queue: MarketQueue,
+    deny_list: DenyList,
 }
 
 /// The shared objects a queue test retakes in every transaction.
@@ -156,7 +163,7 @@ fun assemble(mut fx: Fixture, expiry_id: ID, trader: Trader, cross_cutover: bool
         desk::init_for_testing(ctx);
     };
     helpers::return_market_bundle(market);
-    fx.scenario_mut().next_tx(test_constants::admin());
+    usdc_deny_list::setup(fx.scenario_mut());
     let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
     let registry_id = most_recent_id_shared<QueueRegistry>().destroy_some();
     let mut desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
@@ -269,11 +276,12 @@ fun retake(q: QueueTest, trader: Trader, sender: address): QueueTest {
 
 /// Return every shared object the transaction holds.
 fun put_back(q: QueueTest): (Fixture, ID, Trader, QueueIds) {
-    let QueueTest { fx, expiry_id, trader, ids, market, account, desk, queue } = q;
+    let QueueTest { fx, expiry_id, trader, ids, market, account, desk, queue, deny_list } = q;
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     return_shared(desk);
     return_shared(queue);
+    return_shared(deny_list);
     (fx, expiry_id, trader, ids)
 }
 
@@ -282,7 +290,34 @@ fun take(mut fx: Fixture, expiry_id: ID, trader: Trader, ids: QueueIds): QueueTe
     let account = fx.take_account_bundle(&trader);
     let desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(ids.desk_id);
     let queue = fx.scenario_mut().take_shared_by_id<MarketQueue>(ids.queue_id);
-    QueueTest { fx, expiry_id, trader, ids, market, account, desk, queue }
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+    QueueTest { fx, expiry_id, trader, ids, market, account, desk, queue, deny_list }
+}
+
+// === USDC deny list ===
+
+/// Deny `addr` from the next epoch, which this starts, and continue in the
+/// trader's next transaction.
+public fun deny(q: QueueTest, addr: address): QueueTest {
+    q.edit_deny_list!(|scenario| usdc_deny_list::deny(scenario, addr))
+}
+
+/// Lift `addr`'s denial from the next epoch and continue as `deny` does.
+public fun undeny(q: QueueTest, addr: address): QueueTest {
+    q.edit_deny_list!(|scenario| usdc_deny_list::undeny(scenario, addr))
+}
+
+/// Pause or unpause USDC globally from the next epoch and continue as `deny`
+/// does.
+public fun set_usdc_paused(q: QueueTest, paused: bool): QueueTest {
+    q.edit_deny_list!(|scenario| usdc_deny_list::set_global_pause(scenario, paused))
+}
+
+macro fun edit_deny_list($q: QueueTest, $edit: |&mut Scenario|): QueueTest {
+    let (mut fx, expiry_id, trader, ids) = put_back($q);
+    $edit(fx.scenario_mut());
+    fx.scenario_mut().next_tx(trader.owner());
+    take(fx, expiry_id, trader, ids)
 }
 
 // === Accessors ===
@@ -305,6 +340,8 @@ public fun config(q: &QueueTest): &ProtocolConfig { helpers::config(&q.market) }
 
 public fun queue(q: &QueueTest): &MarketQueue { &q.queue }
 
+public fun deny_list(q: &QueueTest): &DenyList { &q.deny_list }
+
 public fun desk(q: &QueueTest): &OrderDesk { &q.desk }
 
 public fun expiry_id(q: &QueueTest): ID { q.expiry_id }
@@ -317,6 +354,15 @@ public fun account_id(q: &QueueTest): ID { helpers::account_id_bundle(&q.account
 public fun receive_address(q: &mut QueueTest): address {
     let (wrapper, _) = q.account.account_parts_mut();
     wrapper.load_account().receive_address()
+}
+
+/// Another trader's receive address, read from its wrapper in the current
+/// transaction.
+public fun receive_address_of(q: &mut QueueTest, trader: &Trader): address {
+    let wrapper = q.fx.scenario_mut().take_shared_by_id<AccountWrapper>(trader.wrapper_id());
+    let receive_address = wrapper.load_account().receive_address();
+    return_shared(wrapper);
+    receive_address
 }
 
 public fun balance(q: &QueueTest): u64 { q.fx.account_balance_bundle<USDC>(&q.account) }
@@ -430,6 +476,11 @@ public fun set_order_fee(q: &mut QueueTest, order_fee: u64) {
 
 public fun set_frozen(q: &mut QueueTest, frozen: bool) {
     q.fx.set_frozen_bundle(&mut q.market, frozen);
+}
+
+/// Add `amount` of fresh USDC to the market's cash.
+public fun seed_cash(q: &mut QueueTest, amount: u64) {
+    q.fx.seed_market_cash(helpers::market_mut(&mut q.market), amount);
 }
 
 /// Set Predict's referral share of the trader-paid trading fee.
@@ -645,25 +696,25 @@ public fun commit_at(q: &mut QueueTest, tick_ms: u64, spot: u64) {
 }
 
 public fun resolve(q: &mut QueueTest, max_orders: u64): u64 {
-    let QueueTest { fx, market, desk, queue, .. } = q;
+    let QueueTest { fx, market, desk, queue, deny_list, .. } = q;
     let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
-    queue.resolve(expiry_market, desk, config, max_orders, clock, ctx)
+    queue.resolve(expiry_market, desk, config, max_orders, deny_list, clock, ctx)
 }
 
 public fun refund(q: &mut QueueTest, max_orders: u64): u64 {
-    let QueueTest { fx, market, desk, queue, .. } = q;
+    let QueueTest { fx, market, desk, queue, deny_list, .. } = q;
     let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
-    queue.refund(expiry_market, desk, config, max_orders, clock, ctx)
+    queue.refund(expiry_market, desk, config, max_orders, deny_list, clock, ctx)
 }
 
 /// Admin-refund `record_ids` with the fixture's `AdminCap`.
 public fun admin_refund(q: &mut QueueTest, record_ids: vector<u64>) {
-    let QueueTest { fx, market, desk, queue, .. } = q;
+    let QueueTest { fx, market, desk, queue, deny_list, .. } = q;
     let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (admin_cap, clock, ctx) = fx.admin_parts();
-    queue.admin_refund(expiry_market, admin_cap, desk, config, record_ids, clock, ctx);
+    queue.admin_refund(expiry_market, admin_cap, desk, config, record_ids, deny_list, clock, ctx);
 }
 
 public fun cleanup(q: &mut QueueTest, record_ids: vector<u64>) {
@@ -672,10 +723,23 @@ public fun cleanup(q: &mut QueueTest, record_ids: vector<u64>) {
 }
 
 public fun settle_step(q: &mut QueueTest): u8 {
-    let QueueTest { fx, market, desk, queue, .. } = q;
+    let QueueTest { fx, market, desk, queue, deny_list, .. } = q;
     let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
-    queue.settle_step(expiry_market, desk, config, clock, ctx)
+    queue.settle_step(expiry_market, desk, config, deny_list, clock, ctx)
+}
+
+public fun pay_open(q: &mut QueueTest, record_id: u64) {
+    let QueueTest { fx, market, desk, queue, deny_list, .. } = q;
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    queue.pay_open(expiry_market, desk, config, record_id, deny_list, clock, ctx);
+}
+
+public fun claim_parked(q: &mut QueueTest, record_id: u64): u64 {
+    let QueueTest { fx, desk, queue, deny_list, .. } = q;
+    let (clock, ctx) = fx.clock_and_ctx();
+    queue.claim_parked(desk, record_id, deny_list, clock, ctx)
 }
 
 /// Settle the market at its expiry from an exact Pyth observation of `spot`.
@@ -797,11 +861,27 @@ public fun escrow_sum(q: &QueueTest): u64 {
     sum
 }
 
-/// USDC every record escrows.
+/// USDC the unfinished records escrow.
 public fun funds_sum(q: &QueueTest): u64 {
     let (_, next_id, _, _) = q.queue.queue_heads();
     let mut sum = 0;
-    next_id.do!(|record_id| q.queue.order(record_id).do!(|view| sum = sum + view.funds()));
+    next_id.do!(|record_id| {
+        q.queue.order(record_id).do!(|view| {
+            if (order_queue::is_unfinished(view.status())) sum = sum + view.funds();
+        });
+    });
+    sum
+}
+
+/// USDC the finished records hold parked for a denied receive address.
+public fun parked_sum(q: &QueueTest): u64 {
+    let (_, next_id, _, _) = q.queue.queue_heads();
+    let mut sum = 0;
+    next_id.do!(|record_id| {
+        q.queue.order(record_id).do!(|view| {
+            if (!order_queue::is_unfinished(view.status())) sum = sum + view.funds();
+        });
+    });
     sum
 }
 
@@ -817,9 +897,9 @@ public fun cash_need_sum(q: &QueueTest): u64 {
     sum
 }
 
-/// The escrowed USDC is exactly the unfinished records' budget, fee, and
+/// The USDC the unfinished records hold is exactly their budget, fee, and
 /// reserved subsidy, and Predict's waiting cash need is exactly their summed
-/// cash need.
+/// cash need. Finished records hold only parked funds (`parked_sum`).
 public fun assert_invariants(q: &QueueTest) {
     assert_eq!(q.funds_sum(), q.escrow_sum());
     let (waiting_cash_need, _) = q.ledger();

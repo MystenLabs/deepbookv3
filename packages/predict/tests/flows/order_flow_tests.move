@@ -6,8 +6,11 @@
 /// its timing gates, commit's price provenance, mint and sell fills and their
 /// refund reasons with the escrow split, the canonical receipt stages across
 /// repeated partial sells, a refund and a re-sell, and a release after a
-/// partial close, and the settled payout. The tests hand Predict escrow
-/// directly; the companion takes it from the account.
+/// partial close, the settled payout, and USDC's deny list: a denied receive
+/// address refuses the fill (reason 9) and skips the payout, a denied builder's
+/// or referrer's fee stays in market cash, and a global pause denies everyone.
+/// The tests hand Predict escrow directly; the companion takes it from the
+/// account.
 ///
 /// Arithmetic, independent of the contract (the fixture the v4 queue suites
 /// used): at the 100e9 live price the `(100, +inf]` strike is at the money, the
@@ -27,11 +30,16 @@ use deepbook_predict::{
     flow_test_helpers::{Self as helpers, Fixture, MarketBundle, AccountBundle},
     order,
     protocol_config,
-    test_constants
+    test_constants,
+    usdc_deny_list
 };
 use deepbook_predict_math::lazer_price::{Self, LazerPrice};
 use std::unit_test::{assert_eq, destroy};
-use sui::balance::{Self, Balance};
+use sui::{
+    balance::{Self, Balance},
+    deny_list::{Self, DenyList},
+    test_scenario::{Scenario, return_shared}
+};
 use usdc::usdc::USDC;
 
 /// The companion witness these tests allowlist.
@@ -102,6 +110,12 @@ const BUILDER_CODE_INDEX: u64 = 0;
 /// One 4m fill owes 4m and brings MINT_CASH, so it fills exactly when cash
 /// before the fill is at least 4_000_000 - 2_039_974 = 1_960_026.
 const BOUNDARY_CASH: u64 = 1_960_026;
+/// A settlement spot below the 100 strike, so the `(100, +inf]` position loses.
+const LOSING_SETTLEMENT: u64 = 99_000_000_000;
+/// A half close's builder fee: min(0.1 * HALF_FEE, 0.005 * 2m) = min(1_000, 10_000).
+const HALF_BUILDER_FEE: u64 = 1_000;
+/// HALF_REDEEM - HALF_FEE - HALF_BUILDER_FEE.
+const HALF_PROCEEDS_WITH_BUILDER: u64 = 988_987;
 
 // === Mints ===
 
@@ -139,7 +153,7 @@ fun a_mint_admits_commits_and_fills_into_a_canonical_open_receipt() {
     assert_eq!(subsidy.value(), 0);
     let cash_before = helpers::market(&market).cash_balance();
     let (reason, kept, change, quantity, amount, fee, builder, referral, used, impact) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -185,7 +199,7 @@ fun a_mint_past_its_limits_at_the_tick_refunds_and_keeps_the_fee() {
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
     let cash_before = helpers::market(&market).cash_balance();
     let (reason, kept, change, quantity, amount, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -212,7 +226,7 @@ fun a_mint_at_its_deadline_refunds_the_whole_escrow() {
     fx.set_clock_for_testing(TAU + DEADLINE_AFTER_TAU_MS);
     let cash_before = helpers::market(&market).cash_balance();
     let (reason, kept, change, _, _, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -396,7 +410,7 @@ fun a_refunded_sell_returns_the_whole_position_and_sells_again() {
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, SELL_TAU, live_price());
     fx.set_clock_for_testing(SELL_TAU + DEADLINE_AFTER_TAU_MS);
     let (reason, kept, change, quantity, amount, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(ORDER_FEE, subsidy),
@@ -494,8 +508,7 @@ fun a_settled_winner_is_paid_its_quantity_once() {
     let (mut fx, mut market, account, receipt) = filled_mint_at(test_constants::short_expiry_ms());
     settle(&mut fx, &mut market, WINNING_SETTLEMENT);
     let cash_before = helpers::market(&market).cash_balance();
-    let (em, config, _, _, _) = market.market_parts_mut();
-    let (payout, kept) = em.try_pay_settled(config, receipt);
+    let (payout, kept) = pay_settled(&mut fx, &mut market, receipt);
     assert_eq!(payout, QUANTITY);
     assert!(kept.is_none());
     kept.destroy_none();
@@ -512,8 +525,7 @@ fun a_settled_payout_the_market_cannot_cover_returns_the_receipt() {
     let taken = helpers::market_mut(&mut market).take_market_cash_for_testing(
         cash - QUANTITY + 1,
     );
-    let (em, config, _, _, _) = market.market_parts_mut();
-    let (payout, kept) = em.try_pay_settled(config, receipt);
+    let (payout, kept) = pay_settled(&mut fx, &mut market, receipt);
     assert_eq!(payout, QUANTITY);
     assert_eq!(helpers::market(&market).cash_balance(), QUANTITY - 1);
     let receipt = kept.destroy_some();
@@ -568,7 +580,7 @@ fun filling_after_the_witness_is_removed_aborts() {
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     set_witness(&mut fx, &mut market, false);
     let (_, kept, change, _, _, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -749,7 +761,7 @@ fun filling_before_commit_aborts() {
     let (mut fx, mut market, mut account) = setup();
     let receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
     let (_, kept, change, _, _, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, balance::zero()),
@@ -767,7 +779,7 @@ fun filling_with_short_escrow_aborts() {
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let (_, kept, change, _, _, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE - 1, subsidy),
@@ -816,7 +828,7 @@ fun a_subsidized_fill_uses_the_reservation_once() {
     let cash_before = helpers::market(&market).cash_balance();
 
     let (reason, kept, change, _, amount, fee, _, _, used, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -850,7 +862,7 @@ fun a_refund_at_the_tick_returns_the_reservation() {
     let cash_before = helpers::market(&market).cash_balance();
 
     let (reason, kept, change, _, _, _, _, _, used, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -906,7 +918,7 @@ fun a_builder_fee_comes_out_of_the_escrow() {
     let cash_before = helpers::market(&market).cash_balance();
 
     let (reason, kept, change, _, amount, _, builder, referral, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -928,14 +940,7 @@ fun a_builder_fee_comes_out_of_the_escrow() {
 /// leaves the market.
 #[test]
 fun a_referral_fee_comes_out_of_the_trading_fee() {
-    let (mut fx, expiry_id, trader, _) = helpers::setup_referred_live_market(
-        test_constants::default_expiry_ms(),
-        live_price(),
-    );
-    fx.cutover();
-    let mut market = fx.take_market_bundle(expiry_id);
-    set_witness(&mut fx, &mut market, true);
-    helpers::return_market_bundle(market);
+    let (mut fx, expiry_id, trader, _) = referred_setup();
     fx.scenario_mut().next_tx(trader.owner());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -944,7 +949,7 @@ fun a_referral_fee_comes_out_of_the_trading_fee() {
     let cash_before = helpers::market(&market).cash_balance();
 
     let (reason, kept, change, _, amount, _, _, referral, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -971,7 +976,7 @@ fun a_fill_landing_cash_on_required_cash_fills() {
     let taken = drain_cash_to(&mut market, BOUNDARY_CASH);
 
     let (reason, kept, change, _, _, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -998,7 +1003,7 @@ fun a_fill_one_unit_short_of_required_cash_refunds_with_reason_8() {
     let taken = drain_cash_to(&mut market, BOUNDARY_CASH - 1);
 
     let (reason, kept, change, quantity, _, _, _, _, _, _) = fill(
-        &fx,
+        &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
@@ -1013,6 +1018,346 @@ fun a_fill_one_unit_short_of_required_cash_refunds_with_reason_8() {
     kept.destroy_none();
     destroy(taken);
     destroy(change);
+    finish(fx, market, account);
+}
+
+// === USDC deny list ===
+
+/// Reason 9: the trader's receive address is denied, so the fill is refused
+/// before anything moves. The whole escrow comes back, order fee included,
+/// market cash is untouched, and the order leaves the ledger.
+#[test]
+fun a_mint_for_a_denied_receive_address_refunds_with_reason_9() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let trader_address = receive_address(&mut account);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let (mut market, account) = between_txs!(
+        &mut fx,
+        market,
+        account,
+        expiry_id,
+        &trader,
+        |scenario| usdc_deny_list::deny(scenario, trader_address),
+    );
+    let cash_before = helpers::market(&market).cash_balance();
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+
+    let (reason, kept, change, quantity, amount, _, _, _, _, _) = fill_against(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+        &deny_list,
+    );
+
+    assert_eq!(reason, constants::fill_reason_recipient_denied!());
+    assert_eq!(quantity, 0);
+    assert_eq!(amount, 0);
+    assert_eq!(change.value(), BUDGET + ORDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
+    assert_flow_state(&market, 0, 0);
+    kept.destroy_none();
+    destroy(change);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// A sell for a denied receive address is refused the same way: the order fee
+/// comes back and the receipt reopens whole, with nothing paid out.
+#[test]
+fun a_sell_for_a_denied_receive_address_refunds_with_reason_9_and_reopens() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let trader_address = receive_address(&mut account);
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
+    admit_sell(&mut fx, &mut market, &mut account, &mut receipt, HALF, 0, SELL_TAU);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, SELL_TAU, live_price());
+    let (mut market, account) = between_txs!(
+        &mut fx,
+        market,
+        account,
+        expiry_id,
+        &trader,
+        |scenario| usdc_deny_list::deny(scenario, trader_address),
+    );
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+    let (reason, kept, change, quantity, amount, _, _, _, _, _) = fill_against(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(ORDER_FEE, subsidy),
+        &deny_list,
+    );
+
+    assert_eq!(reason, constants::fill_reason_recipient_denied!());
+    assert_eq!(quantity, 0);
+    assert_eq!(amount, 0);
+    assert_eq!(change.value(), ORDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
+    assert_eq!(helpers::market(&market).required_cash(), QUANTITY);
+    let receipt = kept.destroy_some();
+    assert_canonical_open(&receipt, QUANTITY);
+    assert_waiting(&market, 0);
+    destroy(receipt);
+    destroy(change);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// A denied builder's fee is not sent: it stays in market cash and the mint
+/// fills. The trader is charged as usual and the fill reports the fee.
+#[test]
+fun a_denied_builders_mint_fee_stays_in_market_cash() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    let code_id = fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
+    usdc_deny_list::deny(fx.scenario_mut(), code_id.to_address());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill_against(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+        &deny_list,
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(builder, BUILDER_FEE);
+    assert_eq!(amount, ALL_IN_COST + BUILDER_FEE);
+    assert_eq!(change.value(), BUDGET - ALL_IN_COST - BUILDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + MINT_CASH + BUILDER_FEE);
+    helpers::assert_market_backed_bundle(&market);
+    destroy(change);
+    destroy(kept);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// A sell's builder fee leaves with the trading fee's split, so a denied
+/// builder's fee stays in market cash and never reaches the trader: the
+/// proceeds are the redeem value less both fees, and market cash gains the
+/// order fee, the trading fee, and the builder fee and pays the redeem value.
+#[test]
+fun a_denied_builders_sell_fee_stays_in_market_cash() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    let code_id = fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
+    usdc_deny_list::deny(fx.scenario_mut(), code_id.to_address());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
+    admit_sell(&mut fx, &mut market, &mut account, &mut receipt, HALF, 0, SELL_TAU);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, SELL_TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill_against(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(ORDER_FEE, subsidy),
+        &deny_list,
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(quantity, HALF);
+    assert_eq!(fee, HALF_FEE);
+    assert_eq!(builder, HALF_BUILDER_FEE);
+    assert_eq!(proceeds, HALF_PROCEEDS_WITH_BUILDER);
+    assert_eq!(change.value(), 0);
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        cash_before + ORDER_FEE + HALF_FEE + HALF_BUILDER_FEE - HALF_REDEEM,
+    );
+    helpers::assert_market_backed_bundle(&market);
+    destroy(change);
+    destroy(kept);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// A denied referrer's share stays in market cash: the trader's cost is
+/// unchanged and the market keeps the whole trading fee.
+#[test]
+fun a_denied_referrers_fee_stays_in_market_cash() {
+    let (mut fx, expiry_id, trader, referrer) = referred_setup();
+    fx.scenario_mut().next_tx(referrer.owner());
+    let mut referrer_account = fx.take_account_bundle(&referrer);
+    let referrer_address = receive_address(&mut referrer_account);
+    helpers::return_account_bundle(referrer_account);
+    usdc_deny_list::deny(fx.scenario_mut(), referrer_address);
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+    let (reason, kept, change, _, amount, _, _, referral, _, _) = fill_against(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+        &deny_list,
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(referral, REFERRAL_FEE);
+    assert_eq!(amount, ALL_IN_COST);
+    assert_eq!(change.value(), BUDGET - ALL_IN_COST);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before + MINT_CASH);
+    helpers::assert_market_backed_bundle(&market);
+    destroy(change);
+    destroy(kept);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// A denied winner's payout is skipped with nothing moved, and paid once the
+/// denial lifts.
+#[test]
+fun a_denied_winners_payout_is_skipped_until_the_denial_lifts() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let trader_address = receive_address(&mut account);
+    let receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    settle(&mut fx, &mut market, WINNING_SETTLEMENT);
+    let (mut market, account) = between_txs!(
+        &mut fx,
+        market,
+        account,
+        expiry_id,
+        &trader,
+        |scenario| usdc_deny_list::deny(scenario, trader_address),
+    );
+    let cash_before = helpers::market(&market).cash_balance();
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+
+    let (payout, kept) = pay_settled_against(&mut fx, &mut market, receipt, &deny_list);
+    assert_eq!(payout, QUANTITY);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
+    assert_eq!(helpers::market(&market).payout_liability(), QUANTITY);
+    let receipt = kept.destroy_some();
+    assert_canonical_open(&receipt, QUANTITY);
+    return_shared(deny_list);
+
+    let (mut market, account) = between_txs!(
+        &mut fx,
+        market,
+        account,
+        expiry_id,
+        &trader,
+        |scenario| usdc_deny_list::undeny(scenario, trader_address),
+    );
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+    let (payout, kept) = pay_settled_against(&mut fx, &mut market, receipt, &deny_list);
+    assert_eq!(payout, QUANTITY);
+    kept.destroy_none();
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before - QUANTITY);
+    assert_eq!(helpers::market(&market).payout_liability(), 0);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// A loser's zero payout sends nothing, so a denied loser's receipt is still
+/// consumed.
+#[test]
+fun a_denied_losers_zero_payout_consumes_the_receipt() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let trader_address = receive_address(&mut account);
+    let receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    settle(&mut fx, &mut market, LOSING_SETTLEMENT);
+    let (mut market, account) = between_txs!(
+        &mut fx,
+        market,
+        account,
+        expiry_id,
+        &trader,
+        |scenario| usdc_deny_list::deny(scenario, trader_address),
+    );
+    let cash_before = helpers::market(&market).cash_balance();
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+
+    let (payout, kept) = pay_settled_against(&mut fx, &mut market, receipt, &deny_list);
+
+    assert_eq!(payout, 0);
+    kept.destroy_none();
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
+    return_shared(deny_list);
+    finish(fx, market, account);
+}
+
+/// While USDC is globally paused every address counts as denied: a fill
+/// refuses with reason 9 and hands back the whole escrow, and a winner's
+/// payout is skipped.
+#[test]
+fun a_global_usdc_pause_refuses_fills_and_skips_payouts() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let held = mint_and_fill(&mut fx, &mut market, &mut account);
+    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
+    let mut receipt = admit_with(
+        &mut fx,
+        &mut market,
+        &mut account,
+        QUANTITY,
+        NO_PROBABILITY_CAP,
+        CHANNEL_200MS,
+        SELL_TAU,
+    );
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, SELL_TAU, live_price());
+    let (mut market, account) = between_txs!(
+        &mut fx,
+        market,
+        account,
+        expiry_id,
+        &trader,
+        |scenario| usdc_deny_list::set_global_pause(scenario, true),
+    );
+    let deny_list = usdc_deny_list::take(fx.scenario_mut());
+
+    let (reason, kept, change, _, _, _, _, _, _, _) = fill_against(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+        &deny_list,
+    );
+    assert_eq!(reason, constants::fill_reason_recipient_denied!());
+    assert_eq!(change.value(), BUDGET + ORDER_FEE);
+    kept.destroy_none();
+    destroy(change);
+
+    settle(&mut fx, &mut market, WINNING_SETTLEMENT);
+    let (payout, kept) = pay_settled_against(&mut fx, &mut market, held, &deny_list);
+    assert_eq!(payout, QUANTITY);
+    assert_eq!(helpers::market(&market).payout_liability(), QUANTITY);
+    destroy(kept);
+    return_shared(deny_list);
     finish(fx, market, account);
 }
 
@@ -1047,15 +1392,56 @@ fun the_instant_mint_is_retired() {
 
 fun live_price(): u64 { test_constants::default_live_price() }
 
-/// The default live market across the cutover, with `TestFlow` allowlisted.
-/// Returns the fixture in an admin transaction.
+/// The default live market across the cutover, with `TestFlow` allowlisted
+/// and Sui's deny list shared over a regulated test USDC. Returns the fixture
+/// in an admin transaction.
 fun live_setup(expiry_ms: u64): (Fixture, ID, helpers::Trader) {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(expiry_ms, live_price());
     fx.cutover();
     let mut market = fx.take_market_bundle(expiry_id);
     set_witness(&mut fx, &mut market, true);
     helpers::return_market_bundle(market);
+    usdc_deny_list::setup(fx.scenario_mut());
     (fx, expiry_id, trader)
+}
+
+/// Return the held bundles, run `$edit` on the scenario (a deny-list change and
+/// the epoch it takes effect in), and retake both in the trader's next
+/// transaction.
+macro fun between_txs(
+    $fx: &mut Fixture,
+    $market: MarketBundle,
+    $account: AccountBundle,
+    $expiry_id: ID,
+    $trader: &helpers::Trader,
+    $edit: |&mut Scenario|,
+): (MarketBundle, AccountBundle) {
+    let fx = $fx;
+    let trader = $trader;
+    helpers::return_account_bundle($account);
+    helpers::return_market_bundle($market);
+    $edit(fx.scenario_mut());
+    fx.scenario_mut().next_tx(trader.owner());
+    (fx.take_market_bundle($expiry_id), fx.take_account_bundle(trader))
+}
+
+fun receive_address(account: &mut AccountBundle): address {
+    let (wrapper, _) = account.account_parts_mut();
+    wrapper.load_account().receive_address()
+}
+
+/// `live_setup` with the trader referred by bob. Returns bob's handle.
+fun referred_setup(): (Fixture, ID, helpers::Trader, helpers::Trader) {
+    let (mut fx, expiry_id, trader, referrer) = helpers::setup_referred_live_market(
+        test_constants::default_expiry_ms(),
+        live_price(),
+    );
+    fx.cutover();
+    let mut market = fx.take_market_bundle(expiry_id);
+    set_witness(&mut fx, &mut market, true);
+    helpers::return_market_bundle(market);
+    usdc_deny_list::setup(fx.scenario_mut());
+    (fx, expiry_id, trader, referrer)
 }
 
 /// `live_setup` at the default expiry, in the trader's transaction.
@@ -1296,14 +1682,72 @@ fun commit_bad_price(feed_id: u32, channel: u8, envelope_us: u64, generation_us:
     abort 999
 }
 
+/// `try_fill` with no address denied: an empty deny list stands in for Sui's.
 fun fill(
-    fx: &Fixture,
+    fx: &mut Fixture,
     market: &mut MarketBundle,
     receipt: OrderReceipt,
     escrow: Balance<USDC>,
 ): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
+    let none_denied = deny_list::new_for_testing(fx.scenario_mut().ctx());
+    let (
+        reason,
+        kept,
+        change,
+        quantity,
+        amount,
+        fee,
+        builder,
+        referral,
+        used,
+        impact,
+    ) = fill_against(
+        fx,
+        market,
+        receipt,
+        escrow,
+        &none_denied,
+    );
+    destroy(none_denied);
+    (reason, kept, change, quantity, amount, fee, builder, referral, used, impact)
+}
+
+/// `try_fill` against `deny_list`, Sui's shared one in the deny-list tests. A
+/// transaction takes the shared list once, since `test_scenario` makes a
+/// returned object available again only in the next transaction.
+fun fill_against(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    receipt: OrderReceipt,
+    escrow: Balance<USDC>,
+    deny_list: &DenyList,
+): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
     let (em, config, _, _, _) = market.market_parts_mut();
-    expiry_market::try_fill(TestFlow(), em, config, receipt, escrow, fx.clock())
+    let (clock, ctx) = fx.clock_and_ctx();
+    expiry_market::try_fill(TestFlow(), em, config, receipt, escrow, deny_list, clock, ctx)
+}
+
+/// `try_pay_settled` with no address denied.
+fun pay_settled(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    receipt: OrderReceipt,
+): (u64, Option<OrderReceipt>) {
+    let none_denied = deny_list::new_for_testing(fx.scenario_mut().ctx());
+    let (payout, kept) = pay_settled_against(fx, market, receipt, &none_denied);
+    destroy(none_denied);
+    (payout, kept)
+}
+
+fun pay_settled_against(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    receipt: OrderReceipt,
+    deny_list: &DenyList,
+): (u64, Option<OrderReceipt>) {
+    let (em, config, _, _, _) = market.market_parts_mut();
+    let (_, ctx) = fx.clock_and_ctx();
+    em.try_pay_settled(config, receipt, deny_list, ctx)
 }
 
 fun release(

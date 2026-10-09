@@ -120,8 +120,8 @@ public struct QueuedOrdersCleaned has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted when the settlement payout walk pays an Open record, with `payout`
-/// 0 for a loser.
+/// Emitted when the settlement payout walk or `pay_open` pays an Open record,
+/// with `payout` 0 for a loser.
 public struct OpenRecordSettled has copy, drop, store {
     expiry_market_id: ID,
     record_id: u64,
@@ -131,14 +131,39 @@ public struct OpenRecordSettled has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
-/// Emitted when the settlement payout walk cannot pay an Open record. The
-/// record stays Open.
+/// Emitted when the settlement payout walk or `pay_open` cannot pay an Open
+/// record: the market is short of cash, or the receive address is denied. The
+/// record stays Open for `pay_open`.
 public struct OpenRecordPayoutSkipped has copy, drop, store {
     expiry_market_id: ID,
     record_id: u64,
     account_id: ID,
     order_id: u256,
     payout: u64,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when a record keeps USDC it could not send to its receive address:
+/// the address is on USDC's deny list for the current epoch, or USDC is
+/// globally paused. `amount` is this call's parked change or refund; the
+/// record's `funds` holds the total until `RecordFundsClaimed`.
+public struct RecordFundsParked has copy, drop, store {
+    expiry_market_id: ID,
+    record_id: u64,
+    account_id: ID,
+    receive_address: address,
+    amount: u64,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when `claim_parked` sends a record's parked funds to its receive
+/// address.
+public struct RecordFundsClaimed has copy, drop, store {
+    expiry_market_id: ID,
+    record_id: u64,
+    account_id: ID,
+    receive_address: address,
+    amount: u64,
     onchain_timestamp_ms: u64,
 }
 
@@ -351,6 +376,42 @@ public(package) fun emit_open_record_payout_skipped(
         account_id,
         order_id,
         payout,
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_record_funds_parked(
+    expiry_market_id: ID,
+    record_id: u64,
+    account_id: ID,
+    receive_address: address,
+    amount: u64,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(RecordFundsParked {
+        expiry_market_id,
+        record_id,
+        account_id,
+        receive_address,
+        amount,
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_record_funds_claimed(
+    expiry_market_id: ID,
+    record_id: u64,
+    account_id: ID,
+    receive_address: address,
+    amount: u64,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(RecordFundsClaimed {
+        expiry_market_id,
+        record_id,
+        account_id,
+        receive_address,
+        amount,
         onchain_timestamp_ms,
     });
 }

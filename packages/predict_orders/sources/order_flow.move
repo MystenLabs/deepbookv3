@@ -22,7 +22,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use sui::{balance::Balance, clock::Clock};
+use sui::{balance::Balance, clock::Clock, deny_list::DenyList};
 use usdc::usdc::USDC;
 
 /// This companion's witness for Predict's order-flow primitives.
@@ -139,7 +139,9 @@ public(package) fun try_fill(
     config: &ProtocolConfig,
     receipt: OrderReceipt,
     escrow: Balance<USDC>,
+    deny_list: &DenyList,
     clock: &Clock,
+    ctx: &TxContext,
 ): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
-    expiry_market::try_fill(OrderFlow(), market, config, receipt, escrow, clock)
+    expiry_market::try_fill(OrderFlow(), market, config, receipt, escrow, deny_list, clock, ctx)
 }

@@ -945,6 +945,10 @@ public fun return_account_bundle(bundle: AccountBundle) {
 /// The trader's account owner address.
 public fun owner(trader: &Trader): address { trader.owner }
 
+/// The trader's shared `AccountWrapper`, whose address is the account's
+/// receive address.
+public fun wrapper_id(trader: &Trader): ID { trader.wrapper_id }
+
 /// Whether the trader's account holds an open position for `order_id` in `expiry_id`.
 public fun has_position(wrapper: &AccountWrapper, expiry_id: ID, order_id: u256): bool {
     predict_account::has_position(wrapper.load_account(), expiry_id, order_id)

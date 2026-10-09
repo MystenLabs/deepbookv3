@@ -140,7 +140,8 @@ macro fun max_order_fee(): u64 { 1_000_000 }
 
 /// Records one settlement refund call visits. Each refund loads one dynamic
 /// child, the record, so 450 leaves room under Sui's 1,000 dynamic-object loads
-/// per transaction for the queue, the market, and Predict's ledger. A larger
+/// per transaction for the queue, the market, Predict's ledger, and the deny
+/// list's few USDC config objects, which load once per transaction. A larger
 /// batch could exceed the limit on every call and leave the queue unable to
 /// drain.
 macro fun default_settle_refund_batch(): u64 { 450 }

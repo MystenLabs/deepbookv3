@@ -16,6 +16,8 @@ use deepbook_predict_orders::queue_events::{
     OpenRecordPayoutSkipped,
     MarketPayoutsCompleted,
     QueuedOrdersCleaned,
+    RecordFundsParked,
+    RecordFundsClaimed,
 };
 use std::bcs;
 use sui::{bcs as sui_bcs, event};
@@ -284,6 +286,48 @@ public fun cleaned(): vector<vector<u64>> {
         bytes.peel_address();
         bytes.peel_vec_u64()
     })
+}
+
+// === Parked funds ===
+
+/// One `RecordFundsParked` or `RecordFundsClaimed`.
+public struct FundsView has copy, drop {
+    expiry_market_id: ID,
+    record_id: u64,
+    account_id: ID,
+    receive_address: address,
+    amount: u64,
+    onchain_timestamp_ms: u64,
+}
+
+public fun parked(): vector<FundsView> {
+    event::events_by_type<RecordFundsParked>().map!(|parked| peel_funds(bcs::to_bytes(&parked)))
+}
+
+public fun claimed(): vector<FundsView> {
+    event::events_by_type<RecordFundsClaimed>().map!(|claimed| peel_funds(bcs::to_bytes(&claimed)))
+}
+
+public fun funds_record_id(view: &FundsView): u64 { view.record_id }
+
+public fun funds_account_id(view: &FundsView): ID { view.account_id }
+
+public fun funds_receive_address(view: &FundsView): address { view.receive_address }
+
+public fun funds_amount(view: &FundsView): u64 { view.amount }
+
+public fun funds_onchain_timestamp_ms(view: &FundsView): u64 { view.onchain_timestamp_ms }
+
+fun peel_funds(raw: vector<u8>): FundsView {
+    let mut bytes = sui_bcs::new(raw);
+    FundsView {
+        expiry_market_id: bytes.peel_address().to_id(),
+        record_id: bytes.peel_u64(),
+        account_id: bytes.peel_address().to_id(),
+        receive_address: bytes.peel_address(),
+        amount: bytes.peel_u64(),
+        onchain_timestamp_ms: bytes.peel_u64(),
+    }
 }
 
 fun peel_payout(raw: vector<u8>): PayoutView {

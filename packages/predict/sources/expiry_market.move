@@ -21,6 +21,13 @@
 /// an allowlisted companion witness; release and the settled payout need only
 /// the receipt. The queue itself, its escrow, its policy, and its events live in
 /// the companion.
+///
+/// Mainnet USDC is a regulated coin: Sui aborts a transaction that sends it to
+/// an address on its deny list, or to anyone while it is globally paused. So the
+/// fill, the fee routing, and the settled payout read `sui::deny_list` first and
+/// never send to such an address. A fill for a denied receive address is
+/// refused, a denied builder or referrer's fee stays in market cash, and a
+/// denied winner's payout is skipped for a later `try_pay_settled`.
 module deepbook_predict::expiry_market;
 
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
@@ -49,6 +56,8 @@ use sui::{
     accumulator::AccumulatorRoot,
     balance::{Self, Balance},
     clock::Clock,
+    coin,
+    deny_list::DenyList,
     dynamic_field as df,
     vec_map::{Self, VecMap}
 };
@@ -1237,10 +1246,13 @@ public fun commit<W: drop>(
 /// (`EWrongMarket`), a receipt not admitted or without a price (`EWrongStage`),
 /// or `escrow` below `budget + order_fee + subsidy_reserved` (`EEscrowMismatch`).
 /// Every market condition returns a refund reason instead, `0` for a fill: 5 at
-/// or past the deadline, which also covers expiry and settlement; 2 when no
-/// `Pricer` exists at the tick; then the fill's own 1 (the order's limits), 2
-/// (admission), 4 (a pinned node is missing, a backstop), and 8 (the market's
-/// cash after the fill would not cover its required cash).
+/// or past the deadline, which also covers expiry and settlement; 9 when USDC
+/// sent to the receipt's receive address would abort the transaction (`denied`:
+/// the address is on USDC's deny list for the current epoch, or USDC is
+/// globally paused), so nothing is sent there; 2 when no `Pricer` exists at the
+/// tick; then the fill's own 1 (the order's limits), 2 (admission), 4 (a pinned
+/// node is missing, a backstop), and 8 (the market's cash after the fill would
+/// not cover its required cash).
 ///
 /// A mint fill pays the premium, the trading fee net of the referral share, the
 /// used subsidy, the order fee, and the inventory-impact charge into market
@@ -1250,18 +1262,22 @@ public fun commit<W: drop>(
 /// inventory-impact rebate, less the trading and builder fees) to the receipt's
 /// receive address, keeps the trading and order fees in market cash, emits
 /// `LiveOrderRedeemed`, and returns the receipt open with the replacement
-/// position of a partial close, or consumes it on a full close. A refund keeps
-/// the order fee in market cash for reasons 1 and 2, returns the reserved
-/// subsidy to the incentive balance, prunes a mint's emptied unpinned nodes,
-/// returns the rest of the escrow, and returns a sell's receipt open or consumes
-/// a mint's. Every outcome takes the order out of the ledger.
+/// position of a partial close, or consumes it on a full close. A builder or
+/// referral fee whose recipient is denied stays in market cash instead, and the
+/// events still report it as charged. A refund keeps the order fee in market
+/// cash for reasons 1 and 2, returns the reserved subsidy to the incentive
+/// balance, prunes a mint's emptied unpinned nodes, returns the rest of the
+/// escrow, and returns a sell's receipt open or consumes a mint's. Every outcome
+/// takes the order out of the ledger.
 public fun try_fill<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     mut receipt: OrderReceipt,
     mut escrow: Balance<USDC>,
+    deny_list: &DenyList,
     clock: &Clock,
+    ctx: &TxContext,
 ): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
     config.chk_flow<W>();
     config.chk_version();
@@ -1283,70 +1299,79 @@ public fun try_fill<W: drop>(
     // expired or settled market.
     let mut reason = constants::fill_reason_deadline!();
     if (now < receipt.deadline_ms) {
-        let pricer = pricing::pricer_at(
-            &receipt.vol,
-            receipt.spot,
-            receipt.generation_us / 1000,
-            receipt.tick_ms,
-            market.id(),
-            market.expiry,
-        );
-        reason = constants::fill_reason_admission!();
-        if (pricer.is_some() && is_mint) {
-            let (fill_reason, quote, referral_fee) = market.fill_mint(
-                config,
-                &mut receipt,
-                pricer.borrow(),
-                &mut escrow,
-                now,
+        // Refused before anything moves, so a fill never sends USDC where the
+        // send would abort the transaction.
+        reason = constants::fill_reason_recipient_denied!();
+        if (!denied(deny_list, receipt.parties.receive_address, ctx)) {
+            let pricer = pricing::pricer_at(
+                &receipt.vol,
+                receipt.spot,
+                receipt.generation_us / 1000,
+                receipt.tick_ms,
+                market.id(),
+                market.expiry,
             );
-            if (fill_reason == 0) {
-                // Allocation first, then the pins go, so the filled nodes hold
-                // the order.
-                market.unwind(&receipt, false);
-                return (
-                    0,
-                    option::some(to_open(receipt)),
-                    escrow,
-                    quote.quantity,
-                    quote.all_in_cost,
-                    quote.trading_fee,
-                    quote.builder_fee,
-                    referral_fee,
-                    quote.fee_incentive_subsidy,
-                    quote.inventory_impact_charge,
-                )
-            };
-            reason = fill_reason;
-        } else if (pricer.is_some()) {
-            let (fill_reason, remainder, quote) = market.fill_close(
-                &mut receipt,
-                pricer.borrow(),
-                &mut escrow,
-                now,
-            );
-            if (fill_reason == 0) {
-                market.unwind(&receipt, false);
-                let kept = if (remainder) {
-                    option::some(to_open(receipt))
-                } else {
-                    drop_receipt(receipt);
-                    option::none()
+            reason = constants::fill_reason_admission!();
+            if (pricer.is_some() && is_mint) {
+                let (fill_reason, quote, referral_fee) = market.fill_mint(
+                    config,
+                    &mut receipt,
+                    pricer.borrow(),
+                    &mut escrow,
+                    deny_list,
+                    now,
+                    ctx,
+                );
+                if (fill_reason == 0) {
+                    // Allocation first, then the pins go, so the filled nodes hold
+                    // the order.
+                    market.unwind(&receipt, false);
+                    return (
+                        0,
+                        option::some(to_open(receipt)),
+                        escrow,
+                        quote.quantity,
+                        quote.all_in_cost,
+                        quote.trading_fee,
+                        quote.builder_fee,
+                        referral_fee,
+                        quote.fee_incentive_subsidy,
+                        quote.inventory_impact_charge,
+                    )
                 };
-                return (
-                    0,
-                    kept,
-                    escrow,
-                    quote.close_quantity,
-                    quote.proceeds,
-                    quote.trading_fee,
-                    quote.builder_fee,
-                    0,
-                    0,
-                    quote.inventory_impact_rebate,
-                )
+                reason = fill_reason;
+            } else if (pricer.is_some()) {
+                let (fill_reason, remainder, quote) = market.fill_close(
+                    &mut receipt,
+                    pricer.borrow(),
+                    &mut escrow,
+                    deny_list,
+                    now,
+                    ctx,
+                );
+                if (fill_reason == 0) {
+                    market.unwind(&receipt, false);
+                    let kept = if (remainder) {
+                        option::some(to_open(receipt))
+                    } else {
+                        drop_receipt(receipt);
+                        option::none()
+                    };
+                    return (
+                        0,
+                        kept,
+                        escrow,
+                        quote.close_quantity,
+                        quote.proceeds,
+                        quote.trading_fee,
+                        quote.builder_fee,
+                        0,
+                        0,
+                        quote.inventory_impact_rebate,
+                    )
+                };
+                reason = fill_reason;
             };
-            reason = fill_reason;
         };
     };
     let kept = market.refund_order(config, receipt, &mut escrow, reason, true);
@@ -1397,16 +1422,20 @@ public fun release(
 
 /// Pay an open receipt's settled payout, zero for a loser, to its receive
 /// address and consume the receipt. Returns the payout and `none`. When the
-/// payout is above market cash or above the settled liability left, changes
+/// payout is above market cash or above the settled liability left, or a
+/// nonzero payout's receive address is denied (`try_fill`'s reason 9: on
+/// USDC's deny list for the current epoch, or USDC globally paused), changes
 /// nothing and returns that payout with the receipt, so the companion's payout
-/// walk moves on and a later upgrade can pay it. Needs no allowlisting and
-/// checks only the version floor. Aborts on another market's receipt
-/// (`EWrongMarket`), a receipt that is not open (`EWrongStage`), or an
+/// walk moves on and a later call pays it once the cause clears. Needs no
+/// allowlisting and checks only the version floor. Aborts on another market's
+/// receipt (`EWrongMarket`), a receipt that is not open (`EWrongStage`), or an
 /// unsettled market (`EMarketNotSettled`).
 public fun try_pay_settled(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     receipt: OrderReceipt,
+    deny_list: &DenyList,
+    ctx: &TxContext,
 ): (u64, Option<OrderReceipt>) {
     config.chk_floor();
     assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
@@ -1414,9 +1443,11 @@ public fun try_pay_settled(
     assert!(market.is_settled(), EMarketNotSettled);
     let order = order::from_id(receipt.order_id);
     let payout = market.strike_exposure.settled_order_payout(&order);
-    // Checked before the liability moves, so a skip changes nothing.
+    // Every check runs before `try_settled` moves the liability, its own check
+    // last, so a skip changes nothing.
     if (
         payout > market.cash.balance()
+            || (payout > 0 && denied(deny_list, receipt.parties.receive_address, ctx))
             || market.strike_exposure.try_settled(&order).is_none()
     ) {
         return (payout, option::some(receipt))
@@ -2357,7 +2388,9 @@ fun fill_mint(
     receipt: &mut OrderReceipt,
     pricer: &Pricer,
     escrow: &mut Balance<USDC>,
+    deny_list: &DenyList,
     now_ms: u64,
+    ctx: &TxContext,
 ): (u8, MintQuote, u64) {
     let tick_ms = receipt.tick_ms;
     let (terms, quote, liability_after, reason) = market.price_mint(
@@ -2387,7 +2420,8 @@ fun fill_mint(
     // The non-aborting form of `chk_backed` on the post-fill state. The
     // trader's builder fee leaves with the escrow it came from, so market cash
     // gains the premium, the impact charge, the whole trading fee (subsidy
-    // included) net of the referral, and the order fee.
+    // included) net of the referral, and the order fee. A fee kept for a denied
+    // recipient only adds to that.
     let cash_after =
         market.cash.balance() + quote.premium + quote.inventory_impact_charge
         + quote.trading_fee - referral_fee + receipt.order_fee;
@@ -2396,8 +2430,9 @@ fun fill_mint(
     if (cash_after < required_after) return (constants::fill_reason_no_cash!(), quote, 0);
 
     let mut payment = escrow.split(quote.all_in_cost);
-    pay_builder(receipt.parties.builder_code_id, payment.split(quote.builder_fee));
-    pay_referral(receipt.parties.referrer_receive_address, payment.split(referral_fee));
+    let builder = receipt.parties.builder_code_id.map!(|id| id.to_address());
+    pay_fee(&mut payment, quote.builder_fee, builder, deny_list, ctx);
+    pay_fee(&mut payment, referral_fee, receipt.parties.referrer_receive_address, deny_list, ctx);
     payment.join(escrow.split(quote.fee_incentive_subsidy));
     payment.join(escrow.split(receipt.order_fee));
     market.cash.receive(payment);
@@ -2444,7 +2479,9 @@ fun fill_close(
     receipt: &mut OrderReceipt,
     pricer: &Pricer,
     escrow: &mut Balance<USDC>,
+    deny_list: &DenyList,
     now_ms: u64,
+    ctx: &TxContext,
 ): (u8, bool, RedeemQuote) {
     let position_order = order::from_id(receipt.order_id);
     let close_quantity = receipt.quantity;
@@ -2482,8 +2519,12 @@ fun fill_close(
     market.cash.receive(escrow.split(receipt.order_fee));
     let mut payout = market.cash.pay_out(redeem_amount);
     payout.join(market.cash.pay_rebate(quote.inventory_impact_rebate));
-    market.cash.receive(payout.split(quote.trading_fee));
-    pay_builder(receipt.parties.builder_code_id, payout.split(quote.builder_fee));
+    // The builder fee leaves with the trading fee's split, so a denied builder's
+    // fee stays in market cash and never reaches the trader.
+    let mut fees = payout.split(quote.trading_fee + quote.builder_fee);
+    let builder = receipt.parties.builder_code_id.map!(|id| id.to_address());
+    pay_fee(&mut fees, quote.builder_fee, builder, deny_list, ctx);
+    market.cash.receive(fees);
     if (payout.value() > 0) {
         balance::send_funds(payout, receipt.parties.receive_address);
     } else {
@@ -3034,6 +3075,31 @@ fun bldr_fee_amt(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): 
     }
 }
 
+/// Send `amount` of `from` to `recipient`, unless the send would abort the
+/// transaction (`denied`): then the fee stays in `from`, which the caller moves
+/// into market cash. `recipient` is read only for a nonzero fee.
+fun pay_fee(
+    from: &mut Balance<USDC>,
+    amount: u64,
+    recipient: Option<address>,
+    deny_list: &DenyList,
+    ctx: &TxContext,
+) {
+    if (amount == 0) return;
+    let recipient = recipient.destroy_some();
+    if (!denied(deny_list, recipient, ctx)) balance::send_funds(from.split(amount), recipient);
+}
+
+/// Whether USDC sent to `recipient` would abort this transaction. Sui refuses
+/// a regulated coin to an address on its deny list, and to every address while
+/// the coin is globally paused, both read for the current epoch, as the
+/// transaction's own check reads them. Never true for an unregulated USDC.
+fun denied(deny_list: &DenyList, recipient: address, ctx: &TxContext): bool {
+    coin::deny_list_v2_contains_current_epoch<USDC>(deny_list, recipient, ctx)
+        || coin::deny_list_v2_is_global_pause_enabled_current_epoch<USDC>(deny_list, ctx)
+}
+
+#[test_only]
 fun pay_builder(builder_code_id: Option<ID>, fee: Balance<USDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
@@ -3043,6 +3109,7 @@ fun pay_builder(builder_code_id: Option<ID>, fee: Balance<USDC>) {
     balance::send_funds(fee, builder_code_id.to_address());
 }
 
+#[test_only]
 fun pay_referral(referrer_receive_address: Option<address>, fee: Balance<USDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
