@@ -520,6 +520,29 @@ test("queues are created under the registry for live markets only once, in batch
     assert.equal(byMarket.get(markets[QUEUE_BATCH + 1]!.id)!.createTx, "tx-create_market_queues_1");
     assert.ok(runtime.journal.queues.every((queue) => queue.queueId === marketQueueId(registry, queue.marketId)));
 
+    // Emitted for the multisig: once it lands, the queues it created keep its digest.
+    const emitted = runtimeFor(["--network", "mainnet", "--sender", id("b"), "--flush-operator", id("f"), "--emit-unsigned"]);
+    emitted.journal.packages.predict_orders = runtime.journal.packages.predict_orders;
+    emitted.journal.orderDesk = desk;
+    emitted.journal.queueRegistry = registry;
+    emitted.journal.emitted.create_market_queues_0 = { digest: "landed", path: "/tmp/05.json", emittedAt: "t" };
+    const landed = new Set([marketQueueId(registry, markets[0]!.id)]);
+    await ensureMarketQueues(emitted, {
+        liveMarkets: async () => markets.slice(0, 1),
+        objectExists: async (_runtime, queueId) => landed.has(queueId),
+        persist() {},
+        submit: async (rt, label, build) => {
+            assert.equal(label, "create_market_queues_0");
+            assert.throws(() => build(), /never rebuilt/);
+            rt.journal.transactions[label] = "landed";
+            return {
+                digest: "landed",
+                objectChanges: [{ type: "created", objectId: marketQueueId(registry, markets[0]!.id), objectType: `${id("9")}::queue::MarketQueue` }],
+            };
+        },
+    });
+    assert.deepEqual(emitted.journal.queues.map((queue) => queue.createTx), ["landed"]);
+
     assert.throws(() => marketQueuesTransaction({ ordersPackage: id("9"), orderDesk: desk, queueRegistry: registry }, []), /1 to 50/);
     assert.throws(
         () => marketQueuesTransaction({ ordersPackage: id("9"), orderDesk: desk, queueRegistry: registry }, markets.map((market) => market.id)),

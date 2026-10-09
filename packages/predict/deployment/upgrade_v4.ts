@@ -1583,13 +1583,38 @@ export async function ensureMarketQueues(runtime: Runtime, ops: QueueOperations 
         orderDesk: journal.orderDesk!,
         queueRegistry: journal.queueRegistry!,
     };
+    // A queue transaction emitted for the multisig is recorded once it lands, so the queues it
+    // created keep its digest instead of reading as created by someone else.
+    const createdBy = new Map<string, string>();
+    for (const label of Object.keys(journal.emitted).filter((name) => name.startsWith("create_market_queues_"))) {
+        const receipt = await ops.submit(
+            runtime,
+            label,
+            () => {
+                throw new Error(`${label} was emitted and is never rebuilt`);
+            },
+            BigInt(TRANSACTION_GAS_BUDGET),
+        );
+        for (const queue of createdObjects(receipt, `${ids.ordersPackage}::queue::MarketQueue`))
+            createdBy.set(queue.id, receipt.digest!);
+    }
     const markets = await ops.liveMarkets(runtime);
     const missing: LiveMarket[] = [];
     for (const market of markets) {
         const queueId = marketQueueId(ids.queueRegistry, market.id);
-        if (!(await ops.objectExists(runtime, queueId))) missing.push(market);
-        else if (!journal.queues.some((queue) => queue.marketId === market.id))
-            journal.queues.push({ marketId: market.id, expiryMs: market.expiryMs, queueId, createTx: null });
+        if (!(await ops.objectExists(runtime, queueId))) {
+            missing.push(market);
+            continue;
+        }
+        const recorded = journal.queues.find((queue) => queue.marketId === market.id);
+        if (recorded) recorded.createTx ??= createdBy.get(queueId) ?? null;
+        else
+            journal.queues.push({
+                marketId: market.id,
+                expiryMs: market.expiryMs,
+                queueId,
+                createTx: createdBy.get(queueId) ?? null,
+            });
     }
     ops.persist(runtime);
     for (let start = 0; start < missing.length; start += QUEUE_BATCH) {
