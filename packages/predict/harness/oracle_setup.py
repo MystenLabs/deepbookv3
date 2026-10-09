@@ -116,6 +116,7 @@ def write_env_localnet(
         # order entry point.
         "ORDERS_PACKAGE_ID": p["predict_orders"],
         "ORDER_DESK_ID": o["order_desk"],
+        "QUEUE_REGISTRY_ID": o["queue_registry"],
         "REGISTRY_ID": o["registry"],
         "ADMIN_CAP_ID": o["admin_cap"],
         "PROTOCOL_CONFIG_ID": o["protocol_config"],

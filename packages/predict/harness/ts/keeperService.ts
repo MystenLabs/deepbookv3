@@ -38,6 +38,8 @@ import {
   objectExists,
   readActiveMarketIds,
   readCreatedMarkets,
+  readOpenRecordIds,
+  payOpenTx,
   readMarketExpiry,
   readSettlementProgress,
   readValuationInProgress,
@@ -150,6 +152,9 @@ function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
       return r.events;
     },
     settleStep: (m) => executeAndWait(settleStepTx({ marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID }), "settle-step"),
+    openRecords: (m, nextId) => readOpenRecordIds(m.id, nextId),
+    payOpen: (m, recordId) =>
+      executeAndWait(payOpenTx({ marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID, recordId }), "pay-open"),
     cleanup: async (m, nextId) => {
       for (let first = 0n; first < nextId; first += BigInt(CLEANUP_BATCH)) {
         const recordIds: bigint[] = [];

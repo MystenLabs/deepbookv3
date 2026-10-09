@@ -532,7 +532,9 @@ test("a refunded sell keeps the position tracked in the reopened sell record", (
 // `payoutBatch` records (PAY) and completes the walk at `nextId`, as `queue::settle_step`
 // does. The sweep and the flush snapshot both deactivate a settled market, as
 // rebalance_expiry_cash and plp::snapshot_expiry_pricer do, and the snapshot aborts on an
-// expired unsettled market. A PTB that fails changes nothing.
+// expired unsettled market. A PTB that fails changes nothing. Records from `openFrom` on are
+// Open; while a market's cash is short, the walk skips them instead of paying, and `pay_open`
+// pays a skipped one once the cash is back.
 interface ModelMarket {
   id: string;
   expiryMs: number;
@@ -543,6 +545,8 @@ interface ModelMarket {
   cursor: number;
   completed: boolean;
   cleanedUpTo: number;
+  openFrom: number;
+  skipped: Set<number>;
 }
 
 class ModelChain implements KeeperChain {
@@ -558,6 +562,8 @@ class ModelChain implements KeeperChain {
   failAfterSnapshot = false;
   // Advances the clock between the pre-flush settlement pass and the snapshot.
   clockAtSnapshot: number | null = null;
+  // Markets whose payouts are skipped for want of cash.
+  shortCash = new Set<string>();
   readonly markets = new Map<string, ModelMarket>();
   // The keeper's durable work list: markets with a queue whose settlement has not finished.
   readonly pending = new Set<string>();
@@ -565,7 +571,7 @@ class ModelChain implements KeeperChain {
   add(id: string, expiryMs: number, waiting: number, openRecords: number): void {
     this.markets.set(id, {
       id, expiryMs, active: true, settled: false, waiting, nextId: waiting + openRecords, cursor: 0,
-      completed: false, cleanedUpTo: 0,
+      completed: false, cleanedUpTo: 0, openFrom: waiting, skipped: new Set(),
     });
     this.pending.add(id);
   }
@@ -581,7 +587,9 @@ class ModelChain implements KeeperChain {
   // No settled market with unpaid records may drop off the work list: nothing rediscovers it.
   private check(): void {
     for (const m of this.markets.values()) {
-      if (m.settled && !m.completed && !m.active && !this.pending.has(m.id)) this.violations.push(m.id);
+      if (m.settled && (!m.completed || m.skipped.size > 0) && !m.active && !this.pending.has(m.id)) {
+        this.violations.push(m.id);
+      }
     }
   }
 
@@ -626,8 +634,24 @@ class ModelChain implements KeeperChain {
       return;
     }
     if (!m.settled) return;
-    m.cursor = Math.min(m.nextId, m.cursor + this.payoutBatch);
+    const end = Math.min(m.nextId, m.cursor + this.payoutBatch);
+    for (let record = m.cursor; record < end; record++) {
+      if (record >= m.openFrom && this.shortCash.has(m.id)) m.skipped.add(record);
+    }
+    m.cursor = end;
     if (m.cursor === m.nextId) m.completed = true;
+  }
+
+  async openRecords(market: LaneMarket) {
+    const m = this.markets.get(market.id)!;
+    // Before the walk passes them, Open records are simply unpaid; the lane asks only after it.
+    return [...m.skipped].map(BigInt);
+  }
+
+  async payOpen(market: LaneMarket, recordId: bigint) {
+    const m = this.markets.get(market.id)!;
+    this.calls.push(`pay_open ${m.id} ${recordId}`);
+    if (!this.shortCash.has(m.id)) m.skipped.delete(Number(recordId));
   }
 
   async cleanup(market: LaneMarket, nextId: bigint) {
@@ -717,6 +741,34 @@ test("a market swept by someone else before the keeper saw it is still paid and 
   await settleExpired(chain);
   assert.equal(chain.pending.has("c"), false);
   assert.deepEqual(chain.unpaid(), []);
+  assert.deepEqual(chain.violations, []);
+});
+
+test("a payout the walk skipped is paid with pay_open, and the market stays listed until it is", async () => {
+  const chain = new ModelChain();
+  // No waiting orders and two Open records; the market is short of cash at settlement.
+  chain.add("a", 1_000, 0, 2);
+  chain.add("b", 60_000, 0, 1);
+  chain.now = 2_000;
+  chain.shortCash.add("a");
+  const tick = await settleAndFlush(chain);
+  // The walk completes, skipping both records; pay_open is tried once each and still skips. The
+  // market is swept but stays listed, and nothing fails, so the flush still runs.
+  assert.deepEqual(tick.settled.map((r) => [r.market.id, settleFailed(r)]), [["a", false]]);
+  assert.deepEqual(chain.calls, [
+    "try_settle a", "settle_step a", "settle_step a", "pay_open a 0", "pay_open a 1", "cleanup a 2", "sweep a",
+  ]);
+  assert.deepEqual(chain.flushes, [["b"]]);
+  assert.equal(chain.pending.has("a"), true);
+  assert.deepEqual(chain.violations, []);
+
+  // Once the cash is back, the next pass pays both from the durable list and retires the market.
+  chain.shortCash.clear();
+  chain.calls = [];
+  await settleExpired(chain);
+  assert.deepEqual(chain.calls, ["pay_open a 0", "pay_open a 1", "cleanup a 2", "retire a"]);
+  assert.equal(chain.markets.get("a")!.skipped.size, 0);
+  assert.equal(chain.pending.has("a"), false);
   assert.deepEqual(chain.violations, []);
 });
 

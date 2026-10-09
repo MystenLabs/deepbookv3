@@ -25,6 +25,7 @@ import {
     ORACLE_REGISTRY_ID,
     ORDER_DESK_ID,
     ORDERS_PACKAGE_ID,
+    QUEUE_REGISTRY_ID,
     PACKAGE_ID,
     POOL_VAULT_ID,
     PROPBOOK_PACKAGE_ID,
@@ -94,6 +95,10 @@ const COIN_REGISTRY_ID = "0xc";
 // fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
+// Sui's shared `DenyList` at the reserved address 0x403. The queue calls that send USDC (resolve,
+// refund, settle_step, pay_open, claim_parked) read it, so a denied receive address is parked
+// instead of aborting the whole call.
+const DENY_LIST_ID = "0x403";
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -621,11 +626,11 @@ function ordersTarget(module: string, fn: string): `${string}::${string}::${stri
 // The witness Predict's order-flow allowlist names (`protocol_config::set_order_flow<W>`).
 export const ORDER_FLOW_WITNESS_TYPE = `${ORDERS_PACKAGE_ID}::order_flow::OrderFlow`;
 
-// `queue::queue_id(desk_id, expiry_market_id)`: each market's queue is a derived object of the
-// desk keyed by the market's ID, so its address is known before `queue::create_and_share`
-// shares it. The key is an `ID`, whose BCS is the 32-byte address.
+// `queue::queue_id(registry_id, expiry_market_id)`: each market's queue is a derived object of
+// the desk's `QueueRegistry` keyed by the market's ID, so its address is known before
+// `queue::create_and_share` shares it. The key is an `ID`, whose BCS is the 32-byte address.
 export function deriveMarketQueueId(expiryMarketId: string): string {
-    return deriveObjectID(ORDER_DESK_ID, "0x2::object::ID", bcs.Address.serialize(expiryMarketId).toBytes());
+    return deriveObjectID(QUEUE_REGISTRY_ID, "0x2::object::ID", bcs.Address.serialize(expiryMarketId).toBytes());
 }
 
 // The `account` package owns the deterministic account wrapper that replaced the
@@ -2213,6 +2218,44 @@ export function settleStepTx(params: { marketId: string; protocolConfigId: strin
             tx.object(params.marketId),
             tx.object(ORDER_DESK_ID),
             tx.object(params.protocolConfigId),
+            tx.object(DENY_LIST_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// Pay one Open record of a settled market its settled payout, `queue::pay_open`: the record the
+// payout walk skipped because the market was short of cash or its receive address was denied.
+// Permissionless, before or after the walk completes. A record that is not Open is left alone.
+export function payOpenTx(params: { marketId: string; protocolConfigId: string; recordId: bigint }): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: ordersTarget("queue", "pay_open"),
+        arguments: [
+            tx.object(deriveMarketQueueId(params.marketId)),
+            tx.object(params.marketId),
+            tx.object(ORDER_DESK_ID),
+            tx.object(params.protocolConfigId),
+            tx.pure.u64(params.recordId),
+            tx.object(DENY_LIST_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// Send a finished record's parked funds to its receive address, `queue::claim_parked`, once that
+// address is no longer denied. Permissionless; returns 0 and changes nothing when nothing is parked.
+export function claimParkedTx(params: { marketId: string; recordId: bigint }): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: ordersTarget("queue", "claim_parked"),
+        arguments: [
+            tx.object(deriveMarketQueueId(params.marketId)),
+            tx.object(ORDER_DESK_ID),
+            tx.pure.u64(params.recordId),
+            tx.object(DENY_LIST_ID),
             tx.object(CLOCK_ID),
         ],
     });
@@ -2301,6 +2344,33 @@ export async function readCreatedMarkets(): Promise<Array<{ id: string; expiryMs
         if (!page.endCursor) throw new Error("Sui gRPC returned an event page without its next cursor");
         after = page.endCursor;
     }
+}
+
+// The Open records below `nextId` of a market's queue, from `queue::order`, whose `OrderView`
+// starts with its status. After the settlement walk completes, an Open record is one the walk
+// skipped (the market was short of cash or the receive address was denied), which `pay_open`
+// pays.
+const ORDER_READ_BATCH = 200;
+const STATUS_OPEN = 2;
+export async function readOpenRecordIds(marketId: string, nextId: bigint): Promise<bigint[]> {
+    const open: bigint[] = [];
+    for (let first = 0n; first < nextId; first += BigInt(ORDER_READ_BATCH)) {
+        const ids: bigint[] = [];
+        for (let id = first; id < nextId && id < first + BigInt(ORDER_READ_BATCH); id++) ids.push(id);
+        const tx = new Transaction();
+        const queue = tx.object(deriveMarketQueueId(marketId));
+        for (const id of ids) tx.moveCall({ target: ordersTarget("queue", "order"), arguments: [queue, tx.pure.u64(id)] });
+        tx.setSenderIfNotSet(address);
+        const result = await simulateGrpc(tx);
+        if (!isSuccessStatus(result.effects?.status)) {
+            throw new Error(`queue record read failed: ${formatStatusError(result.effects?.status, "no status")}`);
+        }
+        ids.forEach((id, index) => {
+            const view = commandReturnBytes(result, index);
+            if (view[0] === 1 && view[1] === STATUS_OPEN) open.push(id);
+        });
+    }
+    return open;
 }
 
 // Create the sender's canonical derived account wrapper and share it. `new` derives
@@ -2479,14 +2549,15 @@ export async function readOrderFlowEnabled(): Promise<boolean> {
     return ((await devInspectFirstReturn(tx))[0] ?? 0) !== 0;
 }
 
-// Create and share a market's queue, `queue::create_and_share`. Permissionless and once per
-// market: the queue claims the ID derived from the desk and the market
-// (`deriveMarketQueueId`), so a second call aborts. Callers check `objectExists` first.
+// Create and share a market's queue, `queue::create_and_share(registry, desk, market)`.
+// Permissionless and once per market: the queue claims the ID derived from the desk's registry
+// and the market (`deriveMarketQueueId`), so a second call aborts. Callers check `objectExists`
+// first.
 export function createMarketQueueTx(expiryMarketId: string): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: ordersTarget("queue", "create_and_share"),
-        arguments: [tx.object(ORDER_DESK_ID), tx.object(expiryMarketId)],
+        arguments: [tx.object(QUEUE_REGISTRY_ID), tx.object(ORDER_DESK_ID), tx.object(expiryMarketId)],
     });
     return tx;
 }
@@ -2675,6 +2746,7 @@ export function commitAndResolveTx(params: {
             tx.object(ORDER_DESK_ID),
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.maxOrders),
+            tx.object(DENY_LIST_ID),
             tx.object(CLOCK_ID),
         ],
     });

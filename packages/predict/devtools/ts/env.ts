@@ -49,6 +49,8 @@ export const POOL_VAULT_ID = requireEnv("POOL_VAULT_ID");
 // market's `MarketQueue`, and the one `OrderDesk` its publish shares.
 export const ORDERS_PACKAGE_ID = requireEnv("ORDERS_PACKAGE_ID");
 export const ORDER_DESK_ID = requireEnv("ORDER_DESK_ID");
+// The desk's `QueueRegistry`, shared next to it at publish: each market's queue ID derives from it.
+export const QUEUE_REGISTRY_ID = requireEnv("QUEUE_REGISTRY_ID");
 // `predict_math` was renamed to `fixed_math` (package + named address).
 export const FIXED_MATH_PACKAGE_ID = requireEnv("FIXED_MATH_PACKAGE_ID");
 // propbook owns the extracted Pyth + Block Scholes feeds; its `OracleRegistry` is

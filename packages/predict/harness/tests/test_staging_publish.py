@@ -756,6 +756,7 @@ class LifecycleTests(unittest.TestCase):
                 "protocol_config",
                 "pool_vault",
                 "order_desk",
+                "queue_registry",
                 "account_registry",
                 "account_admin_cap",
                 "bs_signer_registry",
@@ -798,6 +799,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertIn("LOCAL_BS_SIGNER_PRIVATE_KEY=bs-secret", env_text)
             self.assertIn("ORDERS_PACKAGE_ID=0x-predict_orders", env_text)
             self.assertIn("ORDER_DESK_ID=0x-order_desk", env_text)
+            self.assertIn("QUEUE_REGISTRY_ID=0x-queue_registry", env_text)
             self.assertNotIn("local_pyth", deployment)
 
     def test_cleanup_instances_keeps_active_slot_and_removes_orphan(self) -> None:
