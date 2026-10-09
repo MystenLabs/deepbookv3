@@ -1688,14 +1688,19 @@ export function assertPrecheckState(state: ProtocolState, sessionsWatermark: str
         throw new Error(`Sessions' watermark is already ${sessionsWatermark}`);
 }
 
+// Trading stays paused until the reopen step, which an emitted reopen the multisig already
+// executed counts as, since this run records it later. Nothing may freeze Predict mid-rollout.
+export function assertRolloutState(state: ProtocolState, journal: Pick<UpgradeJournal, "transactions" | "emitted" | "status">): void {
+    if (state.frozen) throw new Error("Predict is frozen");
+    const reopened = journal.transactions.unpause_trading || journal.emitted.unpause_trading || journal.status === "complete";
+    if (!state.tradingPaused && !reopened) throw new Error("trading reopened before the rollout's reopen step");
+}
+
 // Every later run re-reads what the rollout depends on: trading stays paused until the reopen
 // step, nothing froze Predict, and the caps are still the sender's.
 async function recheck(runtime: Runtime): Promise<void> {
     const baseline = runtime.journal.baseline!;
-    const state = await readProtocolState(runtime, baseline.protocolConfig);
-    if (state.frozen) throw new Error("Predict is frozen");
-    if (!state.tradingPaused && !runtime.journal.transactions.unpause_trading && runtime.journal.status !== "complete")
-        throw new Error("trading reopened before the rollout's reopen step");
+    assertRolloutState(await readProtocolState(runtime, baseline.protocolConfig), runtime.journal);
     for (const [id, owner] of [
         [baseline.predict.adminCap, runtime.opts.sender],
         [baseline.sessions.adminCap, runtime.opts.sender],

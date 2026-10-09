@@ -21,6 +21,7 @@ import {
     assertOrderFlowReceipt,
     assertPackageProgram,
     assertPrecheckState,
+    assertRolloutState,
     assertSuiRelease,
     bumpWatermarksTransaction,
     createUpgradeJournal,
@@ -150,6 +151,16 @@ test("the precheck requires paused trading, no freeze, and both floors below the
     assert.throws(() => assertPrecheckState({ ...state, frozen: true }, "1"), /frozen/);
     assert.throws(() => assertPrecheckState({ ...state, versionWatermark: "4" }, "1"), /already 4/);
     assert.throws(() => assertPrecheckState(state, "3"), /Sessions' watermark is already 3/);
+
+    // Later runs: trading stays paused until the reopen step, recorded or emitted and executed.
+    const journal = { transactions: {} as Record<string, string>, emitted: {} as Record<string, never>, status: "running" as const };
+    assert.doesNotThrow(() => assertRolloutState(state, journal));
+    assert.throws(() => assertRolloutState({ ...state, tradingPaused: false }, journal), /reopened before/);
+    assert.throws(() => assertRolloutState({ ...state, frozen: true }, journal), /frozen/);
+    assert.doesNotThrow(() => assertRolloutState({ ...state, tradingPaused: false }, { ...journal, transactions: { unpause_trading: "d" } }));
+    assert.doesNotThrow(() =>
+        assertRolloutState({ ...state, tradingPaused: false }, { ...journal, emitted: { unpause_trading: { digest: "d", path: "p", emittedAt: "t" } as never } }),
+    );
 });
 
 test("the journal binds the network, chain, sender, flush operator, signing mode, and toolchain", () => {
