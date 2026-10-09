@@ -53,6 +53,7 @@ import {
     assertOperationalCapAllowlists,
     executeDeployment,
     enableOrderFlowTransaction,
+    assertOrderFlowReceipt,
     ensureMarketQueues,
     ensureMarkets,
     marketQueueCreationTransaction,
@@ -1013,21 +1014,96 @@ test("the companion publish records its OrderDesk and UpgradeCap", () => {
     assert.deepEqual(library.ownedCaps.predict_math, { "package::UpgradeCap": id("b") });
 });
 
-test("enabling order flow allowlists the companion's OrderFlow witness", () => {
+function orderFlowFixture() {
     const result = createDeploymentState();
     result.packages.predict = id("4");
     result.packages.predict_orders = id("9");
     result.sharedObjects.predict = { "protocol_config::ProtocolConfig": id("7") };
+    result.sharedObjects.predict_orders = { "desk::OrderDesk": id("8") };
     result.ownedCaps.predict = { "admin::AdminCap": id("6") };
-    const data = enableOrderFlowTransaction(result).getData();
-    const calls = data.commands.filter((command) => command.MoveCall);
-    assert.equal(calls.length, 1);
-    const moveCall = calls[0].MoveCall!;
-    assert.equal(moveCall.package, id("4"));
-    assert.equal(moveCall.module, "protocol_config");
-    assert.equal(moveCall.function, "set_order_flow");
-    assert.deepEqual(moveCall.typeArguments, [`${id("9")}::order_flow::OrderFlow`]);
-    assert.equal(moveCall.arguments.length, 4);
+    return result;
+}
+
+test("enabling order flow allowlists the witness and re-states the launch order fee", () => {
+    const result = orderFlowFixture();
+    const data = enableOrderFlowTransaction(result, "20000").getData();
+    const calls = data.commands
+        .filter((command) => command.MoveCall)
+        .map((command) => command.MoveCall!);
+    assert.deepEqual(
+        calls.map((call) => [call.package, call.module, call.function]),
+        [
+            [id("4"), "protocol_config", "set_order_flow"],
+            [id("9"), "desk", "set_order_fee"],
+        ],
+    );
+    assert.deepEqual(calls[0].typeArguments, [`${id("9")}::order_flow::OrderFlow`]);
+    assert.equal(calls[0].arguments.length, 4);
+    // set_order_fee(desk, admin_cap, config, order_fee, clock), on the same AdminCap and config
+    // inputs as the allowlist.
+    assert.equal(calls[1].arguments.length, 5);
+    assert.deepEqual(calls[1].arguments[1], calls[0].arguments[1]);
+    assert.deepEqual(calls[1].arguments[2], calls[0].arguments[0]);
+    const fee = calls[1].arguments[3] as { Input: number };
+    const feeInput = data.inputs[fee.Input] as { Pure: { bytes: string } };
+    // 20_000 as a little-endian u64.
+    assert.deepEqual(
+        [...Buffer.from(feeInput.Pure.bytes, "base64")],
+        [0x20, 0x4e, 0, 0, 0, 0, 0, 0],
+    );
+});
+
+test("the order-flow receipt must allowlist the witness and record the desk's launch policy", () => {
+    const result = orderFlowFixture();
+    // The launch policy as the event's JSON carries it: snake_case fields, u8 as a number.
+    const launchPolicy = {
+        delay_ms: "800",
+        stall_timeout_ms: "5000",
+        stuck_threshold_ms: "1500",
+        gap_wait_ms: "2000",
+        pyth_price_buffer_ms: "0",
+        pyth_channel: 3,
+        svi_max_age_ms: "60000",
+        mint_capacity: "100",
+        sell_capacity: "100",
+        per_account_cap: "5",
+        order_fee: "20000",
+        min_sell_quantity: "10000",
+        settle_refund_batch: "450",
+        settle_payout_batch: "900",
+    };
+    const receipt = (policy: object, deskId = id("8"), enabled = true): Receipt => ({
+        digest: "digest",
+        events: [
+            {
+                type: `${id("4")}::config_events::OrderFlowUpdated`,
+                parsedJson: { enabled, onchain_timestamp_ms: "1" },
+            },
+            {
+                type: `${id("9")}::queue_events::DelayedExecutionPolicyUpdated`,
+                parsedJson: { desk_id: deskId, policy, onchain_timestamp_ms: "1" },
+            },
+        ],
+    });
+    assertOrderFlowReceipt(result, receipt(launchPolicy));
+    assert.throws(
+        () => assertOrderFlowReceipt(result, receipt(launchPolicy, id("8"), false)),
+        /no enabling OrderFlowUpdated/,
+    );
+    assert.throws(
+        () => assertOrderFlowReceipt(result, receipt(launchPolicy, id("a"))),
+        /names desk/,
+    );
+    assert.throws(
+        () => assertOrderFlowReceipt(result, receipt({ ...launchPolicy, order_fee: "30000" })),
+        /unexpected policy/,
+    );
+    const withoutPolicy = receipt(launchPolicy);
+    withoutPolicy.events = withoutPolicy.events!.slice(0, 1);
+    assert.throws(
+        () => assertOrderFlowReceipt(result, withoutPolicy),
+        /0 DelayedExecutionPolicyUpdated/,
+    );
 });
 
 // `derived_object::derive_address(desk, market)` hashes `DerivedObjectKey<ID>(market)` under
@@ -2512,7 +2588,7 @@ test("expected type origins skip test-only declarations, as a production publish
         },
         {
             path: "sources/fixture.move",
-            source: ["#[test_only]", "module pkg::fixture;", "", "public struct Fixture {}"].join("\n"),
+            source: "#[test_only]\nmodule pkg::fixture;\n\npublic struct Fixture {}",
         },
     ]);
     assert.deepEqual(origins, [

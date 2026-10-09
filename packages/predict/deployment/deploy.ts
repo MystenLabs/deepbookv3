@@ -4086,33 +4086,97 @@ function addFlushOperatorCall(result: DeploymentResult, tx: Transaction, operato
     ]);
 }
 
-export function enableOrderFlowTransaction(result: DeploymentResult): Transaction {
+// One admin transaction: allowlist the companion's `OrderFlow` witness, then re-state the
+// desk's launch order fee with `desk::set_order_fee`. The desk's `init` emits no
+// `DelayedExecutionPolicyUpdated`, so the re-stated fee is what records the launch policy and
+// the desk ID in an event for the indexer. Neither call changes anything when repeated.
+export function enableOrderFlowTransaction(
+    result: DeploymentResult,
+    launchOrderFee: string,
+): Transaction {
     const tx = new Transaction();
+    const config = tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig"));
+    const adminCap = tx.object(capId(result, "predict", "admin::AdminCap"));
     call(
         tx,
         target(result, "predict", "protocol_config", "set_order_flow"),
-        [
-            tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
-            tx.object(capId(result, "predict", "admin::AdminCap")),
-            tx.pure.bool(true),
-            tx.object(CLOCK_ID),
-        ],
+        [config, adminCap, tx.pure.bool(true), tx.object(CLOCK_ID)],
         [orderFlowWitness(result)],
     );
+    call(tx, target(result, "predict_orders", "desk", "set_order_fee"), [
+        tx.object(sharedId(result, "predict_orders", "desk::OrderDesk")),
+        adminCap,
+        config,
+        tx.pure.u64(BigInt(launchOrderFee)),
+        tx.object(CLOCK_ID),
+    ]);
     return tx;
+}
+
+// The desk policy as a record of decimal strings, from the desk's `policy` field or the
+// `policy` of a `DelayedExecutionPolicyUpdated` event.
+function delayedExecutionPolicyRecord(value: unknown): DelayedExecutionPolicyRecord {
+    const policy = asRecord(value);
+    return Object.fromEntries(
+        Object.keys(EXPECTED_ORDER_DESK.policy).map((name) => [
+            name,
+            stringField(policy, snakeCase(name)),
+        ]),
+    ) as unknown as DelayedExecutionPolicyRecord;
+}
+
+// The `enable_order_flow` receipt must allowlist the witness and record the desk's launch
+// policy under this desk's ID.
+export function assertOrderFlowReceipt(result: DeploymentResult, receipt: Receipt): void {
+    const ordersPackage = packageId(result, "predict_orders");
+    const allowlisted = (receipt.events ?? []).find(
+        (event) =>
+            typeof event.type === "string" &&
+            event.type.endsWith("::config_events::OrderFlowUpdated") &&
+            asRecord(event.parsedJson).enabled === true,
+    );
+    if (!allowlisted) throw new Error("enable_order_flow emitted no enabling OrderFlowUpdated");
+    const updates = (receipt.events ?? []).filter(
+        (event) => event.type === `${ordersPackage}::queue_events::DelayedExecutionPolicyUpdated`,
+    );
+    if (updates.length !== 1) {
+        throw new Error(
+            `enable_order_flow emitted ${updates.length} DelayedExecutionPolicyUpdated events, expected 1`,
+        );
+    }
+    const event = asRecord(updates[0]!.parsedJson);
+    const deskId = sharedId(result, "predict_orders", "desk::OrderDesk");
+    if (normalizeOptionalId(event.desk_id) !== deskId) {
+        throw new Error(
+            `DelayedExecutionPolicyUpdated names desk ${String(event.desk_id)}, expected ${deskId}`,
+        );
+    }
+    const policy = delayedExecutionPolicyRecord(event.policy);
+    if (JSON.stringify(policy) !== JSON.stringify(EXPECTED_ORDER_DESK.policy)) {
+        throw new Error(
+            `DelayedExecutionPolicyUpdated records an unexpected policy: ${JSON.stringify(policy)}`,
+        );
+    }
 }
 
 // Queued trading runs through the order-flow companion, whose desk `init` created with the
 // launch policy. Predict refuses the companion's admissions, commits, and fills until its
-// `OrderFlow` witness is allowlisted. `finish_flush` admits only allowlisted flush
-// operators, so the Testnet deployer, which completes the bootstrap flush, is added first.
+// `OrderFlow` witness is allowlisted, and the same transaction records the launch policy in a
+// `DelayedExecutionPolicyUpdated` event. Both calls are idempotent, so the step is keyed on its
+// journal entry rather than the allowlist: a witness allowlisted by anything else still gets
+// the policy event. `finish_flush` admits only allowlisted flush operators, so the Testnet
+// deployer, which completes the bootstrap flush, is added first.
 async function ensureOrderFlow(runtime: Runtime): Promise<void> {
     const result = runtime.result;
+    const desk = await readOrderDesk(runtime);
+    const receipt = await executeTransaction(
+        runtime,
+        "enable_order_flow",
+        enableOrderFlowTransaction(result, desk.policy.orderFee),
+    );
+    assertOrderFlowReceipt(result, receipt);
     if (!(await orderFlowEnabled(runtime))) {
-        await executeTransaction(runtime, "enable_order_flow", enableOrderFlowTransaction(result));
-        if (!(await orderFlowEnabled(runtime))) {
-            throw new Error("the order-flow companion did not read back as allowlisted");
-        }
+        throw new Error("the order-flow companion did not read back as allowlisted");
     }
     if (NETWORK === "mainnet") return;
     if (!(await isFlushOperator(runtime, DEPLOYER))) {
@@ -4841,15 +4905,9 @@ async function readOrderDesk(runtime: Runtime): Promise<OrderDeskRecord> {
         runtime,
         sharedId(runtime.result, "predict_orders", "desk::OrderDesk"),
     );
-    const policy = asRecord(fields.policy);
     const desk: OrderDeskRecord = {
         versionWatermark: stringField(fields, "version_watermark"),
-        policy: Object.fromEntries(
-            Object.keys(EXPECTED_ORDER_DESK.policy).map((name) => [
-                name,
-                stringField(policy, snakeCase(name)),
-            ]),
-        ) as unknown as DelayedExecutionPolicyRecord,
+        policy: delayedExecutionPolicyRecord(fields.policy),
     };
     if (JSON.stringify(desk) !== JSON.stringify(EXPECTED_ORDER_DESK)) {
         throw new Error(`OrderDesk policy or floor is unexpected: ${JSON.stringify(desk)}`);
@@ -5025,6 +5083,9 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     if (!(await orderFlowEnabled(runtime))) {
         throw new Error("the order-flow companion is not allowlisted");
     }
+    const orderFlowDigest = result.transactions.enable_order_flow;
+    if (!orderFlowDigest) throw new Error("enable_order_flow has no recorded transaction");
+    assertOrderFlowReceipt(result, await settledReceipt(runtime.client, orderFlowDigest));
     if (NETWORK === "testnet" && !(await isFlushOperator(runtime, DEPLOYER))) {
         throw new Error("Testnet deployer is not a flush operator");
     }
