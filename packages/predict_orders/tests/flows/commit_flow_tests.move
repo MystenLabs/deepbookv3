@@ -214,6 +214,36 @@ fun commit_exact_tau_update_beats_an_earlier_listed_backup() {
     q.finish();
 }
 
+/// An exact-τ update that carries no price still claims its cohort, so a usable
+/// backup listed beside it after the gap wait does not commit it, in either
+/// order: the cohort keeps waiting for a later commit or its deadline refund,
+/// as v4's rule has it. The backup alone commits it.
+#[test]
+fun an_empty_exact_tau_update_keeps_the_cohort_waiting_beside_a_backup() {
+    let mut q = fixture::new();
+    q.set_channel(fixture::channel_200ms(), TICK_200MS);
+    let record_id = place_mint(&mut q);
+    q.set_clock(TAU + GAP_WAIT_MS);
+
+    q.commit(vector[
+        fixture::empty_update(fixture::channel_200ms(), TAU),
+        fixture::price_update(TAU + TICK_200MS, live_price()),
+    ]);
+    assert_eq!(q.record(record_id).status(), order_queue::status_pending());
+    q.commit(vector[
+        fixture::price_update(TAU + TICK_200MS, live_price()),
+        fixture::empty_update(fixture::channel_200ms(), TAU),
+    ]);
+    assert_eq!(q.record(record_id).status(), order_queue::status_pending());
+    assert_eq!(last_committed_tau_ms(&q), 0);
+    assert!(events::commits().is_empty());
+
+    q.commit(vector[fixture::price_update(TAU + TICK_200MS, live_price())]);
+    assert_eq!(q.record(record_id).status(), order_queue::status_committed());
+    assert_eq!(q.record(record_id).price().tick_ms(), TAU + TICK_200MS);
+    q.finish();
+}
+
 #[test]
 fun commit_backup_follows_a_50ms_cohort_after_the_policy_moves_to_200ms() {
     let mut q = fixture::new();

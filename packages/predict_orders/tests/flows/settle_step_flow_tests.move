@@ -3,12 +3,13 @@
 
 /// `settle_step` over an expired market's queue, one bounded phase per call:
 /// DRAIN refunds the orders still waiting through Predict's `release`, with no
-/// pruning and no account rows, whether or not Predict has settled; PAY, once
-/// Predict has settled, pays the Open records from the payout cursor through
-/// `try_pay_settled`, counting finished records and deleted IDs as visits; DONE
-/// emits `MarketPayoutsCompleted` once. Both phases run while Predict is frozen
-/// and with the witness removed, an unpayable record is skipped, and a drain
-/// after the first settled sweep returns reserved subsidies that a later sweep
+/// pruning and no account rows, whether or not Predict has settled, and hands a
+/// waiting sell's position back to its record; PAY, once Predict has settled,
+/// pays the Open records from the payout cursor through `try_pay_settled`,
+/// counting finished records and deleted IDs as visits; DONE emits
+/// `MarketPayoutsCompleted` once. Both phases run while Predict is frozen and
+/// with the witness removed, an unpayable record is skipped, and a drain after
+/// the first settled sweep returns reserved subsidies that a later sweep
 /// collects.
 ///
 /// Orders are 100-contract mints placed at 120_000 on the short-expiry market
@@ -30,6 +31,11 @@ const QUANTITY: u64 = 100_000_000;
 const MAX_COST: u64 = 90_000_000;
 const TAU: u64 = 121_000;
 const SELL_TAU: u64 = 122_000;
+/// A sell placed at 122_000 lands on τ 123_000.
+const SECOND_SELL_TAU: u64 = 123_000;
+const ORDER_FEE: u64 = 20_000;
+/// Half of one order's quantity.
+const HALF: u64 = 50_000_000;
 /// A placement at 120_999 lands on τ floor(121_999 / 200) * 200 = 121_800, a
 /// second cohort, while the first (τ 121_000) still waits uncommitted.
 const SECOND_PLACED_AT: u64 = 120_999;
@@ -161,6 +167,62 @@ fun a_drain_after_the_first_sweep_returns_the_reserved_subsidy() {
     q.rebalance();
     assert_eq!(q.market().fee_incentive_balance(), 0);
     q.assert_invariants();
+    q.finish();
+}
+
+/// A sell still waiting at expiry is drained like a mint, with reason 5 and its
+/// order fee back, and its record returns to Open holding the position it was
+/// selling: here the remainder of an earlier partial sell. The payout walk then
+/// pays that record the remainder's quantity, through the receipt the sell's
+/// admission last wrote, and closes it.
+#[test]
+fun a_waiting_sell_of_a_partial_remainder_is_drained_then_paid() {
+    let mut q = fixture::new_at(test_constants::short_expiry_ms());
+    let source = enqueue_up(&mut q);
+    assert_eq!(commit_and_resolve(&mut q), 1);
+    // Half the position sells at SELL_TAU; its record keeps the other half.
+    q.refresh_oracle_at(TAU);
+    let remainder = q.enqueue_sell(source, HALF, 0, 0);
+    q.commit_at(SELL_TAU, fixture::live_price());
+    assert_eq!(q.resolve(RESOLVE_ALL), 1);
+    assert_eq!(q.record(remainder).status(), order_queue::status_open());
+    let remainder_order_id = q.record(remainder).position().order_id();
+    // The remainder's sell is placed and never committed.
+    q.refresh_oracle_at(SELL_TAU);
+    let waiting = q.enqueue_sell(remainder, HALF, 0, 0);
+    assert_eq!(q.record(waiting).timing().tau_ms(), SECOND_SELL_TAU);
+    assert_eq!(q.record(remainder).status(), order_queue::status_closed());
+
+    q.set_clock(EXPIRY);
+    assert_eq!(q.settle_step(), queue::phase_pay());
+    let drained = q.record(waiting);
+    assert_eq!(drained.status(), order_queue::status_open());
+    assert_eq!(drained.result().reason(), order_queue::reason_deadline());
+    assert_eq!(drained.receipt_stage(), constants::receipt_stage_open!());
+    assert_eq!(drained.position().order_id(), remainder_order_id);
+    assert_eq!(drained.funds(), 0);
+    let refund = events::refunds()[0];
+    assert_eq!(refund.refund_record_id(), waiting);
+    assert_eq!(refund.refund_kind(), order_queue::kind_redeem_open());
+    assert_eq!(refund.refund_order_fee_returned(), ORDER_FEE);
+    assert_eq!(refund.refund_escrow_returned(), 0);
+    assert!(refund.refund_position_returned());
+
+    q.settle_market(spot_above_strike());
+    assert_eq!(q.market().payout_liability(), HALF);
+    let cash_before = q.market().cash_balance();
+    assert_eq!(q.settle_step(), queue::phase_done());
+    let settled = events::settled();
+    assert_eq!(settled.length(), 1);
+    assert_eq!(settled[0].payout_record_id(), waiting);
+    assert_eq!(settled[0].payout_order_id(), remainder_order_id);
+    assert_eq!(settled[0].payout(), HALF);
+    assert_eq!(q.market().cash_balance(), cash_before - HALF);
+    assert_eq!(q.market().payout_liability(), 0);
+    assert_eq!(q.record(waiting).status(), order_queue::status_closed());
+    assert!(events::parked().is_empty());
+    q.assert_invariants();
+    assert_eq!(q.parked_sum(), 0);
     q.finish();
 }
 

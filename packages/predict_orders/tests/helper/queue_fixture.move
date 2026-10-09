@@ -478,6 +478,11 @@ public fun set_frozen(q: &mut QueueTest, frozen: bool) {
     q.fx.set_frozen_bundle(&mut q.market, frozen);
 }
 
+/// Set Predict's version floor, which a running package below it fails.
+public fun set_predict_floor(q: &mut QueueTest, version_watermark: u64) {
+    helpers::config_mut(&mut q.market).set_version_watermark_for_testing(version_watermark);
+}
+
 /// Add `amount` of fresh USDC to the market's cash.
 public fun seed_cash(q: &mut QueueTest, amount: u64) {
     q.fx.seed_market_cash(helpers::market_mut(&mut q.market), amount);
