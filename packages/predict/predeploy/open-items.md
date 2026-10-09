@@ -6,21 +6,31 @@ Updated 2026-10-08. This is the live work register governed by the [predeploy li
 
 ### S-10: A denied LP recipient aborts the flush
 
-**Severity:** Deploy gate. Pre-existing on Mainnet.
+**Severity:** Known gap, deferred to a future upgrade (decided 2026-10-09). Pre-existing on Mainnet.
 
 Mainnet USDC is a regulated coin, and Sui aborts any transaction that credits USDC to an address on its deny list, or to anyone while USDC is globally paused. The queued-order flow never makes such a send (RP-46), but the LP flush still does: `plp::finish_flush` drains the LP queues through `lp_book::drain`, which sends a withdrawal's payout (`lp_book.move` near line 563) and a refunded supply's escrow (near line 600) straight to the request's recipient. A request whose recipient is denied therefore makes the whole flush abort, which stops every LP fill until the request leaves the queue or the denial lifts. A global USDC pause does so for every queued request.
 
 **Workaround:** the operator starts the flush with the blocked queue's budget at `Some(0)`, which holds that queue while the other drains, and the request's owner can still cancel it.
 
-**Action:** decide a fix, for example parking the funds for a later claim as the queued-order flow does, and record the response in the register.
+**Action:** deferred to a future upgrade (decided 2026-10-09). The fix is expected to park the funds for a later claim, as the queued-order flow does, and its response then goes in the register. Until then the workaround above is the operator's runbook step.
 
-### S-9: The v4 upgrade sequence is not yet rehearsed end to end
+### S-9: The v4 upgrade sequence still needs its live Testnet run
 
-**Severity:** Deploy gate.
+**Severity:** Deploy gate. Passed on localnet.
 
-The package-version 4 rollout spans three packages and three version floors, and its order is owned by [architecture](../docs/design/architecture.md#version-gating). The localnet rehearsal so far ran the version 3 closure, then published `deepbook_predict_math`, upgraded Predict, published `deepbook_predict_orders`, and upgraded Sessions. That publish-and-upgrade rehearsal passed on the code at `af9f7c37` and reruns on `d8fa6aa8`, the head that adds the deny-list handling and the `QueueRegistry`. It does not yet run the admin transaction (`set_order_flow`, the launch-fee re-statement, and the market keeper's flush-operator grant), queue creation on a market created under version 3, the watermark bumps, or any placement, commit, fill, refund, or settled payout on the upgraded closure. A dependent that misses its relink, or a step run out of order, stalls a queue after the bump (RP-45).
+The package-version 4 rollout spans three packages and three version floors, and its order is owned by [architecture](../docs/design/architecture.md#version-gating). A dependent that misses its relink, or a step run out of order, stalls a queue after the bump (RP-45).
 
-**Action:** Before Mainnet, rehearse the whole sequence on localnet with published packages, from the version 3 closure through reopening trading, including a placement, a commit, a fill, a refund, and a settled payout through the upgraded companion and Sessions. Measure the full-batch gas on Testnet as the rollout's step 10 requires (DBU-892).
+The full sequence passed a localnet rehearsal with the deployment tooling's version 4 upgrade workflow, first on the code at `af9f7c37` and again on the final interface at `d8fa6aa8`. It started from the version 3 release (`predict-v3.0.0`) with live version 3 markets and a version 3 position from an immediate mint, then:
+
+- published `deepbook_predict_math`, upgraded Predict, and published `deepbook_predict_orders`, which created the desk and the `QueueRegistry`.
+- ran the admin transaction (`set_order_flow`, `set_order_fee`, and `add_flush_operator`), created queues for the markets created under version 3, upgraded Sessions, bumped the Predict and Sessions watermarks to 4 and 3, and reopened trading.
+- traded on the upgraded closure: a mint committed, resolved, and filled, an early sell, a deadline refund (reason 5), an order placed and filled through a session key, an LP flush finished by the new flush operator, `try_settle`, `settle_step` to DONE with `OpenRecordSettled`, `pay_open`, `claim_parked` returning 0, `cleanup`, and the settled sweep.
+- redeemed the version 3 position with `redeem_settled`.
+- confirmed that the old versions are retired: an immediate mint through version 3 and a Sessions version 1 call both abort `EPackageVersionDisabled`.
+
+The Mainnet multisig path, which emits unsigned transactions (`--emit-unsigned`), also ran end to end. The rehearsal cannot cover a real USDC denial, because localnet USDC is not regulated (Move tests cover it with a deny-list-regulated USDC, RP-46), or full-size batches (DBU-892).
+
+**Action:** run the sequence live on Testnet, measure the full-batch gas there as the rollout's step 10 requires (DBU-892), and only then run Mainnet.
 
 ### S-8: `deepbook_predict_orders` and `deepbook_predict_math` have no audit coverage
 

@@ -266,7 +266,7 @@ Floors compare logical versions (`current_version!()`), not publication numbers.
    Nothing can be placed before this transaction, because every Predict primitive the queue calls checks the allowlist.
 6. Create a queue for every live market with `queue::create_and_share(registry, desk, market)`. The market keeper also backfills a missing queue for any unexpired market when it starts, and creates one for each new market. The fill keeper never creates queues.
 7. Upgrade Sessions (`current_version!()` 3), linked to the new Predict and the companion, and register Sessions version 3 in Blockaid.
-8. Move the services to the new IDs: the fill keeper, the market keeper, the indexer and servers, the SDK configuration, and the operations configuration, which gains the companion's package ID and the desk ID. The alert rules (balances, heartbeats, keeper liveness, gas aborts, payout skips, and queue creation failures) go live before the fill keeper starts writing.
+8. Move the services to the new IDs: the fill keeper, the market keeper, the indexer and servers, the SDK configuration, and the operations configuration, which gains the companion's package ID and the desk and registry IDs. The alert rules (balances, heartbeats, keeper liveness, gas aborts, payout skips, and queue creation failures) go live before the fill keeper starts writing.
 9. Bump the watermarks: Predict's to 4 (the cutover) and Sessions' to 3. The desk floor stays at 1.
 10. Measure full-batch gas (DBU-892): `settle_step` at its 450 drain and 900 payout batches, `resolve` and `refund` at their 450 cap, and a full 100-mint cohort resolved at the keeper's `resolve_max_orders`. Queued admission checks the trading pause, so Testnet measures right after step 11 reopens trading, and Mainnet waits for the Testnet numbers.
 11. Reopen trading.
@@ -282,7 +282,7 @@ Types the v4 upgrade introduces, such as `OrderReceipt`, `OrderFlowUpdated`, and
 | Library fix | Upgrade the library, then follow the Predict row, including both relinks |
 | Pyth Lazer format change | Upgrade the library with a new `LazerPrice` constructor, then follow the companion row. Predict is untouched |
 
-Before every bump, rehearse the exact sequence on localnet with published packages, including a placement, a commit, a fill, a refund, and a settled payout through the relinked companion and Sessions. The first rollout's rehearsal status is tracked in [S-9](../../predeploy/open-items.md#s-9-the-v4-upgrade-sequence-is-not-yet-rehearsed-end-to-end).
+Before every bump, rehearse the exact sequence on localnet with published packages, including a placement, a commit, a fill, a refund, and a settled payout through the relinked companion and Sessions. The first rollout passed that rehearsal on localnet, and its live Testnet run is tracked in [S-9](../../predeploy/open-items.md#s-9-the-v4-upgrade-sequence-still-needs-its-live-testnet-run).
 
 ## Where this leads
 
