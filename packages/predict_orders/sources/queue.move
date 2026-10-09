@@ -63,6 +63,12 @@ const EMarketNotExpired: u64 = 12;
 /// `OrderMinted` or `LiveOrderRedeemed` and `QueuedOrderFilled`, and a refund
 /// emits `QueuedOrderRefunded` only. So one call emits at most 900 of the 1,024
 /// events Sui allows a transaction, even with both queues full (600 orders).
+/// The cap bounds events only, not the objects a call loads: each visited
+/// record loads its own dynamic child, each distinct account one `per_account`
+/// row, and each fill or pruning refund the payout-tree nodes it walks. A full
+/// call over distinct accounts and ranges can pass Sui's per-transaction object
+/// limit, so callers size `max_orders` from measured costs (the keeper's
+/// batches, DBU-892) rather than from this cap.
 const MAX_ORDERS_PER_CALL: u64 = 450;
 
 // `settle_step` phases. Never renumbered after publish.
@@ -566,12 +572,13 @@ public fun commit(
 /// Walks the cohorts in τ order and loads only committed or overdue ones; a
 /// cohort still waiting for its price is skipped without loading a record.
 /// Every record visited counts against `max_orders`, finished or missing ones
-/// included, so one call stays inside Sui's per-transaction object limit. An
-/// order at or past its deadline is refunded (reason 5), never filled. A
-/// committed order goes to Predict's `try_fill`, which fills it or returns the
-/// refund reason (1, 2, 4, or 8); the queue returns the escrow Predict hands
-/// back to the trader. Returns 0 on a settled market, whose waiting orders the
-/// settlement drain refunds.
+/// included. The 450 cap bounds events, not loaded objects
+/// (`MAX_ORDERS_PER_CALL`), so the caller sizes `max_orders` to stay inside
+/// Sui's per-transaction object limit. An order at or past its deadline is
+/// refunded (reason 5), never filled. A committed order goes to Predict's
+/// `try_fill`, which fills it or returns the refund reason (1, 2, 4, or 8); the
+/// queue returns the escrow Predict hands back to the trader. Returns 0 on a
+/// settled market, whose waiting orders the settlement drain refunds.
 public fun resolve(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
