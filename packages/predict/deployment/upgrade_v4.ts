@@ -748,7 +748,7 @@ export function unsignedBytesFromCliOutput(output: string): Uint8Array {
     return fromBase64(line);
 }
 
-interface PackagePlan {
+export interface PackagePlan {
     kind: "publish" | "upgrade";
     // The package being upgraded and the UpgradeCap that authorizes it.
     currentPackage?: string;
@@ -794,24 +794,38 @@ export function assertPackageProgram(tx: Transaction, plan: PackagePlan, sender:
         throw new Error(`upgrade replaces ${upgrade!.Upgrade!.package}, expected ${plan.currentPackage}`);
 }
 
+// The CLI command and flags of one package transaction. Testnet and Mainnet build for the client
+// environment they publish to (the CLI refuses `--build-env` there). A localnet compiles the Testnet
+// graph with its addresses in the ephemeral publication file. Upgrades skip the CLI's local
+// compatibility check: release 1.80.1 cannot read a chain past protocol version 137, and the dry
+// run every transaction gets on the target chain runs the authoritative check anyway.
+export function packageCommand(
+    network: UpgradeNetwork,
+    plan: PackagePlan,
+    paths: { pubfile: string | null; directory: string; sender: string },
+): string[] {
+    const local = network === "localnet";
+    return [
+        local ? `test-${plan.kind}` : plan.kind,
+        ...(local ? ["--pubfile-path", paths.pubfile!, "--build-env", NETWORK_PROFILES.localnet.buildEnv] : []),
+        "--warnings-are-errors",
+        "--force",
+        ...(plan.kind === "upgrade" ? ["--upgrade-capability", plan.upgradeCap!, "--skip-verify-compatibility"] : []),
+        "--sender",
+        paths.sender,
+        "--gas-budget",
+        CLI_SERIALIZATION_GAS_BUDGET,
+        "--serialize-unsigned-transaction",
+        paths.directory,
+    ];
+}
+
 function packageTransaction(runtime: Runtime, pkg: UpgradePackage, plan: PackagePlan): Transaction {
-    const local = runtime.opts.network === "localnet";
     const output = withPackageSource(runtime, pkg, (directory) =>
-        suiClient(runtime, [
-            local ? `test-${plan.kind}` : plan.kind,
-            ...(local ? ["--pubfile-path", runtime.opts.pubfile!] : []),
-            "--build-env",
-            runtime.journal.buildEnvironment,
-            "--warnings-are-errors",
-            "--force",
-            ...(plan.kind === "upgrade" ? ["--upgrade-capability", plan.upgradeCap!] : []),
-            "--sender",
-            runtime.opts.sender,
-            "--gas-budget",
-            CLI_SERIALIZATION_GAS_BUDGET,
-            "--serialize-unsigned-transaction",
-            directory,
-        ]),
+        suiClient(
+            runtime,
+            packageCommand(runtime.opts.network, plan, { pubfile: runtime.opts.pubfile, directory, sender: runtime.opts.sender }),
+        ),
     );
     const tx = Transaction.fromKind(transactionKindFromData(unsignedBytesFromCliOutput(output)));
     assertPackageProgram(tx, plan, runtime.opts.sender);

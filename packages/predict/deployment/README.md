@@ -102,7 +102,7 @@ corepack npm exec -- tsx deployment/upgrade_v4.ts --network testnet --sender <ad
 corepack npm exec -- tsx deployment/upgrade_v4.ts --network testnet --sender <address> --flush-operator <keeper-signer> --execute --reopen
 ```
 
-`--execute` signs with the active keystore address, which must be `--sender`. Each transaction is built, dry-run with checks, and journaled with its digest before it is signed. Package transactions come from `sui client publish|upgrade --build-env <network> --serialize-unsigned-transaction` on a staged copy of the committed sources, and the run checks that each one publishes to the sender or upgrades the recorded package through the recorded cap.
+`--execute` signs with the active keystore address, which must be `--sender`. Each transaction is built, dry-run with checks, and journaled with its digest before it is signed. Package transactions come from `sui client publish|upgrade --serialize-unsigned-transaction` on a staged copy of the committed sources, built for the client environment the run selects, and the run checks that each one publishes to the sender or upgrades the recorded package through the recorded cap. Upgrades pass `--skip-verify-compatibility`, because release 1.80.1 cannot read Testnet's and Mainnet's protocol version 138, and the dry run on the target chain performs the authoritative compatibility check before anything is signed or emitted.
 
 ### Mainnet
 

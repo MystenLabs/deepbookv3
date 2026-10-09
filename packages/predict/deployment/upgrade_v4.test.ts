@@ -30,6 +30,7 @@ import {
     executeUpgrade,
     marketQueuesTransaction,
     mergePubfileRecord,
+    packageCommand,
     mergePublishedSection,
     normalizedProgram,
     parseUpgradeArgs,
@@ -305,6 +306,24 @@ test("the CLI's unsigned bytes reduce to their programmable transaction, whateve
     const output = `INCLUDING DEPENDENCY MoveStdlib\nINCLUDING DEPENDENCY Sui\nBUILDING deepbook_predict_math\n${toBase64(data)}\n`;
     assert.deepEqual([...unsignedBytesFromCliOutput(output)], [...data]);
     assert.throws(() => unsignedBytesFromCliOutput("BUILDING deepbook_predict_math\n"), /no serialized transaction/);
+});
+
+test("package transactions come from the network's own CLI command, serialized and unsigned", () => {
+    const paths = { pubfile: "/i/Pub.sim.toml", directory: "/stage/packages/predict", sender: id("a") };
+    const upgrade = { kind: "upgrade" as const, currentPackage: id("c"), upgradeCap: id("d") };
+    const tail = ["--sender", id("a"), "--gas-budget", "50000000", "--serialize-unsigned-transaction", "/stage/packages/predict"];
+    // Testnet and Mainnet build for the client environment: the CLI refuses --build-env there.
+    // Upgrades leave compatibility to the dry run on the target chain, since release 1.80.1 cannot
+    // read protocol version 138.
+    assert.deepEqual(packageCommand("testnet", upgrade, paths), [
+        "upgrade", "--warnings-are-errors", "--force", "--upgrade-capability", id("d"), "--skip-verify-compatibility", ...tail,
+    ]);
+    assert.deepEqual(packageCommand("mainnet", { kind: "publish" }, paths), ["publish", "--warnings-are-errors", "--force", ...tail]);
+    // A localnet compiles the Testnet graph against its ephemeral publication file.
+    assert.deepEqual(packageCommand("localnet", { kind: "publish" }, paths), [
+        "test-publish", "--pubfile-path", "/i/Pub.sim.toml", "--build-env", "testnet", "--warnings-are-errors", "--force", ...tail,
+    ]);
+    assert.equal(packageCommand("localnet", upgrade, paths)[0], "test-upgrade");
 });
 
 test("a package transaction is exactly a publish to the sender or an upgrade through the recorded cap", () => {
