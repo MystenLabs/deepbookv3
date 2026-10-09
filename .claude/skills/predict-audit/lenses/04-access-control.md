@@ -51,7 +51,7 @@ loss/compromise/leak is recoverable.
 - Enumerate EVERY state-mutating public/external entry across all four packages; build the version-gate on/off
   table. Find asymmetries — custody moves, fund-claim, object-creation NOT gated while sibling trade paths ARE;
   for each, deliberate escape hatch or oversight? The watermark model (`ProtocolConfig.version_watermark` is a
-  monotonic floor; `config.assert_version()` gates; AdminCap `bump_version_watermark` advances): which mutating
+  monotonic floor; `config.chk_version()` gates; AdminCap `bump_version_watermark` advances): which mutating
   entrypoints deliberately bypass the gate (emergency pause/revocation, terminal user exits) and is every bypass
   harm-reducing-only? Can a watermark bump strand value a user already owns (settled redeems, withdrawals) that
   must stay reachable under a freeze?

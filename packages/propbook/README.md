@@ -238,5 +238,5 @@ Propbook does not own:
 Consumers should read Propbook as a source-data substrate and apply their own
 policy at the point of use. For Predict, the reference pricing-safe envelope
 lives in `packages/predict/sources/pricing/pricing.move` around
-`assert_inputs_pricing_safe`: it validates spot, forward, basis, SVI bounds, and
+`chk_inputs`: it validates spot, forward, basis, SVI bounds, and
 freshness after reading Propbook data.

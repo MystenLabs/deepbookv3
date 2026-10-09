@@ -1,6 +1,6 @@
 # Sessions
 
-`deepbook_sessions` lets the owner of a canonical DeepBook Account authorize an ephemeral address to submit a limited set of Predict and DeepBook spot transactions for that Account until a fixed expiration time.
+`deepbook_sessions` lets the owner of a canonical DeepBook Account authorize an ephemeral address to submit a limited set of Predict and DeepBook spot transactions for that Account until a fixed expiration time. Predict orders go through Predict's order-flow companion, `deepbook_predict_orders`.
 
 The package is an Account app. It stores session grants in the Account's app-local data and generates Account app authorization only inside its trading wrapper functions. Session callers never receive a reusable `account::Auth`, and the package exposes no direct Account withdrawal or arbitrary mutation entrypoint.
 
@@ -62,7 +62,16 @@ Advancing the watermark retires authorization and trading entrypoints in older p
 
 ## Predict wrappers
 
-An active session may call these wrappers:
+An active session may call these wrappers, which place delayed-execution orders in a market's queue in the order-flow companion, `deepbook_predict_orders`:
+
+- `enqueue_exact_quantity`
+- `enqueue_exact_amount`
+- `enqueue_exact_cost`
+- `enqueue_redeem_open`
+
+Each calls the companion's `queue` function of the same name and returns the new record ID. Besides the market, the Account, and `ProtocolConfig`, each takes the market's `MarketQueue`, the companion's `OrderDesk`, Propbook's oracle registry, and the canonical Pyth and Block Scholes objects that Predict validates when it snapshots the order's pricing inputs. `enqueue_redeem_open` sells an Open record, a filled order that stays in its market's queue, by its record ID. Once placed, an order is committed, filled or refunded, and paid at settlement by calls that need no session or Account authority. See [delayed execution](../predict/docs/concepts/delayed-execution.md).
+
+An active session may also call these wrappers:
 
 - `mint_exact_quantity`
 - `mint_exact_amount`
@@ -70,7 +79,11 @@ An active session may call these wrappers:
 - `redeem_live`
 - `redeem_settled`
 
-Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict function. All market parameters remain caller-selected and are validated by Predict.
+`redeem_settled` pays a settled position held in the Account. The immediate `mint_exact_*` and `redeem_live` wrappers always abort through Predict, which retires those functions from package version 4. They keep their signatures so the upgrade stays compatible.
+
+Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict or companion function. All market parameters remain caller-selected and are validated by the companion and Predict.
+
+The queued wrappers were added by the Sessions upgrade that sets `current_version!()` to 3. That upgrade links Predict package version 4 and the companion, so it publishes after both. Sessions runs the Predict and companion versions it linked when it was published, so before Predict's version watermark retires the version it links, Sessions must be relinked to the new Predict. An unrelinked Sessions package's queued wrappers abort once Predict's watermark advances, while placing orders directly through the companion keeps working.
 
 ## DeepBook spot wrappers
 
@@ -84,7 +97,7 @@ An active session may call these Account-backed DeepBook spot wrappers:
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
 
-The session can therefore submit adverse Predict and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed.
+The session can therefore submit adverse Predict orders and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed. A queued Predict order placed through a session still fills or refunds after the session ends.
 
 ## Events
 
@@ -112,7 +125,7 @@ Expiration emits no event, and a no-op revocation emits no event. Predict and De
 
 ## Integration requirements
 
-Before Sessions can be used, the package must be published against the intended Account, Predict, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
+Before Sessions can be used, the package must be published against the intended Account, Predict, `deepbook_predict_orders`, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
 
 Custody of `SessionsAdminCap` and any package upgrade capability is part of the trust boundary: the admin cap can retire older package versions, while an upgrade can change the behavior of an authorized Account app.
 
@@ -122,5 +135,5 @@ From the repository root:
 
 ```sh
 sui move build --path packages/sessions --warnings-are-errors
-sui move test --path packages/sessions --gas-limit 100000000000
+sui move test --path packages/sessions --gas-limit 100000000000 --package-size 64
 ```

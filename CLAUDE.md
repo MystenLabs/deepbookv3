@@ -41,7 +41,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | Files or surface | Required guidance |
 | --- | --- |
 | `packages/**/*.move`, `packages/**/Move.toml`, `packages/**/Published.toml` | [Sui Move instructions](.claude/rules/move.md) |
-| `packages/{predict,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
+| `packages/{predict,predict_orders,predict_math,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
 | `packages/**/tests/**` | [Unit-test rules](.claude/rules/unit-tests.md) |
 | `packages/predict/{harness,devtools,simulations}/**` | [Predict harness rules](.claude/rules/predict-harness.md) |
 | `packages/predict/deployment/**` | [Predict deployment rules](.claude/rules/predict-deployment.md) |
@@ -72,9 +72,10 @@ Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as 
 ### Move
 
 - Build a package: `sui move build --path packages/<package>`.
-- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000`; the high gas limit is required because Sui 1.66+ lowered the default test gas budget.
+- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000 --package-size 64`. The high gas limit is required because Sui 1.66+ lowered the default test gas budget. `--package-size 64` raises the test VM's package arena from its 10 MB default, which the Predict test package exceeds, and needs Sui 1.79.1 or later.
 - Build Predict with warnings denied: `sui move build --path packages/predict --warnings-are-errors`.
-- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000`.
+- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000 --package-size 64`.
+- After changing Predict's order-flow primitives, the pricing math, or anything the companion calls, also run `packages/predict_math`, `packages/predict_orders`, and `packages/sessions` with the same flags. CI additionally builds and tests the Mainnet dependency graph, `predict_math` through `sessions`, with `--build-env mainnet` (`.github/workflows/move_test.yml`).
 - Format Move before opening a pull request: `pnpm install --frozen-lockfile && pnpm format:move`; do not use `bunx` or `npx` because CI uses the repository-pinned formatter dependency.
 
 Run every `sui move build` and `sui move test` in the main session, not in a subagent. Preserve the command's real exit code with `${PIPESTATUS[0]}` when a pipeline is unavoidable, or inspect the output for `error` and `Test result:`; never pipe a build or test through `tail`, which reports `tail`'s status.

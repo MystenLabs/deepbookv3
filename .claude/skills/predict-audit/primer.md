@@ -50,7 +50,7 @@ from the pool reserve), PLP (LP vault share token).
 
 ### `predict` (31 modules — the protocol core)
 - `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap, lifecycle-cap & pool-valuation-cap allowlists, `create_and_share_expiry_market`.
-- `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
+- `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deploy`, higher-rank slot reservation.
 - `predict_account.move` — per-user account; USDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
 - `order.move` — packs immutable position terms (absolute boundary ticks, quantity, sequence) into a u256 order id (132 dense bits); validates shape.
@@ -59,7 +59,7 @@ from the pool reserve), PLP (LP vault share token).
 - `ewma.move` — gas-congestion surcharge ("EWMA penalty") added to trade fees.
 - `constants.move` — upgrade-only constants/sentinels (version, scalings, `pos_inf_tick`, resolution period).
 - `pricing/pricing.move` — the live pricing boundary: binds the market's underlying to current propbook feeds, pre-expiry live-pricing check, feed freshness, the pricing-safe surface envelope (forward>0, basis, |rho|<=1, sigma band), SVI variance + normal-CDF binary pricing; settlement read.
-- `config/` — `protocol_config.move` (global admin knobs + trading-pause + valuation lock + per-expiry rows), `config_constants.move` (defaults + hard bounds + `assert_*` validators), and per-subsystem snapshot configs: `pricing_config`, `ewma_config`, `strike_exposure_config`.
+- `config/` — `protocol_config.move` (global admin knobs + trading-pause + valuation lock + per-expiry rows), `config_constants.move` (defaults + hard bounds + `chk_*` validators), and per-subsystem snapshot configs: `pricing_config`, `ewma_config`, `strike_exposure_config`.
 - `capabilities/` — `admin.move` (singleton `AdminCap`), `market_lifecycle_cap.move` (revocable market-creation gate), `pool_valuation_cap.move` (revocable flush gate), `pause_cap.move` (versioned pause / per-pool mint pause).
 - `plp/plp.move` — LP vault: idle USDC, PLP treasury, per-expiry rebalancing, incentive streams, full-pool valuation (`PoolValuation` hot potato), the privileged flush.
 - `plp/pool_accounting.move` — durable per-expiry sent/received flows, profit basis, loss watermarks, funding caps, `pending_protocol_profit` (D033 deferred-carry).
