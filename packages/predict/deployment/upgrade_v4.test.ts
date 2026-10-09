@@ -450,17 +450,19 @@ test("the order-flow receipt must allowlist this companion and record the launch
     assert.throws(() => assertOrderFlowReceipt(withoutPolicy, ids), /0 DelayedExecutionPolicyUpdated/);
 });
 
-test("queues are created for live markets only once, in batches, recording queues others created", async () => {
+test("queues are created under the registry for live markets only once, in batches, recording queues others created", async () => {
     const runtime = runtimeFor([...testnetArgs, "--execute"]);
     const desk = id("d");
+    const registry = id("e");
     runtime.journal.packages.predict_orders = { packageId: id("9"), originalId: id("9"), version: "1", upgradeCap: id("c"), transaction: "t" };
     runtime.journal.orderDesk = desk;
+    runtime.journal.queueRegistry = registry;
     const markets = Array.from({ length: QUEUE_BATCH + 2 }, (_, index) => ({
         id: `0x${(index + 1).toString(16).padStart(64, "0")}`,
         expiryMs: String(60_000 * (index + 1)),
     }));
     // The market keeper already created the first market's queue.
-    const existing = new Set([marketQueueId(desk, markets[0]!.id)]);
+    const existing = new Set([marketQueueId(registry, markets[0]!.id)]);
     const submitted: Array<{ label: string; markets: number }> = [];
     let lostResponse = true;
     const ops: QueueOperations = {
@@ -471,15 +473,21 @@ test("queues are created for live markets only once, in batches, recording queue
             const tx = await build();
             const calls = moveCalls(tx);
             assert.ok(calls.every((call) => call.package === id("9") && `${call.module}::${call.function}` === "queue::create_and_share"));
-            // Every call borrows the one desk input.
+            // create_and_share(registry, desk, market): every call takes the one registry and desk.
+            assert.ok(calls.every((call) => call.arguments.length === 3));
             assert.equal(new Set(calls.map((call) => JSON.stringify(call.arguments[0]))).size, 1);
+            assert.equal(new Set(calls.map((call) => JSON.stringify(call.arguments[1]))).size, 1);
+            const objectInput = (argument: unknown) =>
+                tx.getData().inputs[(argument as { Input: number }).Input]!.UnresolvedObject!.objectId;
+            assert.equal(objectInput(calls[0]!.arguments[0]), registry);
+            assert.equal(objectInput(calls[0]!.arguments[1]), desk);
             const marketIds = calls.map((call) => {
-                const input = tx.getData().inputs[(call.arguments[1] as { Input: number }).Input]!;
+                const input = tx.getData().inputs[(call.arguments[2] as { Input: number }).Input]!;
                 return input.UnresolvedObject!.objectId;
             });
             submitted.push({ label, markets: marketIds.length });
             rt.journal.transactions[label] = `tx-${label}`;
-            for (const market of marketIds) existing.add(marketQueueId(desk, market));
+            for (const market of marketIds) existing.add(marketQueueId(registry, market));
             if (lostResponse) {
                 lostResponse = false;
                 throw new Error("lost response");
@@ -488,7 +496,7 @@ test("queues are created for live markets only once, in batches, recording queue
                 digest: `tx-${label}`,
                 objectChanges: marketIds.map((market) => ({
                     type: "created",
-                    objectId: marketQueueId(desk, market),
+                    objectId: marketQueueId(registry, market),
                     objectType: `${id("9")}::queue::MarketQueue`,
                 })),
             };
@@ -510,11 +518,11 @@ test("queues are created for live markets only once, in batches, recording queue
     const byMarket = new Map(runtime.journal.queues.map((queue) => [queue.marketId, queue]));
     assert.equal(byMarket.get(markets[0]!.id)!.createTx, null);
     assert.equal(byMarket.get(markets[QUEUE_BATCH + 1]!.id)!.createTx, "tx-create_market_queues_1");
-    assert.ok(runtime.journal.queues.every((queue) => queue.queueId === marketQueueId(desk, queue.marketId)));
+    assert.ok(runtime.journal.queues.every((queue) => queue.queueId === marketQueueId(registry, queue.marketId)));
 
-    assert.throws(() => marketQueuesTransaction({ ordersPackage: id("9"), orderDesk: desk }, []), /1 to 50/);
+    assert.throws(() => marketQueuesTransaction({ ordersPackage: id("9"), orderDesk: desk, queueRegistry: registry }, []), /1 to 50/);
     assert.throws(
-        () => marketQueuesTransaction({ ordersPackage: id("9"), orderDesk: desk }, markets.map((market) => market.id)),
+        () => marketQueuesTransaction({ ordersPackage: id("9"), orderDesk: desk, queueRegistry: registry }, markets.map((market) => market.id)),
         /1 to 50/,
     );
 });

@@ -7,11 +7,13 @@
  * On-chain steps, in order, with trading paused throughout:
  *   1. publish `deepbook_predict_math`;
  *   2. upgrade Predict with its UpgradeCap, linked to the library (logical version 4);
- *   3. publish `deepbook_predict_orders`, whose `init` shares the one OrderDesk;
+ *   3. publish `deepbook_predict_orders`, whose `init` shares the one OrderDesk and its
+ *      QueueRegistry;
  *   4. one admin transaction: allowlist the companion's `OrderFlow` witness, re-state the desk's
  *      launch order fee so `DelayedExecutionPolicyUpdated` records the policy and desk, and add
  *      the market keeper's signer as a flush operator unless it already is one;
- *   5. create the queue of every live market, skipping a queue that already exists;
+ *   5. create the queue of every live market under the registry, skipping a queue that already
+ *      exists;
  *   6. upgrade Sessions with its UpgradeCap, linked to Predict and the companion;
  *   7. (`--cutover`) bump Predict's version watermark to 4 and Sessions' to 3;
  *   8. (`--reopen`) unpause trading.
@@ -203,6 +205,7 @@ interface Verification {
     predictMathPackage: string;
     predictOrdersPackage: string;
     orderDesk: string;
+    queueRegistry: string;
     predictUpgradeCheckpoint: string;
     ordersPublishCheckpoint: string;
     flushOperator: string;
@@ -242,6 +245,9 @@ export interface UpgradeJournal {
     baseline: Baseline | null;
     packages: Partial<Record<UpgradePackage, PackageRecord>>;
     orderDesk: string | null;
+    // The desk's QueueRegistry, shared next to it at publish: every market's queue ID derives
+    // from it.
+    queueRegistry: string | null;
     // The indexer's first checkpoint: the Predict upgrade's, so it records every v4 event.
     predictUpgradeCheckpoint: string | null;
     ordersPublishCheckpoint: string | null;
@@ -412,6 +418,7 @@ export function createUpgradeJournal(opts: UpgradeOptions, chainId: string): Upg
         baseline: null,
         packages: {},
         orderDesk: null,
+        queueRegistry: null,
         predictUpgradeCheckpoint: null,
         ordersPublishCheckpoint: null,
         transactions: {},
@@ -1020,18 +1027,25 @@ export function enableOrderFlowTransaction(
     return tx;
 }
 
-// `queue::create_and_share(desk, market)` for each market. Each market is read by reference, so
-// several queues fit one transaction.
-export function marketQueuesTransaction(
-    ids: { ordersPackage: string; orderDesk: string },
-    marketIds: readonly string[],
-): Transaction {
+export interface QueueIds {
+    ordersPackage: string;
+    orderDesk: string;
+    queueRegistry: string;
+}
+
+// `queue::create_and_share(registry, desk, market)` for each market. The registry is the only
+// object written and each market is read by reference, so several queues fit one transaction.
+export function marketQueuesTransaction(ids: QueueIds, marketIds: readonly string[]): Transaction {
     if (marketIds.length === 0 || marketIds.length > QUEUE_BATCH)
         throw new Error(`a queue transaction creates 1 to ${QUEUE_BATCH} queues, got ${marketIds.length}`);
     const tx = new Transaction();
+    const registry = tx.object(ids.queueRegistry);
     const desk = tx.object(ids.orderDesk);
     for (const market of marketIds) {
-        tx.moveCall({ target: `${ids.ordersPackage}::queue::create_and_share`, arguments: [desk, tx.object(market)] });
+        tx.moveCall({
+            target: `${ids.ordersPackage}::queue::create_and_share`,
+            arguments: [registry, desk, tx.object(market)],
+        });
     }
     return tx;
 }
@@ -1440,10 +1454,14 @@ async function ensurePublished(runtime: Runtime, pkg: "predict_math" | "predict_
         );
         if (caps.length !== 1) throw new Error(`${label} created ${caps.length} UpgradeCaps for the sender`);
         if (pkg === "predict_orders") {
-            const desks = createdObjects(receipt, `${packageId}::desk::OrderDesk`);
-            if (desks.length !== 1 || !("Shared" in asRecord(desks[0]!.owner)))
-                throw new Error(`${label} did not share exactly one OrderDesk`);
-            journal.orderDesk = desks[0]!.id;
+            const shared = (type: string) => {
+                const created = createdObjects(receipt, `${packageId}::desk::${type}`);
+                if (created.length !== 1 || !("Shared" in asRecord(created[0]!.owner)))
+                    throw new Error(`${label} did not share exactly one ${type}`);
+                return created[0]!.id;
+            };
+            journal.orderDesk = shared("OrderDesk");
+            journal.queueRegistry = shared("QueueRegistry");
             journal.ordersPublishCheckpoint = transactionCheckpoint(runtime, receipt.digest!);
         }
         journal.packages[pkg] = {
@@ -1560,11 +1578,15 @@ const queueOperations: QueueOperations = { liveMarkets, objectExists, submit, pe
 // rollout waits are picked up by the next run, and again before the cutover.
 export async function ensureMarketQueues(runtime: Runtime, ops: QueueOperations = queueOperations): Promise<void> {
     const journal = runtime.journal;
-    const ids = { ordersPackage: journal.packages.predict_orders!.packageId, orderDesk: journal.orderDesk! };
+    const ids: QueueIds = {
+        ordersPackage: journal.packages.predict_orders!.packageId,
+        orderDesk: journal.orderDesk!,
+        queueRegistry: journal.queueRegistry!,
+    };
     const markets = await ops.liveMarkets(runtime);
     const missing: LiveMarket[] = [];
     for (const market of markets) {
-        const queueId = marketQueueId(ids.orderDesk, market.id);
+        const queueId = marketQueueId(ids.queueRegistry, market.id);
         if (!(await ops.objectExists(runtime, queueId))) missing.push(market);
         else if (!journal.queues.some((queue) => queue.marketId === market.id))
             journal.queues.push({ marketId: market.id, expiryMs: market.expiryMs, queueId, createTx: null });
@@ -1584,7 +1606,7 @@ export async function ensureMarketQueues(runtime: Runtime, ops: QueueOperations 
         );
         const created = new Set(createdObjects(receipt, `${ids.ordersPackage}::queue::MarketQueue`).map((queue) => queue.id));
         for (const market of batch) {
-            const queueId = marketQueueId(ids.orderDesk, market.id);
+            const queueId = marketQueueId(ids.queueRegistry, market.id);
             if (!created.has(queueId)) throw new Error(`${label} did not create queue ${queueId} for market ${market.id}`);
             journal.queues.push({ marketId: market.id, expiryMs: market.expiryMs, queueId, createTx: receipt.digest! });
         }
@@ -1752,10 +1774,17 @@ async function verifyUpgrade(runtime: Runtime): Promise<Verification> {
         ordersPackage: journal.packages.predict_orders!.packageId,
         orderDesk: journal.orderDesk!,
     });
+    const registry = await readObject(runtime, journal.queueRegistry!);
+    if (
+        registry.type !== `${journal.packages.predict_orders!.packageId}::desk::QueueRegistry` ||
+        registry.owner !== "shared" ||
+        normalizeId(field(registry.json, "desk_id", "QueueRegistry")) !== journal.orderDesk
+    )
+        throw new Error(`QueueRegistry ${journal.queueRegistry} is not the desk's shared registry`);
     const live = await liveMarkets(runtime);
     const queues: QueueRecord[] = [];
     for (const market of live) {
-        const queueId = marketQueueId(journal.orderDesk!, market.id);
+        const queueId = marketQueueId(journal.queueRegistry!, market.id);
         const queue = await readObject(runtime, queueId);
         if (
             queue.type !== `${journal.packages.predict_orders!.packageId}::queue::MarketQueue` ||
@@ -1779,6 +1808,7 @@ async function verifyUpgrade(runtime: Runtime): Promise<Verification> {
         predictMathPackage: journal.packages.predict_math!.packageId,
         predictOrdersPackage: journal.packages.predict_orders!.packageId,
         orderDesk: journal.orderDesk!,
+        queueRegistry: journal.queueRegistry!,
         predictUpgradeCheckpoint: journal.predictUpgradeCheckpoint!,
         ordersPublishCheckpoint: journal.ordersPublishCheckpoint!,
         flushOperator: journal.flushOperator,
@@ -1961,7 +1991,7 @@ function printOutcome(runtime: Runtime): void {
     if (packages.predict)
         console.log(`[upgrade] predict v${packages.predict.version}: ${packages.predict.packageId}; upgrade checkpoint ${journal.predictUpgradeCheckpoint} (the indexer's first checkpoint)`);
     if (packages.predict_orders)
-        console.log(`[upgrade] predict_orders: ${packages.predict_orders.packageId}; OrderDesk ${journal.orderDesk}; publish checkpoint ${journal.ordersPublishCheckpoint}`);
+        console.log(`[upgrade] predict_orders: ${packages.predict_orders.packageId}; OrderDesk ${journal.orderDesk}; QueueRegistry ${journal.queueRegistry}; publish checkpoint ${journal.ordersPublishCheckpoint}`);
     if (packages.sessions) console.log(`[upgrade] sessions v${packages.sessions.version}: ${packages.sessions.packageId}`);
     if (journal.status === "awaiting-cutover")
         console.log("[upgrade] move the keepers, indexer, servers, and SDK to these IDs, then rerun with --cutover");

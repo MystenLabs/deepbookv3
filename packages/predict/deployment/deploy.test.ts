@@ -433,6 +433,7 @@ function manifestFixture(): IntegrationManifest {
             poolVault: id("a"),
             registry: id("b"),
             orderDesk: id("f"),
+            queueRegistry: `0x${"fe".repeat(32)}`,
             sessionsConfig: id("c"),
             deepbookRegistry: "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1",
             accumulatorRoot: "0x0000000000000000000000000000000000000000000000000000000000000acc",
@@ -647,6 +648,7 @@ function completeStateFixture() {
                     manifest.initialConfiguration.stateAnchors.orderDesk.objectVersion,
                     manifest.initialConfiguration.stateAnchors.orderDesk.digest,
                 ),
+                "desk::QueueRegistry": objectEvidence(manifest.objects.queueRegistry),
             },
             sessions: {
                 "session_config::SessionsConfig": objectEvidence(
@@ -971,7 +973,7 @@ test("the expected OrderDesk is the launch policy and floor the companion's init
     );
 });
 
-test("the companion publish records its OrderDesk and UpgradeCap", () => {
+test("the companion publish records its OrderDesk, QueueRegistry, and UpgradeCap", () => {
     const result = createDeploymentState();
     const deployer = id("a");
     const companion = id("9");
@@ -987,6 +989,12 @@ test("the companion publish records its OrderDesk and UpgradeCap", () => {
             },
             {
                 type: "created",
+                objectId: id("e"),
+                objectType: `${companion}::desk::QueueRegistry`,
+                owner: { Shared: { initial_shared_version: 7 } },
+            },
+            {
+                type: "created",
                 objectId: id("c"),
                 objectType: "0x2::package::UpgradeCap",
                 owner: { AddressOwner: deployer },
@@ -995,7 +1003,10 @@ test("the companion publish records its OrderDesk and UpgradeCap", () => {
     });
     assert.equal(result.packages.predict_orders, companion);
     assert.equal(result.publishTx.predict_orders, "companion-publish");
-    assert.deepEqual(result.sharedObjects.predict_orders, { "desk::OrderDesk": id("d") });
+    assert.deepEqual(result.sharedObjects.predict_orders, {
+        "desk::OrderDesk": id("d"),
+        "desk::QueueRegistry": id("e"),
+    });
     assert.deepEqual(result.ownedCaps.predict_orders, { "package::UpgradeCap": id("c") });
     const library = createDeploymentState();
     recordPublish(library, "predict_math", {
@@ -1019,7 +1030,7 @@ function orderFlowFixture() {
     result.packages.predict = id("4");
     result.packages.predict_orders = id("9");
     result.sharedObjects.predict = { "protocol_config::ProtocolConfig": id("7") };
-    result.sharedObjects.predict_orders = { "desk::OrderDesk": id("8") };
+    result.sharedObjects.predict_orders = { "desk::OrderDesk": id("8"), "desk::QueueRegistry": id("7") };
     result.ownedCaps.predict = { "admin::AdminCap": id("6") };
     return result;
 }
@@ -1106,10 +1117,11 @@ test("the order-flow receipt must allowlist the witness and record the desk's la
     );
 });
 
-// `derived_object::derive_address(desk, market)` hashes `DerivedObjectKey<ID>(market)` under
-// the desk the way Sui hashes a dynamic-field name: blake2b-256 over the 0xf0 scope byte, the
-// parent, the key's length as a little-endian u64, the key, and the key's type tag.
-function independentQueueId(deskId: string, marketId: string): string {
+// `derived_object::derive_address(registry, market)` hashes `DerivedObjectKey<ID>(market)` under
+// the desk's QueueRegistry the way Sui hashes a dynamic-field name: blake2b-256 over the 0xf0
+// scope byte, the parent, the key's length as a little-endian u64, the key, and the key's type
+// tag.
+function independentQueueId(registryId: string, marketId: string): string {
     const hex = (value: string) =>
         Uint8Array.from(Buffer.from(value.slice(2).padStart(64, "0"), "hex"));
     const ascii = (value: string) => [value.length, ...Buffer.from(value, "ascii")];
@@ -1130,18 +1142,18 @@ function independentQueueId(deskId: string, marketId: string): string {
     const keyLength = new Uint8Array(8);
     keyLength[0] = key.length;
     const digest = blake2b(
-        Uint8Array.from([0xf0, ...hex(deskId), ...keyLength, ...key, ...typeTag]),
+        Uint8Array.from([0xf0, ...hex(registryId), ...keyLength, ...key, ...typeTag]),
         { dkLen: 32 },
     );
     return `0x${Buffer.from(digest).toString("hex")}`;
 }
 
-test("each market's queue ID is derived from the desk and the market", () => {
-    const desk = "0x" + "12".repeat(32);
+test("each market's queue ID is derived from the desk's queue registry and the market", () => {
+    const registry = "0x" + "12".repeat(32);
     const market = "0x" + "ab".repeat(32);
-    assert.equal(marketQueueId(desk, market), independentQueueId(desk, market));
-    assert.notEqual(marketQueueId(desk, market), marketQueueId(desk, id("c")));
-    assert.notEqual(marketQueueId(desk, market), marketQueueId(id("d"), market));
+    assert.equal(marketQueueId(registry, market), independentQueueId(registry, market));
+    assert.notEqual(marketQueueId(registry, market), marketQueueId(registry, id("c")));
+    assert.notEqual(marketQueueId(registry, market), marketQueueId(id("d"), market));
     assert.equal(
         bcs.TypeTag.serialize(
             TypeTagSerializer.parseFromStr(
@@ -1156,8 +1168,9 @@ test("each market's queue ID is derived from the desk and the market", () => {
 test("each initial market gets one queue, and an existing queue is recorded, not recreated", async () => {
     const runtime = testRuntime();
     const desk = id("d");
+    const registry = id("f");
     runtime.result.packages.predict_orders = id("9");
-    runtime.result.sharedObjects.predict_orders = { "desk::OrderDesk": desk };
+    runtime.result.sharedObjects.predict_orders = { "desk::OrderDesk": desk, "desk::QueueRegistry": registry };
     const market = (marketId: string, createTx: string) => ({
         id: marketId,
         cadenceId: 0,
@@ -1176,7 +1189,7 @@ test("each initial market gets one queue, and an existing queue is recorded, not
     runtime.result.transactions.create_market_1m_1 = "market-1";
     runtime.result.wiring.markets = [market(id("1"), "market-0"), market(id("2"), "market-1")];
     // Someone else already created the second market's queue.
-    const existing = new Set([independentQueueId(desk, id("2"))]);
+    const existing = new Set([independentQueueId(registry, id("2"))]);
     const submitted: string[] = [];
     let interrupted = false;
     const ops: NonNullable<Parameters<typeof ensureMarketQueues>[1]> = {
@@ -1191,7 +1204,7 @@ test("each initial market gets one queue, and an existing queue is recorded, not
             );
             assert.equal(calls[0].MoveCall!.package, id("9"));
             submitted.push(label);
-            const queueId = independentQueueId(desk, id("1"));
+            const queueId = independentQueueId(registry, id("1"));
             runtime.result.transactions[label] = `tx-${label}`;
             existing.add(queueId);
             if (!interrupted) {
@@ -1216,14 +1229,19 @@ test("each initial market gets one queue, and an existing queue is recorded, not
     await ensureMarketQueues(runtime, ops);
     assert.deepEqual(submitted, ["create_queue_1m_0"]);
     const [first, second] = runtime.result.wiring.markets;
-    assert.equal(first.queueId, independentQueueId(desk, id("1")));
+    assert.equal(first.queueId, independentQueueId(registry, id("1")));
     assert.equal(first.queueCreateTx, "tx-create_queue_1m_0");
-    assert.equal(second.queueId, independentQueueId(desk, id("2")));
+    assert.equal(second.queueId, independentQueueId(registry, id("2")));
     assert.equal(second.queueCreateTx, null);
     second.queueId = id("e");
     await assert.rejects(ensureMarketQueues(runtime, ops), /records queue/);
+    // create_and_share(registry, desk, market)
     const creation = marketQueueCreationTransaction(runtime.result, id("1")).getData();
-    assert.equal(creation.inputs.length, 2);
+    assert.equal(creation.inputs.length, 3);
+    assert.deepEqual(
+        creation.inputs.map((input) => input.UnresolvedObject?.objectId),
+        [registry, desk, id("1")],
+    );
 });
 
 test("target, toolchain, source, and worktree bindings fail closed", () => {

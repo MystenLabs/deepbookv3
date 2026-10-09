@@ -142,8 +142,8 @@ const EXPECTED_SHARED: Record<PackageName, readonly string[]> = {
     propbook: ["registry::OracleRegistry"],
     predict_math: [],
     predict: ["plp::PoolVault", "protocol_config::ProtocolConfig", "registry::Registry"],
-    // `desk`'s `init` shares the deployment's one OrderDesk at publish.
-    predict_orders: ["desk::OrderDesk"],
+    // `desk`'s `init` shares the deployment's one OrderDesk and its QueueRegistry at publish.
+    predict_orders: ["desk::OrderDesk", "desk::QueueRegistry"],
     deepbook_core_account: [],
     sessions: ["session_config::SessionsConfig"],
 };
@@ -766,6 +766,7 @@ export interface IntegrationManifest {
         poolVault: string;
         registry: string;
         orderDesk: string;
+        queueRegistry: string;
         sessionsConfig: string;
         deepbookRegistry: string;
         accumulatorRoot: string;
@@ -1072,6 +1073,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
             poolVault: verifiedShared("predict", "plp::PoolVault"),
             registry: verifiedShared("predict", "registry::Registry"),
             orderDesk: verifiedShared("predict_orders", "desk::OrderDesk"),
+            queueRegistry: verifiedShared("predict_orders", "desk::QueueRegistry"),
             sessionsConfig: verifiedShared("sessions", "session_config::SessionsConfig"),
             deepbookRegistry: verifiedLinkedObject("deepbookRegistry"),
             accumulatorRoot: verifiedLinkedObject("accumulatorRoot"),
@@ -1265,6 +1267,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
             "poolVault",
             "registry",
             "orderDesk",
+            "queueRegistry",
             "sessionsConfig",
             "deepbookRegistry",
             "accumulatorRoot",
@@ -4756,12 +4759,12 @@ export async function ensureMarkets(
     }
 }
 
-// `queue::queue_id`: `derived_object::derive_address(desk_id, expiry_market_id)`, whose key
-// is the market's `ID`.
-export function marketQueueId(deskId: string, marketId: string): string {
+// `queue::queue_id`: `derived_object::derive_address(registry_id, expiry_market_id)` under the
+// desk's `QueueRegistry`, whose key is the market's `ID`.
+export function marketQueueId(registryId: string, marketId: string): string {
     return normalizeId(
         deriveObjectID(
-            normalizeId(deskId),
+            normalizeId(registryId),
             "0x2::object::ID",
             bcs.Address.serialize(normalizeId(marketId)).toBytes(),
         ),
@@ -4774,6 +4777,7 @@ export function marketQueueCreationTransaction(
 ): Transaction {
     const tx = new Transaction();
     call(tx, target(result, "predict_orders", "queue", "create_and_share"), [
+        tx.object(sharedId(result, "predict_orders", "desk::QueueRegistry")),
         tx.object(sharedId(result, "predict_orders", "desk::OrderDesk")),
         tx.object(marketId),
     ]);
@@ -4812,9 +4816,9 @@ const queueOperations = { objectExists, executeTransaction, writeState };
 // recorded rather than created again. The audit checks every active market's queue.
 export async function ensureMarketQueues(runtime: Runtime, ops = queueOperations): Promise<void> {
     const result = runtime.result;
-    const deskId = sharedId(result, "predict_orders", "desk::OrderDesk");
+    const registryId = sharedId(result, "predict_orders", "desk::QueueRegistry");
     for (const market of result.wiring.markets) {
-        const queueId = marketQueueId(deskId, market.id);
+        const queueId = marketQueueId(registryId, market.id);
         if (market.queueId && market.queueId !== queueId) {
             throw new Error(
                 `market ${market.id} records queue ${market.queueId}, expected ${queueId}`,
@@ -5133,6 +5137,13 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     await discoverMarkets(runtime);
     const activeIds = await activeMarketIds(runtime);
     const deskId = sharedId(result, "predict_orders", "desk::OrderDesk");
+    const queueRegistryId = sharedId(result, "predict_orders", "desk::QueueRegistry");
+    const queueRegistry = await moveObjectFields(runtime, queueRegistryId);
+    if (normalizeOptionalId(queueRegistry.desk_id) !== deskId) {
+        throw new Error(
+            `QueueRegistry ${queueRegistryId} is bound to desk ${String(queueRegistry.desk_id)}, not ${deskId}`,
+        );
+    }
     let activeMarketCash = 0n;
     const verifiedMarkets: MarketRecord[] = [];
     for (const id of activeIds) {
@@ -5147,7 +5158,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
             `${packageId(result, "predict")}::expiry_market::ExpiryMarket`,
             "shared",
         );
-        const queueId = marketQueueId(deskId, id);
+        const queueId = marketQueueId(queueRegistryId, id);
         if (record.queueId !== queueId) {
             throw new Error(`active market ${id} has no recorded queue at ${queueId}`);
         }
