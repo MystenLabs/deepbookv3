@@ -6,8 +6,9 @@ machine-check each other instead of relying on anyone remembering. This script
 is that check. It verifies, deterministically and stdlib-only:
 
   1. PINNING TESTS (FATAL) — every test function named in a response-policies.md
-     "Pinning tests" field exists as `fun <name>` under the Predict or Propbook
-     package tests.
+     "Pinning tests" field exists as `fun <name>` under the Predict, Propbook,
+     order-flow companion (predict_orders), or library (predict_math) package
+     tests.
      A register decision whose pinning test vanished is un-enforced: the exact
      drift class that let risks.md promise unshipped behavior.
   2. ID CROSS-REFS — every `RP-n` reference in the predeploy docs resolves to a
@@ -50,6 +51,8 @@ ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath(
     os.path.join(HERE, '..', '..', '..'))
 PREDICT = os.path.join(ROOT, 'packages', 'predict')
 PROPBOOK = os.path.join(ROOT, 'packages', 'propbook')
+PREDICT_ORDERS = os.path.join(ROOT, 'packages', 'predict_orders')
+PREDICT_MATH = os.path.join(ROOT, 'packages', 'predict_math')
 
 DOCS = sorted(glob.glob(os.path.join(HERE, '*.md')) +
               glob.glob(os.path.join(HERE, 'evidence', '*.md')))
@@ -124,6 +127,8 @@ def check_pinning_tests(errors):
     test_roots = [
         os.path.join(PREDICT, 'tests'),
         os.path.join(PROPBOOK, 'tests'),
+        os.path.join(PREDICT_ORDERS, 'tests'),
+        os.path.join(PREDICT_MATH, 'tests'),
     ]
     for test_root in test_roots:
         for path in glob.glob(os.path.join(test_root, '**', '*.move'), recursive=True):
@@ -157,8 +162,9 @@ def check_pinning_tests(errors):
             if not re.search(r'\bfun\s+' + re.escape(tok) + r'\b', test_src):
                 errors.append(
                     f"response-policies.md entry '{title}' pins test `{tok}` but "
-                    f"no `fun {tok}` exists under packages/predict/tests/ or "
-                    f"packages/propbook/tests/")
+                    f"no `fun {tok}` exists under packages/predict/tests/, "
+                    f"packages/propbook/tests/, packages/predict_orders/tests/, or "
+                    f"packages/predict_math/tests/")
 
 
 def check_id_refs(errors, warnings):

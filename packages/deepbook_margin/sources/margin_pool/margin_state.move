@@ -18,6 +18,9 @@ public struct State has drop, store {
     total_borrow: u64,
     supply_shares: u64,
     borrow_shares: u64,
+    // Last timestamp whose elapsed time was applied to interest, or confirmed
+    // idle (zero borrow). Short calls that truncate to zero interest against
+    // outstanding borrow do not advance this.
     last_update_timestamp: u64,
     extra_fields: VecMap<String, u64>,
 }
@@ -77,8 +80,13 @@ public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
 
 /// Decrease the supply given an absolute amount. Used when the supply needs to be
 /// decreased without decreasing shares.
+/// Liquidation defaults written off here can exceed `total_supply`: borrowers accrue the
+/// protocol spread that suppliers never receive, so once unwithdrawn protocol fees exceed
+/// the vault's cash, a large enough default is more than suppliers are owed. Suppliers
+/// cannot lose more than everything, so the write-off stops at zero instead of aborting
+/// the liquidation.
 public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
-    self.total_supply = self.total_supply - amount;
+    self.total_supply = self.total_supply.saturating_sub(amount);
 }
 
 /// Increase the borrow given an amount. Return the individual borrow shares
@@ -117,6 +125,12 @@ public(package) fun decrease_borrow_shares(
 
 /// Update the supply and borrow with the interest and protocol fees.
 /// Returns the protocol fees accrued since last update.
+///
+/// Zero incremental interest against outstanding borrow does not consume
+/// the elapsed interval. The year-fraction conversion floors short windows
+/// to zero; advancing the timestamp anyway would let frequent updates
+/// discard time. Idle pools (zero borrow) still advance so a later borrow
+/// is not charged for the idle window.
 public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
@@ -126,6 +140,10 @@ public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Cl
         elapsed,
         self.total_borrow,
     );
+    if (interest == 0 && self.total_borrow > 0) {
+        return 0
+    };
+
     let protocol_fees = math::mul(interest, config.protocol_spread());
     self.total_supply = self.total_supply + interest - protocol_fees;
     self.total_borrow = self.total_borrow + interest;

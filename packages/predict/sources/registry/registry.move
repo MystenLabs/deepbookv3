@@ -114,7 +114,7 @@ public fun mint_lifecycle_cap(
     _admin_cap: &AdminCap,
     ctx: &mut TxContext,
 ): MarketLifecycleCap {
-    config.assert_version();
+    config.chk_version();
     let cap = market_lifecycle_cap::new(ctx);
     registry.allowed_lifecycle_caps.insert(cap.id());
     cap
@@ -140,7 +140,7 @@ public fun mint_pool_valuation_cap(
     config: &ProtocolConfig,
     ctx: &mut TxContext,
 ): PoolValuationCap {
-    config.assert_version();
+    config.chk_version();
     let cap = pool_valuation_cap::new(ctx);
     registry.allowed_pool_valuation_caps.insert(cap.id());
     cap
@@ -166,8 +166,8 @@ public fun generate_pool_valuation_proof(
     registry: &Registry,
     pool_valuation_cap: &PoolValuationCap,
 ): PoolValuationProof {
-    registry.assert_valid_pool_valuation_cap(pool_valuation_cap);
-    plp::new_pool_valuation_proof()
+    registry.chk_pv_cap(pool_valuation_cap);
+    plp::new_proof()
 }
 
 // === Emergency Pause (PauseCap) ===
@@ -178,8 +178,8 @@ public fun pause_trading_pause_cap(
     registry: &Registry,
     pause_cap: &PauseCap,
 ) {
-    registry.assert_valid_pause_cap(pause_cap);
-    config.pause_trading();
+    registry.chk_pausecap(pause_cap);
+    config.pause_all();
 }
 
 /// Force the protocol-wide emergency freeze via a valid `PauseCap`. One-way;
@@ -189,8 +189,8 @@ public fun freeze_protocol_pause_cap(
     registry: &Registry,
     pause_cap: &PauseCap,
 ) {
-    registry.assert_valid_pause_cap(pause_cap);
-    config.freeze_protocol();
+    registry.chk_pausecap(pause_cap);
+    config.freeze_all();
 }
 
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
@@ -200,7 +200,7 @@ public fun pause_expiry_market_mint_pause_cap(
     registry: &Registry,
     pause_cap: &PauseCap,
 ) {
-    registry.assert_valid_pause_cap(pause_cap);
+    registry.chk_pausecap(pause_cap);
     market.pause_mint();
 }
 
@@ -213,7 +213,7 @@ public fun register_underlying(
     _admin_cap: &AdminCap,
     propbook_underlying_id: u32,
 ) {
-    config.assert_version();
+    config.chk_version();
     registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
@@ -232,7 +232,7 @@ public fun set_template_cadence_config(
     initial_expiry_cash: u64,
     window_size: u64,
 ) {
-    config.assert_version();
+    config.chk_version();
     registry
         .market_manager
         .set_template_cadence_config(
@@ -244,7 +244,7 @@ public fun set_template_cadence_config(
             initial_expiry_cash,
             window_size,
         );
-    config_events::emit_cadence_config_updated(
+    config_events::cadence_upd(
         registry.id(),
         propbook_underlying_id,
         cadence_id,
@@ -274,11 +274,11 @@ public fun create_and_share_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    config.assert_version();
-    registry.assert_valid_lifecycle_cap(lifecycle_cap);
-    config.assert_trading_allowed();
+    config.chk_version();
+    registry.chk_lc_cap(lifecycle_cap);
+    config.chk_trading();
     // Deliberately NOT gated on the valuation flag: creation moves no cash
-    // (`plp::register_expiry` records targets; funding is a later rebalance), an
+    // (`plp::register_exp` records targets; funding is a later rebalance), an
     // in-flight flush's expected set is frozen at its snapshot so the new market
     // is simply not part of it, and funding it mid-window cannot reach the mark
     // — every figure it reads was frozen at the snapshot instant, which counts
@@ -287,13 +287,15 @@ public fun create_and_share_expiry_market(
     // stalled flush holds the flag.
     let deployable = registry
         .market_manager
-        .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
+        .next_deploy(propbook_registry, propbook_underlying_id, cadence_id, clock);
     let expiry = deployable.expiry();
     let tick_size = deployable.tick_size();
     let admission_tick_size = deployable.admission_tick_size();
-    let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
-    let max_expiry_allocation = deployable.max_expiry_allocation();
-    let initial_expiry_cash = deployable.initial_expiry_cash();
+    // `ExpiryPnl` reports this stored time as the market's cadence-period start
+    // (`period_start_ms`), so changing the lookback changes that event field's meaning.
+    let reference_tick_source_timestamp_ms = expiry - market_manager::cad_period(cadence_id);
+    let max_expiry_allocation = deployable.max_alloc();
+    let initial_expiry_cash = deployable.init_cash();
     let pool_vault_id = pool_vault.id();
     let expiry_market_id = expiry_market::create_and_share(
         config,
@@ -305,17 +307,18 @@ public fun create_and_share_expiry_market(
         max_expiry_allocation,
         ctx,
     );
-    pool_vault.register_expiry(
+    pool_vault.register_exp(
         expiry_market_id,
         expiry,
         max_expiry_allocation,
         initial_expiry_cash,
+        config.fee_incentive_lifetime_cap_rate(),
         clock,
     );
     registry
         .market_manager
-        .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
-    config_events::emit_market_created(
+        .note_expiry(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
+    config_events::mkt_created(
         expiry_market_id,
         pool_vault_id,
         propbook_underlying_id,
@@ -324,7 +327,7 @@ public fun create_and_share_expiry_market(
         admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
-        config.strike_exposure_template_config(),
+        config.se_template(),
     );
 
     expiry_market_id
@@ -337,7 +340,7 @@ public fun create_and_share_builder_code(
     index: u64,
     ctx: &mut TxContext,
 ): ID {
-    config.assert_version();
+    config.chk_version();
     builder_code::create_and_share(&mut registry.id, index, ctx)
 }
 
@@ -345,14 +348,14 @@ public fun create_and_share_builder_code(
 
 /// Create and share protocol setup objects and transfer root authority to the publisher.
 fun init(ctx: &mut TxContext) {
-    let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
+    let (registry, admin_cap) = new_registry(ctx);
     let _ = protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
     transfer::public_transfer(admin_cap, ctx.sender());
 }
 
 /// Construct registry state and its root capability.
-fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
+fun new_registry(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
@@ -366,19 +369,19 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 }
 
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
-fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
+fun chk_pausecap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id()), EPauseCapNotValid);
 }
 
 /// Abort unless the supplied `MarketLifecycleCap` was minted by admin and not
 /// revoked.
-fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
+fun chk_lc_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
 }
 
 /// Abort unless the supplied `PoolValuationCap` was minted by admin and not
 /// revoked.
-fun assert_valid_pool_valuation_cap(registry: &Registry, cap: &PoolValuationCap) {
+fun chk_pv_cap(registry: &Registry, cap: &PoolValuationCap) {
     assert!(registry.allowed_pool_valuation_caps.contains(&cap.id()), EPoolValuationCapNotValid);
 }
 
@@ -387,7 +390,7 @@ fun assert_valid_pool_valuation_cap(registry: &Registry, cap: &PoolValuationCap)
 #[test_only]
 /// Initialize registry and admin cap for tests, returning the registry ID.
 public fun init_for_testing(ctx: &mut TxContext): ID {
-    let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
+    let (registry, admin_cap) = new_registry(ctx);
     let registry_id = registry.id();
     let _ = protocol_config::create_and_share(ctx);
     transfer::share_object(registry);

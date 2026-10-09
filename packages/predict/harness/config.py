@@ -53,7 +53,9 @@ LOCAL_CLOSURE = [
     "account",
     "propbook",
     "token",
+    "predict_math",
     "predict",
+    "predict_orders",
 ]
 
 # Upstream packages that localnet must publish independently. Git pins and

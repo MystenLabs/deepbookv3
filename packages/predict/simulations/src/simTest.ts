@@ -6,7 +6,7 @@ import type { ScenarioRow } from "./shared.js";
 process.env.INSTANCE_DIR ??= tmpdir();
 const {
     EXPECTED_ACTION_SEQUENCE,
-    EXPECTED_SETTLED_REDEMPTION_MODES,
+    EXPECTED_MINT_ROLES,
     SCENARIO_COLUMNS,
     parseScenarioText,
     validateCompleteScenario,
@@ -48,28 +48,46 @@ test("scenario parser retains both finite boundaries", () => {
 test("scenario parser accepts every current explicit action", () => {
     const text = [
         SCENARIO_COLUMNS.join(","),
-        csvRow(1, "mint", { ...oracle, strike: "75000000000000", is_up: "true", quantity: "20000", order_ref: "o1" }),
-        csvRow(2, "redeem_live", { ...oracle, order_ref: "o1", close_quantity: "10000" }),
+        csvRow(1, "mint", { ...oracle, strike: "75000000000000", is_up: "true", quantity: "20000", order_ref: "o1", commit_spot: "75010000000000" }),
+        csvRow(2, "redeem_open", { ...oracle, order_ref: "o1", close_quantity: "10000", commit_spot: "75010000000000" }),
         csvRow(3, "request_supply", { amount: "100", min_output: "0", lp_ref: "s1" }),
         csvRow(4, "request_withdraw", { shares: "100", min_output: "0", lp_ref: "w1" }),
         csvRow(5, "flush", oracle),
         csvRow(6, "rebalance_expiry_cash"),
         csvRow(7, "settle", { settlement_price: "75000000000000" }),
-        csvRow(8, "redeem_settled", { order_ref: "o1", permissionless: "true" }),
+        csvRow(8, "settle_payout"),
     ].join("\n");
 
     const rows = parseScenarioText(text);
     assert.deepEqual(
         rows.map((row) => row.action),
-        ["mint", "redeem_live", "request_supply", "request_withdraw", "flush", "rebalance_expiry_cash", "settle", "redeem_settled"],
+        ["mint", "redeem_open", "request_supply", "request_withdraw", "flush", "rebalance_expiry_cash", "settle", "settle_payout"],
     );
-    assert.equal(rows[1].action, "redeem_live");
-    if (rows[1].action === "redeem_live") assert.equal(rows[1].replacementOrderRef, null);
+    if (rows[0].action !== "mint" || rows[1].action !== "redeem_open") throw new Error("expected queued trades");
+    assert.equal(rows[0].commitSpot, 75010000000000n);
+    assert.equal(rows[0].maxProbability, undefined);
+    assert.equal(rows[1].replacementOrderRef, null);
+    assert.equal(rows[1].commitSpot, 75010000000000n);
 });
 
-test("scenario parser rejects removed leverage-era actions", () => {
-    const text = [SCENARIO_COLUMNS.join(","), csvRow(1, "liquidate")].join("\n");
-    assert.throws(() => parseScenarioText(text), /unsupported action/);
+test("scenario parser leaves a mint without a commit spot uncommitted and requires one to sell", () => {
+    const rows = parseScenarioText([
+        SCENARIO_COLUMNS.join(","),
+        csvRow(1, "mint", { ...oracle, strike: "75000000000000", is_up: "true", quantity: "20000", max_probability: "600000000", order_ref: "o1" }),
+    ].join("\n"));
+    if (rows[0].action !== "mint") throw new Error("expected mint");
+    assert.equal(rows[0].commitSpot, null);
+    assert.equal(rows[0].maxProbability, 600000000n);
+
+    const sell = [SCENARIO_COLUMNS.join(","), csvRow(1, "redeem_open", { ...oracle, order_ref: "o1", close_quantity: "10000" })].join("\n");
+    assert.throws(() => parseScenarioText(sell), /missing commit_spot/);
+});
+
+test("scenario parser rejects removed leverage-era and pre-cutover actions", () => {
+    for (const action of ["liquidate", "redeem_live", "redeem_settled"]) {
+        const text = [SCENARIO_COLUMNS.join(","), csvRow(1, action)].join("\n");
+        assert.throws(() => parseScenarioText(text), /unsupported action/);
+    }
 });
 
 test("scenario parser rejects a partial oracle refresh containing only the a sign", () => {
@@ -80,32 +98,35 @@ test("scenario parser rejects a partial oracle refresh containing only the a sig
     assert.throws(() => parseScenarioText(text), /oracle refresh fields must all be present/);
 });
 
+// Minimal rows carrying only what the completeness check reads.
+function completeRows(roles: readonly string[] = EXPECTED_MINT_ROLES): ScenarioRow[] {
+    let mintIndex = 0;
+    return EXPECTED_ACTION_SEQUENCE.map((action, index) => {
+        if (action !== "mint") return { action, step: index + 1 };
+        const role = roles[mintIndex++];
+        return {
+            action,
+            step: index + 1,
+            commitSpot: role === "deadline_refund" ? null : 1n,
+            maxProbability: role === "limit_refund" ? 1n : undefined,
+        };
+    }) as unknown as ScenarioRow[];
+}
+
 test("complete scenario validation rejects max-rows truncation after all action names appear", () => {
-    let redemptionIndex = 0;
-    const rows = EXPECTED_ACTION_SEQUENCE.map((action, index) => ({
-        action,
-        step: index + 1,
-        ...(action === "redeem_settled"
-            ? { permissionless: EXPECTED_SETTLED_REDEMPTION_MODES[redemptionIndex++] }
-            : {}),
-    })) as unknown as ScenarioRow[];
+    const rows = completeRows();
 
     validateCompleteScenario(rows);
     assert.throws(
-        () => validateCompleteScenario(rows.slice(0, 14)),
-        /must contain exactly 20 steps, got 14/,
+        () => validateCompleteScenario(rows.slice(0, 16)),
+        /must contain exactly 20 steps, got 16/,
     );
 });
 
-test("complete scenario validation requires both settled redemption modes", () => {
-    const rows = EXPECTED_ACTION_SEQUENCE.map((action, index) => ({
-        action,
-        step: index + 1,
-        ...(action === "redeem_settled" ? { permissionless: false } : {}),
-    })) as unknown as ScenarioRow[];
-
+test("complete scenario validation requires a fill, a limit refund, and a deadline refund", () => {
+    const allFills = completeRows(EXPECTED_MINT_ROLES.map(() => "fill"));
     assert.throws(
-        () => validateCompleteScenario(rows),
-        /must be owner\/permissionless\/owner\/permissionless/,
+        () => validateCompleteScenario(allFills),
+        /mint roles must be fill\/fill\/fill\/fill\/fill\/limit_refund\/deadline_refund/,
     );
 });

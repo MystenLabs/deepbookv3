@@ -37,7 +37,7 @@ KEEPER_BRICK_MIN_ELAPSED_MS = 2 * SHORTEST_CADENCE_MS
 
 _BASE_TRACE_FIELDS = {"schema", "type", "ts"}
 _KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
-    "settle": ({"market", "expiryMs"}, set()),
+    "settle": ({"market", "expiryMs"}, {"phases", "straggler"}),
     "fail": ({"tag"}, {"lane", "fatal"}),
     "keeper-stall": ({"consecutiveDefers", "lastError"}, set()),
     "flush": (
@@ -66,6 +66,8 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         {"strategy", "tag"},
         {"adversarial", "family", "profile", "n", "book", "where", "fatal"},
     ),
+    # Queued orders: `gas` is the enqueue, `fillGas` the commit+resolve the trader sends at τ,
+    # and `outcome` what that did to the order (filled, refunded with a reason, or waiting).
     "mint": (
         {
             "strategy",
@@ -73,12 +75,16 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
             "direction",
             "moneyness",
             "prob",
-            "premium",
+            "outcome",
             "gas",
+            "fillGas",
         },
-        set(),
+        {"quantity", "amount", "reason"},
     ),
-    "redeem": ({"strategy", "market", "partial", "gas"}, {"retry"}),
+    "redeem": (
+        {"strategy", "market", "partial", "outcome", "gas", "fillGas"},
+        {"retry", "quantity", "amount", "reason"},
+    ),
     "supply": ({"strategy", "amount", "gas"}, set()),
     "withdraw": ({"strategy", "shares", "gas"}, set()),
     "mintBatch": (
@@ -111,6 +117,8 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         set(),
     ),
     "adversarial-accepted": ({"strategy", "mode", "market"}, set()),
+    # A probe that passed enqueue but was refused at τ (refunded) or never filled.
+    "adversarial-rejected": ({"strategy", "mode", "outcome"}, {"reason"}),
 }
 _STRATEGY_PROGRESS_TYPES = {
     "mint",
@@ -122,6 +130,7 @@ _STRATEGY_PROGRESS_TYPES = {
     "nodes",
     "cleanout",
     "adversarial-accepted",
+    "adversarial-rejected",
 }
 _STRING_TRACE_FIELDS = {
     "adversarial",
@@ -133,6 +142,7 @@ _STRING_TRACE_FIELDS = {
     "market",
     "mode",
     "note",
+    "outcome",
     "phase",
     "profile",
     "retry",
@@ -140,7 +150,7 @@ _STRING_TRACE_FIELDS = {
     "tag",
     "where",
 }
-_BOOLEAN_TRACE_FIELDS = {"fatal", "partial", "oog"}
+_BOOLEAN_TRACE_FIELDS = {"fatal", "partial", "oog", "straggler"}
 _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "attempt",
     "batch",
@@ -159,6 +169,9 @@ _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "nSettled",
     "nTarget",
     "perMarket",
+    "phases",
+    "quantity",
+    "reason",
     "shares",
     "size",
     "storageCost",
@@ -174,7 +187,7 @@ _NONNEGATIVE_NUMBER_TRACE_FIELDS = {
     "premium",
     "prob",
 }
-_SIGNED_NUMBER_TRACE_FIELDS = {"gas", "net"}
+_SIGNED_NUMBER_TRACE_FIELDS = {"gas", "fillGas", "net"}
 
 
 def _instances() -> list[Path]:
@@ -499,7 +512,12 @@ def _analyze_one(inst: Path) -> list[str]:
         print("  bug oracle clean (no invariant/non-package aborts)")
 
     # adversarial probes: rejection-path coverage (guards firing is the healthy outcome).
-    adv_rejected = sum(1 for r in recs if r.get("type") == "fail" and r.get("adversarial"))
+    adv_rejected = sum(
+        1
+        for r in recs
+        if (r.get("type") == "fail" and r.get("adversarial"))
+        or r.get("type") == "adversarial-rejected"
+    )
     adv_accepted = [r for r in recs if r.get("type") == "adversarial-accepted"]
     if adv_rejected or adv_accepted:
         print(f"\nadversarial probes: {adv_rejected} rejected (guards fired), {len(adv_accepted)} wrongly accepted")

@@ -11,6 +11,7 @@ module deepbook_predict::strike_payout_tree_tests;
 
 use deepbook_predict::{constants, strike_payout_tree::{Self, StrikePayoutTree}};
 use std::unit_test::{assert_eq, destroy};
+use sui::vec_map;
 
 /// Per-tick raw-strike scale used to turn a settlement tick into a raw oracle
 /// price (`settlement = tick * TICK_SIZE`). The exact value is arbitrary for the
@@ -52,6 +53,7 @@ fun remove_range(tree: &mut StrikePayoutTree, lower_tick: u64, higher_tick: u64,
         lower_tick,
         higher_tick,
         quantity,
+        &vec_map::empty(),
     );
 }
 
@@ -60,7 +62,7 @@ fun assert_reserve_terms(
     expected_max_net_payout: u64,
     expected_total_net_payout: u64,
 ) {
-    let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
+    let (max_net_payout, total_net_payout) = tree.rsv_terms();
     assert_eq!(max_net_payout, expected_max_net_payout);
     assert_eq!(total_net_payout, expected_total_net_payout);
 }
@@ -74,8 +76,8 @@ fun new_returns_empty_tree() {
     // Empty tree has zero conservative backing and zero settled liability at any
     // settlement price.
     assert_reserve_terms(&tree, 0, 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(0), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -179,7 +181,7 @@ fun insert_existing_boundary_at_node_cap_succeeds() {
     // passes rather than aborting; the added terms accumulate on the shared boundary.
     insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1);
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 2);
+    assert_eq!(tree.settled_liab(settle_at_tick(2), TICK_SIZE), 2);
     destroy(tree);
 }
 
@@ -191,7 +193,7 @@ fun removing_boundary_below_node_cap_allows_new_boundary() {
 
     remove_range(&mut tree, 1, constants::pos_inf_tick!(), 1);
     // The removed boundary is gone.
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(1), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_above_tick(1), TICK_SIZE), 0);
 
     // The freed slot lets a brand-new boundary insert without tripping the cap: had the
     // remove not decremented the count, this would be the (max + 1)th node and abort.
@@ -201,7 +203,7 @@ fun removing_boundary_below_node_cap_allows_new_boundary() {
         constants::pos_inf_tick!(),
         1,
     );
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(3), TICK_SIZE), 1);
+    assert_eq!(tree.settled_liab(settle_at_tick(3), TICK_SIZE), 1);
     destroy(tree);
 }
 
@@ -219,9 +221,9 @@ fun real_boundary_accumulation_walks_correctly() {
         i = i + 1;
     };
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0); // no i < 1
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(10), TICK_SIZE), 9); // i in 1..9
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(n + 1), TICK_SIZE), n); // all n win
+    assert_eq!(tree.settled_liab(settle_at_tick(1), TICK_SIZE), 0); // no i < 1
+    assert_eq!(tree.settled_liab(settle_at_tick(10), TICK_SIZE), 9); // i in 1..9
+    assert_eq!(tree.settled_liab(settle_at_tick(n + 1), TICK_SIZE), n); // all n win
     // All ranges share the (n, pos_inf] tail, so the peak prefix gain is the full sum.
     assert_reserve_terms(&tree, n, n);
     destroy(tree);
@@ -259,15 +261,15 @@ fun insert_then_remove_restores_empty_state() {
     insert_range(&mut tree, 2, 6, 50);
     assert_reserve_terms(&tree, 50, 50);
     // The range opens just above tick 2 and closes at tick 6, pinning both boundaries.
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(2), TICK_SIZE), 50);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 50);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(6), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(2), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_above_tick(2), TICK_SIZE), 50);
+    assert_eq!(tree.settled_liab(settle_at_tick(6), TICK_SIZE), 50);
+    assert_eq!(tree.settled_liab(settle_above_tick(6), TICK_SIZE), 0);
 
     remove_range(&mut tree, 2, 6, 50);
     assert_reserve_terms(&tree, 0, 0);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(2), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_above_tick(2), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(6), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -284,10 +286,10 @@ fun insert_two_then_remove_one_leaves_other() {
     // Survivor (1, 6]=40; the reserve dropping 70 -> 40 proves the removed range's terms are gone,
     // and the settlement points pin the survivor's two boundaries.
     assert_reserve_terms(&tree, 40, 40);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(1), TICK_SIZE), 40);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 40);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(6), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(1), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_above_tick(1), TICK_SIZE), 40);
+    assert_eq!(tree.settled_liab(settle_at_tick(6), TICK_SIZE), 40);
+    assert_eq!(tree.settled_liab(settle_above_tick(6), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -303,11 +305,11 @@ fun remove_adjacent_range_preserves_shared_live_boundary() {
     assert_reserve_terms(&tree, 30, 30);
     // The shared boundary at tick 3 must survive the remove: (3, 7]=30 still prices correctly
     // (opens just above 3, closes at 7), which is only possible if node 3 was preserved.
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 0); // removed (1, 3] gone
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(3), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(3), TICK_SIZE), 30);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 30);
-    assert_eq!(tree.settled_payout_liability(settle_above_tick(7), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(2), TICK_SIZE), 0); // removed (1, 3] gone
+    assert_eq!(tree.settled_liab(settle_at_tick(3), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_above_tick(3), TICK_SIZE), 30);
+    assert_eq!(tree.settled_liab(settle_at_tick(7), TICK_SIZE), 30);
+    assert_eq!(tree.settled_liab(settle_above_tick(7), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -348,13 +350,13 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
 
     // Survivors: R1 (2,8]=100 and R3 (6,12]=30. A range (L,H] wins at settle_at_tick(T) iff L < T <= H.
     // Hand-computed (independent of the tree implementation):
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0); // below both
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 100); // R1 only
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 130); // R1+R3 overlap
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(8), TICK_SIZE), 130); // R1+R3 (8 = R1 higher)
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(10), TICK_SIZE), 30); // R3 only (10 > 8)
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(12), TICK_SIZE), 30); // R3 (12 = R3 higher)
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(13), TICK_SIZE), 0); // above both
+    assert_eq!(tree.settled_liab(settle_at_tick(1), TICK_SIZE), 0); // below both
+    assert_eq!(tree.settled_liab(settle_at_tick(5), TICK_SIZE), 100); // R1 only
+    assert_eq!(tree.settled_liab(settle_at_tick(7), TICK_SIZE), 130); // R1+R3 overlap
+    assert_eq!(tree.settled_liab(settle_at_tick(8), TICK_SIZE), 130); // R1+R3 (8 = R1 higher)
+    assert_eq!(tree.settled_liab(settle_at_tick(10), TICK_SIZE), 30); // R3 only (10 > 8)
+    assert_eq!(tree.settled_liab(settle_at_tick(12), TICK_SIZE), 30); // R3 (12 = R3 higher)
+    assert_eq!(tree.settled_liab(settle_at_tick(13), TICK_SIZE), 0); // above both
     assert_reserve_terms(&tree, 130, 130);
 
     // Metamorphic: a clean tree with only the survivor ranges must be bit-identical under the
@@ -363,15 +365,15 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
     insert_range(&mut rebuilt, 2, 8, 100);
     insert_range(&mut rebuilt, 6, 12, 30);
     assert_eq!(
-        tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE),
-        rebuilt.settled_payout_liability(settle_at_tick(7), TICK_SIZE),
+        tree.settled_liab(settle_at_tick(7), TICK_SIZE),
+        rebuilt.settled_liab(settle_at_tick(7), TICK_SIZE),
     );
     assert_eq!(
-        tree.settled_payout_liability(settle_at_tick(11), TICK_SIZE),
-        rebuilt.settled_payout_liability(settle_at_tick(11), TICK_SIZE),
+        tree.settled_liab(settle_at_tick(11), TICK_SIZE),
+        rebuilt.settled_liab(settle_at_tick(11), TICK_SIZE),
     );
-    let (gc_max, gc_total) = tree.payout_reserve_terms();
-    let (rebuilt_max, rebuilt_total) = rebuilt.payout_reserve_terms();
+    let (gc_max, gc_total) = tree.rsv_terms();
+    let (rebuilt_max, rebuilt_total) = rebuilt.rsv_terms();
     assert_eq!(gc_max, rebuilt_max);
     assert_eq!(gc_total, rebuilt_total);
     destroy(tree);
@@ -387,8 +389,8 @@ fun settled_liability_zero_below_winning_range() {
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 2, 6, 50);
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(2), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(1), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -399,8 +401,8 @@ fun settled_liability_owed_inside_winning_range() {
     insert_range(&mut tree, 2, 6, 50);
 
     // (tick 2, tick 6] wins for settlement in the finite interior up to tick 6.
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(3), TICK_SIZE), 50);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 50);
+    assert_eq!(tree.settled_liab(settle_at_tick(3), TICK_SIZE), 50);
+    assert_eq!(tree.settled_liab(settle_at_tick(6), TICK_SIZE), 50);
     destroy(tree);
 }
 
@@ -412,8 +414,8 @@ fun settled_liability_zero_above_winning_range() {
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 2, 6, 50);
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(7), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -424,9 +426,9 @@ fun settled_liability_neg_inf_range_owed_until_close() {
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 0, 5, 100);
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 100);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 100);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(0), TICK_SIZE), 100);
+    assert_eq!(tree.settled_liab(settle_at_tick(5), TICK_SIZE), 100);
+    assert_eq!(tree.settled_liab(settle_at_tick(6), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -437,9 +439,9 @@ fun settled_liability_pos_inf_range_owed_from_lower() {
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 5, constants::pos_inf_tick!(), 100);
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 100);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 100);
+    assert_eq!(tree.settled_liab(settle_at_tick(5), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(6), TICK_SIZE), 100);
+    assert_eq!(tree.settled_liab(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 100);
     destroy(tree);
 }
 
@@ -452,9 +454,9 @@ fun settled_liability_sums_multiple_winners() {
     insert_range(&mut tree, 2, 6, 50);
     insert_range(&mut tree, 4, 7, 30);
 
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 80);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 30);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(8), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(5), TICK_SIZE), 80);
+    assert_eq!(tree.settled_liab(settle_at_tick(7), TICK_SIZE), 30);
+    assert_eq!(tree.settled_liab(settle_at_tick(8), TICK_SIZE), 0);
     destroy(tree);
 }
 
@@ -477,6 +479,6 @@ fun insert_with_zero_quantity_is_no_op() {
     // Genuinely a no-op: no boundary nodes were created, not merely zero-valued.
     assert_eq!(tree.assert_tree_invariant_for_testing(), 0);
     assert_reserve_terms(&tree, 0, 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(4), TICK_SIZE), 0);
+    assert_eq!(tree.settled_liab(settle_at_tick(4), TICK_SIZE), 0);
     destroy(tree);
 }

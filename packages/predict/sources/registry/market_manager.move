@@ -148,8 +148,8 @@ public(package) fun cadence_config(
     propbook_underlying_id: u32,
     cadence_id: u8,
 ): CadenceConfig {
-    let cadence_index = cadence_index(cadence_id);
-    let cadence = &manager.underlying_config(propbook_underlying_id).cadences[cadence_index];
+    let cadence_index = cad_index(cadence_id);
+    let cadence = &manager.und_config(propbook_underlying_id).cadences[cadence_index];
     *cadence
 }
 
@@ -158,7 +158,7 @@ public(package) fun cadence_configs(
     manager: &MarketManager,
     propbook_underlying_id: u32,
 ): vector<CadenceConfig> {
-    manager.underlying_config(propbook_underlying_id).cadences
+    manager.und_config(propbook_underlying_id).cadences
 }
 
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
@@ -167,20 +167,20 @@ public(package) fun cadence_configs(
 /// slot after the current clock time. Reserved higher-rank cadence slots and
 /// already-created markets are skipped, and the selected expiry must still fit
 /// inside the cadence window.
-public(package) fun next_deployable_market(
+public(package) fun next_deploy(
     manager: &MarketManager,
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     cadence_id: u8,
     clock: &Clock,
 ): DeployableMarket {
-    let cadence_index = cadence_index(cadence_id);
-    let underlying = manager.underlying_config(propbook_underlying_id);
+    let cadence_index = cad_index(cadence_id);
+    let underlying = manager.und_config(propbook_underlying_id);
     let cadence = &underlying.cadences[cadence_index];
     assert!(cadence.window_size > 0, ECadenceDisabled);
 
     let now_ms = clock.timestamp_ms();
-    let period_ms = cadence_period_ms(cadence_id);
+    let period_ms = cad_period(cadence_id);
     let watermark_candidate = underlying.last_deployed_expiries[cadence_index] + period_ms;
     let next_future_candidate = ((now_ms / period_ms) + 1) * period_ms;
     let mut expiry = watermark_candidate.max(next_future_candidate);
@@ -189,7 +189,7 @@ public(package) fun next_deployable_market(
     while (expiry <= window_end) {
         let key = MarketKey { propbook_underlying_id, expiry };
         if (
-            has_higher_rank_overlap(underlying, cadence_id, expiry)
+            rank_overlap(underlying, cadence_id, expiry)
                 || manager.market_ids.contains(key)
         ) {
             expiry = expiry + period_ms;
@@ -229,7 +229,7 @@ public(package) fun admission_tick_size(deployable: &DeployableMarket): u64 {
     deployable.cadence.admission_tick_size
 }
 
-public(package) fun cadence_period_ms(cadence_id: u8): u64 {
+public(package) fun cad_period(cadence_id: u8): u64 {
     if (cadence_id == cadence_one_minute!()) {
         constants::one_minute_ms!()
     } else if (cadence_id == cadence_five_minute!()) {
@@ -246,11 +246,11 @@ public(package) fun cadence_period_ms(cadence_id: u8): u64 {
     }
 }
 
-public(package) fun max_expiry_allocation(deployable: &DeployableMarket): u64 {
+public(package) fun max_alloc(deployable: &DeployableMarket): u64 {
     deployable.cadence.max_expiry_allocation
 }
 
-public(package) fun initial_expiry_cash(deployable: &DeployableMarket): u64 {
+public(package) fun init_cash(deployable: &DeployableMarket): u64 {
     deployable.cadence.initial_expiry_cash
 }
 
@@ -264,7 +264,7 @@ public(package) fun register_underlying(manager: &mut MarketManager, propbook_un
         .add(
             propbook_underlying_id,
             UnderlyingMarketConfig {
-                cadences: disabled_cadences(),
+                cadences: off_cadences(),
                 last_deployed_expiries: vector[0, 0, 0, 0, 0, 0],
             },
         );
@@ -287,27 +287,26 @@ public(package) fun set_template_cadence_config(
         initial_expiry_cash,
         window_size,
     };
-    assert_cadence_config(&config);
-    let cadence_index = cadence_index(cadence_id);
-    let cadence =
-        &mut manager.underlying_config_mut(propbook_underlying_id).cadences[cadence_index];
+    chk_cadence(&config);
+    let cadence_index = cad_index(cadence_id);
+    let cadence = &mut manager.und_cfg_mut(propbook_underlying_id).cadences[cadence_index];
     *cadence = config;
 }
 
-public(package) fun record_expiry_creation(
+public(package) fun note_expiry(
     manager: &mut MarketManager,
     propbook_underlying_id: u32,
     cadence_id: u8,
     expiry: u64,
     expiry_market_id: ID,
 ) {
-    let cadence_index = cadence_index(cadence_id);
-    let period_ms = cadence_period_ms(cadence_id);
+    let cadence_index = cad_index(cadence_id);
+    let period_ms = cad_period(cadence_id);
     // Preserve grid alignment and monotonic cadence watermarks at persistence.
     assert!(expiry % period_ms == 0, EInvalidDeploymentExpiry);
     assert!(
         expiry > manager
-            .underlying_config(propbook_underlying_id)
+            .und_config(propbook_underlying_id)
             .last_deployed_expiries[cadence_index],
         EInvalidDeploymentExpiry,
     );
@@ -316,23 +315,18 @@ public(package) fun record_expiry_creation(
     assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
     manager.market_ids.add(key, expiry_market_id);
     let watermark =
-        &mut manager
-            .underlying_config_mut(propbook_underlying_id)
-            .last_deployed_expiries[cadence_index];
+        &mut manager.und_cfg_mut(propbook_underlying_id).last_deployed_expiries[cadence_index];
     *watermark = expiry;
 }
 
 // === Private Functions ===
 
-fun underlying_config(
-    manager: &MarketManager,
-    propbook_underlying_id: u32,
-): &UnderlyingMarketConfig {
+fun und_config(manager: &MarketManager, propbook_underlying_id: u32): &UnderlyingMarketConfig {
     assert!(manager.underlying_configs.contains(propbook_underlying_id), EUnderlyingNotRegistered);
     manager.underlying_configs.borrow(propbook_underlying_id)
 }
 
-fun underlying_config_mut(
+fun und_cfg_mut(
     manager: &mut MarketManager,
     propbook_underlying_id: u32,
 ): &mut UnderlyingMarketConfig {
@@ -340,7 +334,7 @@ fun underlying_config_mut(
     manager.underlying_configs.borrow_mut(propbook_underlying_id)
 }
 
-fun disabled_cadence(): CadenceConfig {
+fun cad_disabled(): CadenceConfig {
     CadenceConfig {
         tick_size: 0,
         admission_tick_size: 0,
@@ -350,23 +344,23 @@ fun disabled_cadence(): CadenceConfig {
     }
 }
 
-fun disabled_cadences(): vector<CadenceConfig> {
+fun off_cadences(): vector<CadenceConfig> {
     vector[
-        disabled_cadence(),
-        disabled_cadence(),
-        disabled_cadence(),
-        disabled_cadence(),
-        disabled_cadence(),
-        disabled_cadence(),
+        cad_disabled(),
+        cad_disabled(),
+        cad_disabled(),
+        cad_disabled(),
+        cad_disabled(),
+        cad_disabled(),
     ]
 }
 
-fun cadence_index(cadence_id: u8): u64 {
+fun cad_index(cadence_id: u8): u64 {
     assert!(cadence_id <= cadence_one_month!(), EInvalidCadence);
     (cadence_id as u64)
 }
 
-fun assert_cadence_config(config: &CadenceConfig) {
+fun chk_cadence(config: &CadenceConfig) {
     let CadenceConfig {
         tick_size,
         admission_tick_size,
@@ -390,26 +384,22 @@ fun assert_cadence_config(config: &CadenceConfig) {
             && window_size > 0,
         EInvalidCadenceConfig,
     );
-    config_constants::assert_market_tick_size_bounds(tick_size);
-    config_constants::assert_market_tick_size_bounds(admission_tick_size);
+    config_constants::chk_ticks(tick_size);
+    config_constants::chk_ticks(admission_tick_size);
     assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
     assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
-    config_constants::assert_cadence_window_size(window_size);
+    config_constants::chk_cad_win(window_size);
     assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 
-fun has_higher_rank_overlap(
-    underlying: &UnderlyingMarketConfig,
-    cadence_id: u8,
-    expiry: u64,
-): bool {
+fun rank_overlap(underlying: &UnderlyingMarketConfig, cadence_id: u8, expiry: u64): bool {
     let mut higher_cadence_id = cadence_id + 1;
     while ((higher_cadence_id as u64) < underlying.cadences.length()) {
-        let higher_cadence = &underlying.cadences[cadence_index(higher_cadence_id)];
+        let higher_cadence = &underlying.cadences[cad_index(higher_cadence_id)];
         if (
             higher_cadence.window_size > 0
-                && expiry % cadence_period_ms(higher_cadence_id) == 0
+                && expiry % cad_period(higher_cadence_id) == 0
         ) {
             return true
         };

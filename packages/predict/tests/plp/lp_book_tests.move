@@ -12,7 +12,7 @@
 /// HERE against a standalone `LpBook` + `Ledger`. Every expected share/payout is
 /// hand-computed independently of the contract.
 ///
-/// Fixture convention: `mint_locked_liquidity` shares are permanent and have no withdraw
+/// Fixture convention: `mint_locked` shares are permanent and have no withdraw
 /// path, so tracked supply is `locked + circulating` and a drain can only ever burn the
 /// circulating part. Any fixture whose drain burns PLP therefore stages that circulating
 /// supply the way production does — a filled supply request (`lock_and_fill_supply`) —
@@ -78,7 +78,7 @@ const NO_CAP: u64 = 18_446_744_073_709_551_615;
 #[test]
 fun mint_locked_liquidity_increments_total_supply() {
     let (scenario, mut book, ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
     // The permanent minimum-liquidity mint raises treasury supply; it is held by the book
     // with no withdraw path, so total_supply stays >= this floor for the pool's life.
     assert_eq!(book.total_supply(), min_supply!());
@@ -92,18 +92,18 @@ fun mint_locked_liquidity_increments_total_supply() {
 fun supply_drain_mints_at_mark_and_joins_idle() {
     let (mut scenario, mut book, mut ledger) = setup();
     // Genesis lock seeds total_supply at a 1.0 mark (pool_value == total_supply).
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     let index = book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
     assert_eq!(index, 0);
     assert_eq!(book.supply_requests_pending(), 1);
 
     // Drain at pool_value == total_supply == L (mark 1.0): the supply mints 1:1.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -127,16 +127,16 @@ fun supply_drain_mints_at_mark_and_joins_idle() {
 fun priced_supply_mints_proportional_shares() {
     let (mut scenario, mut book, mut ledger) = setup();
     // total_supply 30e6, pool_value 60e6 -> mark 2.0.
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // shares = 20e6 * 30e6 / 60e6 = 10e6.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -166,11 +166,11 @@ fun priced_withdraw_burns_and_pays_from_idle() {
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
     // usdc = 10e6 * 60e6 / 30e6 = 20e6.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -204,11 +204,11 @@ fun two_withdrawals_share_one_frozen_mark() {
 
     // Each prices at the FROZEN (50e6, 30e6) mark: floor(10e6 * 50e6 / 30e6) = 16_666_666.
     // If the second repriced post-first it would round to 16_666_667.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(50_000_000, 30_000_000),
+        lp_book::new_mark(50_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -239,16 +239,16 @@ fun a_withdraw_queued_after_the_cutoff_is_not_drained() {
     // The cutoff is captured with only the first withdraw queued. The second,
     // enqueued AFTER, sits at or above the cutoff and must be left for the next
     // mark — even though the budget is unbounded and idle is ample. Without the
-    // `request.index >= cutoff` break in `drain_withdraw_queue`, both would fill
+    // `request.index >= cutoff` break in `drain_wd`, both would fill
     // and someone watching the frozen mark form could withdraw against a price
     // they already know.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(50_000_000, 30_000_000),
+        lp_book::new_mark(50_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -278,17 +278,17 @@ fun a_withdraw_queued_after_the_cutoff_is_not_drained() {
 #[test]
 fun supply_fee_is_withheld_before_shares_are_priced() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // fee = 1% of 20e6 = 200_000; shares = 19_800_000 * 30e6 / 60e6 = 9_900_000
     // (the unfeed quote is 10e6, so the fee costs exactly 100_000 shares).
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -317,11 +317,11 @@ fun withdraw_fee_is_withheld_from_the_payout() {
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
     // gross = 10e6 * 60e6 / 30e6 = 20e6; fee = 200_000; net paid = 19_800_000.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -345,16 +345,16 @@ fun withdraw_fee_is_withheld_from_the_payout() {
 #[test]
 fun supply_limit_measured_against_post_fee_shares_fills() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     // A limit set exactly at the post-fee quote (9_900_000) must fill.
     book.request_supply(payment, alice_id(), ALICE, 9_900_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -375,17 +375,17 @@ fun supply_limit_measured_against_post_fee_shares_fills() {
 #[test]
 fun supply_limit_above_post_fee_shares_is_refunded_at_one_attempt() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     // One unit above the post-fee quote must miss, even though the PRE-fee quote
     // (10e6) clears it — this is what makes the limit net-of-fee.
     book.request_supply(payment, alice_id(), ALICE, 9_900_001);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -414,11 +414,11 @@ fun withdraw_limit_measured_against_post_fee_payout_fills() {
     // A limit set exactly at the post-fee payout (19_800_000) must fill.
     enqueue_withdraw_with_limit(&mut scenario, &mut book, 10_000_000, 19_800_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -444,11 +444,11 @@ fun withdraw_limit_above_post_fee_payout_is_refunded_at_one_attempt() {
     // One unit above the post-fee payout misses, though the PRE-fee 20e6 clears it.
     enqueue_withdraw_with_limit(&mut scenario, &mut book, 10_000_000, 19_800_001);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -472,17 +472,17 @@ fun supply_fee_rounds_up_to_the_pool() {
     let (mut scenario, mut book, mut ledger) = setup();
     // Mark 1.0, so shares equal the post-fee USDC and the rounding is visible
     // directly in `total_supply`.
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(10_000_001, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // 1% of 10_000_001 = 100_000.01, which must round UP to 100_001 (R2: dust
     // biases to the protocol). Rounding down would leave net 9_900_001.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_mark(30_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -502,16 +502,16 @@ fun supply_fee_rounds_up_to_the_pool() {
 #[test]
 fun max_fee_rate_withholds_five_percent() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // fee = 5% of 20e6 = 1e6; shares = 19e6 * 30e6 / 60e6 = 9_500_000.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(MAX_FEE),
         vault_id(),
         supply_cutoff,
@@ -531,7 +531,7 @@ fun max_fee_rate_withholds_five_percent() {
 #[test]
 fun capped_partial_supply_charges_the_fee_on_the_filled_slice_only() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -539,11 +539,11 @@ fun capped_partial_supply_charges_the_fee_on_the_filled_slice_only() {
     // request fills. The fee is charged on that 10e6 slice, not on the 20e6
     // request: fee = 100_000, shares = 9_900_000 * 30e6 / 60e6 = 4_950_000.
     // Charging the whole request would have withheld 200_000 and minted 4_900_000.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -571,11 +571,11 @@ fun withdraw_fills_when_idle_covers_only_the_post_fee_payout() {
     seed_idle(&mut ledger, 9_800_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -602,17 +602,17 @@ fun withdraw_fills_when_idle_covers_only_the_post_fee_payout() {
 #[test]
 fun supply_fill_reports_the_fee_charged_on_the_slice() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // Cap leaves 10e6 of the 20e6 request room; 1% of that slice is 100_000. The
     // whole request's fee would be 200_000.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -639,11 +639,11 @@ fun withdraw_fill_reports_the_fee_withheld_from_the_payout() {
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
     // gross 20e6 at the 2.0 mark, 1% of which is 200_000.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -676,11 +676,11 @@ fun withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle() {
     lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -713,15 +713,15 @@ fun withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle() {
 #[test]
 fun capped_partial_supply_at_its_own_price_fills_with_the_fee() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(20_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, 9_900_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         supply_fee(ONE_PERCENT_FEE),
         vault_id(),
         supply_cutoff,
@@ -751,11 +751,11 @@ fun max_withdraw_fee_rate_withholds_five_percent() {
     seed_idle(&mut ledger, 50_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         withdraw_fee(MAX_FEE),
         vault_id(),
         supply_cutoff,
@@ -790,11 +790,11 @@ fun withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest() {
     enqueue_withdraw(&mut scenario, &mut book, 20_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 20_000_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(40_000_000, 40_000_000),
+        lp_book::new_mark(40_000_000, 40_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -826,7 +826,7 @@ fun withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest() {
 #[test]
 fun supply_within_pool_cap_fills() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -845,7 +845,7 @@ fun supply_within_pool_cap_fills() {
 #[test]
 fun supply_carries_when_the_pool_has_no_headroom() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -872,7 +872,7 @@ fun supply_carries_when_the_pool_has_no_headroom() {
 #[test]
 fun over_cap_and_under_limit_takes_the_limit_branch() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     // At the 1.0 mark this quotes 10e6 PLP, short of the 11e6 minimum.
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, 11_000_000);
@@ -896,7 +896,7 @@ fun over_cap_and_under_limit_takes_the_limit_branch() {
 #[test]
 fun supply_larger_than_headroom_partially_fills_to_the_cap() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(30_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -918,7 +918,7 @@ fun supply_larger_than_headroom_partially_fills_to_the_cap() {
 #[test]
 fun limit_miss_is_not_partially_filled_into_available_headroom() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     // At the 1.0 mark a 30 USDC deposit quotes 30e6 PLP, short of this 31e6 minimum.
     let payment = coin::mint_for_testing<USDC>(30_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, 31_000_000);
@@ -939,7 +939,7 @@ fun limit_miss_is_not_partially_filled_into_available_headroom() {
 #[test]
 fun supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     // Three 10 USDC requests against 25 USDC of room: two fit, the third does not.
     let mut i = 0u64;
     while (i < 3) {
@@ -965,7 +965,7 @@ fun supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush() {
 #[test]
 fun supply_carries_when_pool_is_already_over_cap() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -1005,11 +1005,11 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     enqueue_withdraw_for(&mut scenario, &mut book, BOB, 100_000_000, NO_MIN_OUTPUT);
 
     // Mark: pool 1,200 USDC over 1,000 PLP = 1.2 per share. Cap 1,300 leaves 100 of room.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(1_200_000_000, 1_000_000_000),
+        lp_book::new_mark(1_200_000_000, 1_000_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1053,7 +1053,7 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
 #[test]
 fun full_pool_holds_the_supply_queue_instead_of_clearing_it() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let mut i = 0u64;
     while (i < 4) {
         let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
@@ -1078,7 +1078,7 @@ fun full_pool_holds_the_supply_queue_instead_of_clearing_it() {
 #[test]
 fun partially_filled_head_keeps_its_place_across_flushes() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let first = coin::mint_for_testing<USDC>(30_000_000, scenario.ctx());
     book.request_supply(first, alice_id(), ALICE, NO_MIN_OUTPUT);
     let second = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
@@ -1135,15 +1135,15 @@ fun pool_cap_does_not_gate_withdrawals() {
 fun supply_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let (mut scenario, mut book, mut ledger) = setup();
     // total_supply 30e6, mark 2.0 -> supply quotes 10e6 shares, below the 11e6 limit.
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, LIMIT_MISS_SUPPLY_MIN_OUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1171,17 +1171,17 @@ fun supply_limit_miss_refunds_at_the_flush_that_reaches_it() {
 #[test]
 fun supply_limit_miss_does_not_block_later_requests() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let unfillable = coin::mint_for_testing<USDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
     book.request_supply(unfillable, bob_id(), BOB, unattainable_min_out());
     let honest = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(honest, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1210,15 +1210,15 @@ fun supply_limit_miss_does_not_block_later_requests() {
 fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() {
     let (mut scenario, mut book, mut ledger) = setup();
     // total_supply 30e6, first mark 2.0 -> supply quotes 10e6 shares, below the 11e6 limit.
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, LIMIT_MISS_SUPPLY_MIN_OUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1235,11 +1235,11 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() 
     assert_eq!(book.total_supply(), 30_000_000);
 
     // Improved mark 1.0 -> the same queued request now quotes 20e6 shares and fills.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_mark(30_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1263,7 +1263,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() 
 #[test]
 fun supply_limit_expires_after_three_misses_at_three_attempts() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, LIMIT_MISS_SUPPLY_MIN_OUT);
 
@@ -1292,7 +1292,7 @@ fun supply_limit_expires_after_three_misses_at_three_attempts() {
 #[test]
 fun raising_attempts_reintroduces_head_of_line_blocking() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let unfillable = coin::mint_for_testing<USDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
     book.request_supply(unfillable, bob_id(), BOB, unattainable_min_out());
     let honest = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
@@ -1363,7 +1363,7 @@ fun withdraw_limit_miss_carries_then_expires_at_three_attempts() {
 #[test]
 fun limit_miss_spends_one_budget_unit() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let unfillable = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(unfillable, bob_id(), BOB, unattainable_min_out());
     let honest = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
@@ -1400,7 +1400,7 @@ fun limit_miss_spends_one_budget_unit() {
 fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let (mut scenario, mut book, mut ledger) = setup();
     // total_supply 30e6, mark 2.0 -> withdraw quotes 20e6 USDC, below the 21e6 limit.
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     seed_idle(&mut ledger, 60_000_000);
     enqueue_withdraw_with_limit(
         &mut scenario,
@@ -1409,11 +1409,11 @@ fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
         LIMIT_MISS_WITHDRAW_MIN_OUT,
     );
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1453,11 +1453,11 @@ fun withdraw_limit_miss_does_not_block_later_requests() {
     );
     enqueue_withdraw_for(&mut scenario, &mut book, ALICE, min_withdraw!(), NO_MIN_OUTPUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1484,7 +1484,7 @@ fun withdraw_limit_miss_does_not_block_later_requests() {
 #[test]
 fun unbounded_flush_drains_every_queued_supply() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
     // 101 supplies at the 1.0 mark -> all mint 1:1, past the old shared 100-request cap.
     let total = 101u64;
     let mut i = 0u64;
@@ -1494,11 +1494,11 @@ fun unbounded_flush_drains_every_queued_supply() {
         i = i + 1;
     };
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1521,7 +1521,7 @@ fun unbounded_flush_drains_every_queued_supply() {
 #[test]
 fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
 
     // Fill exactly two pages (PAGE_CAPACITY = 64): page 0 holds 0..63, page 1
     // holds the single index 64. A FIFO drain only ever empties the head page,
@@ -1544,11 +1544,11 @@ fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
 
     // The list survived the unlink: draining fills all 64 page-0 requests, so
     // head_page_id and tail_page_id still point at a coherent single page.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1574,7 +1574,7 @@ fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
 #[test]
 fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
 
     // Three pages: page 0 (0..63), page 1 (64..127), page 2 (128).
     let page_capacity = 64u64;
@@ -1597,11 +1597,11 @@ fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
 
     // Forward relink: a FIFO drain reaches page 2 only through page 0's rewired
     // `next`, so all 65 survivors (page 0's 64 + page 2's 1) fill.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1621,7 +1621,7 @@ fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
 #[test]
 fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
 
     // Same three pages: page 0 (0..63), page 1 (64..127), page 2 (128).
     let page_capacity = 64u64;
@@ -1651,11 +1651,11 @@ fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
     assert_eq!(book.supply_requests_pending(), page_capacity);
 
     // Page 0 survived intact: draining fills all 64.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1675,7 +1675,7 @@ fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
 #[test]
 fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
     // Three supplies at the 1.0 mark; a supply_budget of 2 fills two and carries the third.
     let mut i = 0u64;
     while (i < 3) {
@@ -1684,11 +1684,11 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
         i = i + 1;
     };
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1705,11 +1705,11 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     assert_eq!(book.supply_requests_pending(), 1); // third carried
 
     // The carried supply fills on the next unbounded drain.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(2 * min_supply!(), 3 * min_supply!()),
+        lp_book::new_mark(2 * min_supply!(), 3 * min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1729,7 +1729,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
 fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
     let (mut scenario, mut book, mut ledger) = setup();
     // total_supply 30e6, idle 30e6 -> mark 1.0.
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     seed_idle(&mut ledger, 30_000_000);
     // Three supplies queued ahead of one withdrawal. Independent budgets of 1 each fill
     // exactly one of each, so the withdrawal drains despite the supply backlog. Supplies
@@ -1743,11 +1743,11 @@ fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
     };
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_mark(30_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1808,7 +1808,7 @@ fun cancel_withdraw_returns_escrowed_plp() {
 #[test]
 fun cancelled_supply_requests_do_not_spend_drain_budget() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
 
     let cancelled = 5;
     let mut refunds = balance::zero<USDC>();
@@ -1828,11 +1828,11 @@ fun cancelled_supply_requests_do_not_spend_drain_budget() {
 
     // A supply_budget of 1 fills the single live request: the cancelled ones were
     // physically removed and never counted against the budget.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        lp_book::new_mark(min_supply!(), min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1880,15 +1880,15 @@ fun cancel_with_non_recipient_aborts() {
 #[test]
 fun priced_supply_with_zero_pool_value_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(0, min_supply!()),
+        lp_book::new_mark(0, min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1911,16 +1911,16 @@ fun priced_supply_with_zero_pool_value_refunds() {
 #[test]
 fun priced_supply_that_rounds_to_zero_shares_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(min_supply!());
+    book.mint_locked(min_supply!());
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // shares = floor(min_supply * min_supply / (min_supply^2 + 1)) = 0.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
+        lp_book::new_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1943,15 +1943,15 @@ fun priced_supply_that_rounds_to_zero_shares_refunds() {
 #[test]
 fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    book.mint_locked(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
     enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
 
     // payout = floor(min_withdraw * 1 / (min_withdraw + 1)) = 0.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
+        lp_book::new_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -1974,16 +1974,16 @@ fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
 #[test]
 fun supply_at_min_executable_plp_price_fills() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ONE_PLP);
+    book.mint_locked(ONE_PLP);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // At 0.01 USDC/PLP, 10 USDC mints 1,000 PLP = 1_000_000_000 raw shares.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        lp_book::new_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2005,15 +2005,15 @@ fun supply_at_min_executable_plp_price_fills() {
 #[test]
 fun supply_below_min_executable_plp_price_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ONE_PLP);
+    book.mint_locked(ONE_PLP);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
+        lp_book::new_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2036,16 +2036,16 @@ fun supply_below_min_executable_plp_price_refunds() {
 #[test]
 fun supply_at_max_executable_plp_price_fills() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ONE_PLP);
+    book.mint_locked(ONE_PLP);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // At 100 USDC/PLP, 10 USDC mints 0.1 PLP = 100_000 raw shares.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        lp_book::new_mark(MAX_EXECUTABLE_PLP_PRICE, ONE_PLP),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2067,15 +2067,15 @@ fun supply_at_max_executable_plp_price_fills() {
 #[test]
 fun supply_above_max_executable_plp_price_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ONE_PLP);
+    book.mint_locked(ONE_PLP);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE + 1, ONE_PLP),
+        lp_book::new_mark(MAX_EXECUTABLE_PLP_PRICE + 1, ONE_PLP),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2098,17 +2098,17 @@ fun supply_above_max_executable_plp_price_refunds() {
 #[test]
 fun oversized_supply_that_exceeds_u64_shares_refunds() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ONE_PLP);
+    book.mint_locked(ONE_PLP);
     let payment = coin::mint_for_testing<USDC>(std::u64::max_value!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // At the executable floor price, max-u64 USDC would mint max_u64 * 100
     // raw PLP shares, which does not fit in u64 and is therefore non-executable.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        lp_book::new_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2132,18 +2132,18 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
 fun supply_that_exceeds_remaining_plp_headroom_fills_the_representable_prefix() {
     let (mut scenario, mut book, mut ledger) = setup();
     let near_max_total_supply = std::u64::max_value!() - NEAR_MAX_SUPPLY_HEADROOM;
-    book.mint_locked_liquidity(near_max_total_supply);
+    book.mint_locked(near_max_total_supply);
     let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     // At a 1.0 executable mark the 10 USDC request quotes 10e6 shares, but only
     // 5_000_000 raw units remain before the treasury supply cap. The drain mints the
     // 5e6 that fit and leaves the rest queued rather than refusing the whole request.
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(near_max_total_supply, near_max_total_supply),
+        lp_book::new_mark(near_max_total_supply, near_max_total_supply),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2166,7 +2166,7 @@ fun supply_that_exceeds_remaining_plp_headroom_fills_the_representable_prefix() 
 #[test]
 fun non_executable_supply_refunds_spend_supply_budget() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ONE_PLP);
+    book.mint_locked(ONE_PLP);
     let mut i = 0u64;
     while (i < 3) {
         let payment = coin::mint_for_testing<USDC>(min_supply!(), scenario.ctx());
@@ -2174,11 +2174,11 @@ fun non_executable_supply_refunds_spend_supply_budget() {
         i = i + 1;
     };
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
+        lp_book::new_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2201,15 +2201,15 @@ fun non_executable_supply_refunds_spend_supply_budget() {
 #[test]
 fun non_executable_withdraw_refunds_spend_withdraw_budget() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
+    book.mint_locked(ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY);
     enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
     enqueue_withdraw(&mut scenario, &mut book, min_withdraw!());
 
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
+        lp_book::new_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2251,14 +2251,14 @@ fun request_withdraw_below_min_aborts() {
 
 /// Fee-free rates. Most drain tests pin the mark arithmetic, the cap, and the prefix
 /// rules, so they price at zero on both legs.
-fun no_fees(): FeeRates { lp_book::new_fee_rates(NO_FEE, NO_FEE) }
+fun no_fees(): FeeRates { lp_book::new_fees(NO_FEE, NO_FEE) }
 
 /// Rates that charge the supply leg only, so a quote reading the withdraw rate here
 /// is a detectable bug rather than an invisible one.
-fun supply_fee(rate: u64): FeeRates { lp_book::new_fee_rates(rate, NO_FEE) }
+fun supply_fee(rate: u64): FeeRates { lp_book::new_fees(rate, NO_FEE) }
 
 /// Rates that charge the withdraw leg only; the mirror of `supply_fee`.
-fun withdraw_fee(rate: u64): FeeRates { lp_book::new_fee_rates(NO_FEE, rate) }
+fun withdraw_fee(rate: u64): FeeRates { lp_book::new_fees(NO_FEE, rate) }
 
 fun setup(): (Scenario, LpBook<LP_BOOK_TESTS>, Ledger) {
     let mut scenario = test::begin(ALICE);
@@ -2282,11 +2282,11 @@ fun drain_at_par_with_cap(
     ledger: &mut Ledger,
     max_pool_value: u64,
 ): DrainSummary {
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_mark(30_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2307,11 +2307,11 @@ fun drain_at_par_with_budgets(
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
 ): DrainSummary {
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_mark(30_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2332,11 +2332,11 @@ fun drain_at_two_x(
     ledger: &mut Ledger,
     max_limit_misses: u64,
 ): DrainSummary {
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         ledger,
-        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        lp_book::new_mark(60_000_000, 30_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2387,14 +2387,14 @@ fun lock_and_fill_supply(
     locked: u64,
     supplied: u64,
 ) {
-    book.mint_locked_liquidity(locked);
+    book.mint_locked(locked);
     let payment = coin::mint_for_testing<USDC>(supplied, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         ledger,
-        lp_book::new_flush_mark(locked, locked),
+        lp_book::new_mark(locked, locked),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2445,9 +2445,9 @@ fun assert_drain_summary(
     withdrawals_filled: u64,
     requests_processed: u64,
 ) {
-    assert_eq!(summary.supplies_filled(), supplies_filled);
-    assert_eq!(summary.withdrawals_filled(), withdrawals_filled);
-    assert_eq!(summary.requests_processed(), requests_processed);
+    assert_eq!(summary.sups_filled(), supplies_filled);
+    assert_eq!(summary.wds_filled(), withdrawals_filled);
+    assert_eq!(summary.processed(), requests_processed);
 }
 
 fun finish(scenario: Scenario, book: LpBook<LP_BOOK_TESTS>, ledger: Ledger) {
@@ -2459,12 +2459,12 @@ fun finish(scenario: Scenario, book: LpBook<LP_BOOK_TESTS>, ledger: Ledger) {
 // === Partial-fill follow-ups: cancel, and repeated partials ===
 
 /// Cancelling after a partial fill must return only what is still escrowed — the
-/// filled part already became PLP. Pins that `remove_for_recipient` reads the entry's
+/// filled part already became PLP. Pins that `remove_for` reads the entry's
 /// reduced amount rather than the amount originally requested.
 #[test]
 fun cancel_after_a_partial_fill_refunds_only_the_remainder() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     let payment = coin::mint_for_testing<USDC>(30_000_000, scenario.ctx());
     let index = book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -2489,7 +2489,7 @@ fun cancel_after_a_partial_fill_refunds_only_the_remainder() {
 #[test]
 fun repeated_partial_fills_complete_the_request() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
+    book.mint_locked(30_000_000);
     // 30 USDC asking 20 PLP: a 2/3 rate, comfortably under the 1.0 mark.
     let payment = coin::mint_for_testing<USDC>(30_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, 20_000_000);
@@ -2528,7 +2528,7 @@ fun repeated_partial_fills_complete_the_request() {
 #[test]
 fun carried_limit_rounds_up_and_refuses_a_fill_below_the_requested_price() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(20_000_000);
+    book.mint_locked(20_000_000);
     let payment = coin::mint_for_testing<USDC>(40_000_001, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, 26_666_667);
 
@@ -2556,11 +2556,11 @@ fun drain_at_two_thirds(
     ledger: &mut Ledger,
     max_pool_value: u64,
 ): DrainSummary {
-    let supply_cutoff = book.next_supply_request_index();
-    let withdraw_cutoff = book.next_withdraw_request_index();
+    let supply_cutoff = book.next_sup_idx();
+    let withdraw_cutoff = book.next_wd_idx();
     book.drain(
         ledger,
-        lp_book::new_flush_mark(30_000_000, 20_000_000),
+        lp_book::new_mark(30_000_000, 20_000_000),
         no_fees(),
         vault_id(),
         supply_cutoff,
@@ -2584,7 +2584,7 @@ fun drain_at_two_thirds(
 #[test]
 fun supply_prefix_below_the_requests_price_is_carried_not_filled() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(20_000_000);
+    book.mint_locked(20_000_000);
     let payment = coin::mint_for_testing<USDC>(30_000_000, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, 20_000_000);
 
@@ -2608,7 +2608,7 @@ fun supply_prefix_below_the_requests_price_is_carried_not_filled() {
 #[test]
 fun withdraw_prefix_below_the_requests_price_is_carried_not_paid() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(50_000_000);
+    book.mint_locked(50_000_000);
     seed_idle(&mut ledger, 10_000_001);
     enqueue_withdraw_with_limit(&mut scenario, &mut book, 30_000_000, 45_000_000);
 

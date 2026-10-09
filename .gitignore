@@ -35,6 +35,8 @@ __pycache__/
 # Private deployment journals and atomic-write temporaries
 packages/predict/deployment/deployment.*.state.json
 packages/predict/deployment/deployment.*.json.tmp
+# The v4 upgrade workflow's unsigned transactions for the multisig.
+packages/predict/deployment/deployment.*.upgrade-v4/
 packages/predict/simulations/runs/
 packages/predict/parallel_pool_implementation_plan.md
 

@@ -15,6 +15,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { blake2b } from "@noble/hashes/blake2.js";
+import { bcs, TypeTagSerializer } from "@mysten/sui/bcs";
 import {
     CADENCES,
     configureDeployment,
@@ -30,7 +32,9 @@ import {
     validateLockedCapitalReceipt,
     resolvedModuleAddress,
     mergePublishedMetadata,
+    EXPECTED_ORDER_DESK,
     EXPECTED_PROTOCOL_CONFIG,
+    EXPECTED_SESSIONS_VERSION_WATERMARK,
     MANIFEST_RELATIVE,
     STATE_RELATIVE,
     assertScriptRecovery,
@@ -48,7 +52,14 @@ import {
     operationalCapOwner,
     assertOperationalCapAllowlists,
     executeDeployment,
+    enableOrderFlowTransaction,
+    assertOrderFlowReceipt,
+    ensureMarketQueues,
     ensureMarkets,
+    marketQueueCreationTransaction,
+    marketQueueId,
+    moveSourceTypeOriginsOf,
+    recordPublish,
     assertPackagePlan,
     assertRecoverableInFlight,
     assertSourceBinding,
@@ -297,7 +308,9 @@ test("explicit script-only recovery preserves the published source and fails clo
         usdc: id("2"),
         account: id("3"),
         propbook: id("4"),
+        predict_math: id("8"),
         predict: id("5"),
+        predict_orders: id("9"),
         deepbook_core_account: id("6"),
         sessions: id("7"),
     };
@@ -306,7 +319,9 @@ test("explicit script-only recovery preserves the published source and fails clo
         usdc: "usdc-tx",
         account: "account-tx",
         propbook: "propbook-tx",
+        predict_math: "predict-math-tx",
         predict: "predict-tx",
+        predict_orders: "predict-orders-tx",
         deepbook_core_account: "wrapper-tx",
         sessions: "sessions-tx",
     };
@@ -388,7 +403,7 @@ function manifestFixture(): IntegrationManifest {
     const predict = id("4");
     const usdc = id("2");
     return {
-        schemaVersion: 8,
+        schemaVersion: 10,
         deployment: "deepbook-predict-testnet",
         network: "testnet",
         chainId: "4c78adac",
@@ -398,7 +413,9 @@ function manifestFixture(): IntegrationManifest {
             usdc,
             account: id("2"),
             propbook: id("3"),
+            predictMath: id("8"),
             predict,
+            predictOrders: id("9"),
             deepbookCoreAccount: id("5"),
             sessions: id("6"),
         },
@@ -415,6 +432,8 @@ function manifestFixture(): IntegrationManifest {
             protocolConfig: id("9"),
             poolVault: id("a"),
             registry: id("b"),
+            orderDesk: id("f"),
+            queueRegistry: `0x${"fe".repeat(32)}`,
             sessionsConfig: id("c"),
             deepbookRegistry: "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1",
             accumulatorRoot: "0x0000000000000000000000000000000000000000000000000000000000000acc",
@@ -454,6 +473,7 @@ function manifestFixture(): IntegrationManifest {
                 protocolConfig: { objectVersion: "1", digest: "protocol" },
                 registry: { objectVersion: "1", digest: "registry" },
                 oracleRegistry: { objectVersion: "1", digest: "oracle" },
+                orderDesk: { objectVersion: "3", digest: "desk" },
                 sessionsConfig: { objectVersion: "1", digest: "sessions" },
                 deepbookRegistry: { objectVersion: "1", digest: "deepbook" },
             },
@@ -499,6 +519,23 @@ function manifestFixture(): IntegrationManifest {
                 expiryFeeWindowMs: EXPECTED_PROTOCOL_CONFIG.expiryFeeWindowMs,
                 expiryFeeMaxMultiplier: EXPECTED_PROTOCOL_CONFIG.expiryFeeMaxMultiplier,
             },
+            // The launch policy, written out independently of EXPECTED_ORDER_DESK.
+            delayedExecution: {
+                delayMs: "800",
+                stallTimeoutMs: "5000",
+                stuckThresholdMs: "1500",
+                gapWaitMs: "2000",
+                pythPriceBufferMs: "0",
+                pythChannel: "3",
+                sviMaxAgeMs: "60000",
+                mintCapacity: "100",
+                sellCapacity: "100",
+                perAccountCap: "5",
+                orderFee: "20000",
+                minSellQuantity: "10000",
+                settleRefundBatch: "450",
+                settlePayoutBatch: "900",
+            },
             cadences: {
                 BTC: CADENCES.map((cadence) => ({
                     id: cadence.id,
@@ -543,7 +580,9 @@ function completeStateFixture() {
             usdc: objectEvidence(manifest.packages.usdc),
             account: objectEvidence(manifest.packages.account),
             propbook: objectEvidence(manifest.packages.propbook),
+            predict_math: objectEvidence(manifest.packages.predictMath),
             predict: objectEvidence(manifest.packages.predict),
+            predict_orders: objectEvidence(manifest.packages.predictOrders),
             deepbook_core_account: objectEvidence(manifest.packages.deepbookCoreAccount),
             sessions: objectEvidence(manifest.packages.sessions),
         },
@@ -603,6 +642,14 @@ function completeStateFixture() {
                     manifest.initialConfiguration.stateAnchors.registry.digest,
                 ),
             },
+            predict_orders: {
+                "desk::OrderDesk": objectEvidence(
+                    manifest.objects.orderDesk,
+                    manifest.initialConfiguration.stateAnchors.orderDesk.objectVersion,
+                    manifest.initialConfiguration.stateAnchors.orderDesk.digest,
+                ),
+                "desk::QueueRegistry": objectEvidence(manifest.objects.queueRegistry),
+            },
             sessions: {
                 "session_config::SessionsConfig": objectEvidence(
                     manifest.objects.sessionsConfig,
@@ -643,6 +690,10 @@ function completeStateFixture() {
             setTx: null,
         })),
         protocolConfig: { ...EXPECTED_PROTOCOL_CONFIG },
+        orderDesk: {
+            versionWatermark: "1",
+            policy: { ...manifest.initialConfiguration.delayedExecution },
+        },
         pool: {
             totalSupply: "0",
             idleBalance: "0",
@@ -777,7 +828,9 @@ test("the package plan is complete and topological", () => {
             assertPackagePlan([
                 "sessions",
                 "deepbook_core_account",
+                "predict_orders",
                 "predict",
+                "predict_math",
                 "propbook",
                 "account",
                 "usdc",
@@ -785,12 +838,410 @@ test("the package plan is complete and topological", () => {
             ]),
         /planned before local dependency/,
     );
+    // The library before Predict, Predict before the companion, the companion before Sessions.
+    const publishes = irreversibleDeploymentSteps().filter((step) => step.startsWith("publish_"));
+    for (const [before, after] of [
+        ["publish_predict_math", "publish_predict"],
+        ["publish_predict", "publish_predict_orders"],
+        ["publish_predict_orders", "publish_sessions"],
+    ]) {
+        assert.ok(publishes.indexOf(before) >= 0 && publishes.indexOf(after) >= 0);
+        assert.ok(publishes.indexOf(before) < publishes.indexOf(after), `${before} < ${after}`);
+    }
+    for (const swapped of [
+        [
+            "fixed_math",
+            "usdc",
+            "account",
+            "propbook",
+            "predict",
+            "predict_math",
+            "predict_orders",
+            "deepbook_core_account",
+            "sessions",
+        ],
+        [
+            "fixed_math",
+            "usdc",
+            "account",
+            "propbook",
+            "predict_math",
+            "predict_orders",
+            "predict",
+            "deepbook_core_account",
+            "sessions",
+        ],
+        [
+            "fixed_math",
+            "usdc",
+            "account",
+            "propbook",
+            "predict_math",
+            "predict",
+            "deepbook_core_account",
+            "sessions",
+            "predict_orders",
+        ],
+    ] as const) {
+        assert.throws(() => assertPackagePlan(swapped), /planned before local dependency/);
+    }
 });
 
 test("gas funding derives the complete fresh transaction plan", () => {
-    assert.equal(plannedTransactionCount(), 19);
-    assert.equal(maximumTransactionCountPerRun(), 19);
-    assert.equal(irreversibleDeploymentSteps().length, 26);
+    // 17 fixed steps, then two initial markets per enabled cadence, each with its queue.
+    assert.equal(plannedTransactionCount(), 25);
+    assert.equal(maximumTransactionCountPerRun(), 25);
+    assert.equal(irreversibleDeploymentSteps().length, 34);
+    const steps = plannedTransactionSteps();
+    // Queued trading needs the companion allowlisted, and the bootstrap flush its operator.
+    assert.ok(steps.includes("enable_order_flow"));
+    assert.ok(!steps.includes("init_delayed_execution_policy"));
+    assert.ok(steps.indexOf("enable_order_flow") < steps.indexOf("bootstrap_pool"));
+    assert.ok(steps.indexOf("add_deployer_flush_operator") < steps.indexOf("bootstrap_pool"));
+    for (const market of ["1m_0", "1m_1", "5m_0", "5m_1"]) {
+        assert.ok(
+            steps.indexOf(`create_market_${market}`) < steps.indexOf(`create_queue_${market}`),
+        );
+    }
+});
+
+test("the expected fresh version watermarks are the compiled current_version", () => {
+    // A fresh publish sets the watermark to `current_version!()`, past the
+    // delayed-execution cutover, so the audit must expect that value.
+    const constants = readFileSync(new URL("../sources/constants.move", import.meta.url), "utf8");
+    const version = /public macro fun current_version\(\): u64 \{ (\d+) \}/.exec(constants);
+    assert.ok(version, "constants.move declares current_version");
+    assert.equal(EXPECTED_PROTOCOL_CONFIG.versionWatermark, version[1]);
+    const sessions = readFileSync(
+        new URL("../../sessions/sources/session_config.move", import.meta.url),
+        "utf8",
+    );
+    const sessionsVersion = /macro fun current_version\(\): u64 \{ (\d+) \}/.exec(sessions);
+    assert.ok(sessionsVersion, "session_config.move declares current_version");
+    assert.equal(EXPECTED_SESSIONS_VERSION_WATERMARK, sessionsVersion[1]);
+});
+
+test("the expected OrderDesk is the launch policy and floor the companion's init creates", () => {
+    const config = readFileSync(
+        new URL("../../predict_orders/sources/delayed_execution_config.move", import.meta.url),
+        "utf8",
+    );
+    const macro = (name: string): string => {
+        const match = new RegExp(`macro fun ${name}\\(\\): u\\d+ \\{ ([0-9_]+) \\}`).exec(config);
+        assert.ok(match, `delayed_execution_config.move declares ${name}`);
+        return match[1].replaceAll("_", "");
+    };
+    const policy = EXPECTED_ORDER_DESK.policy;
+    for (const [field, name] of [
+        ["delayMs", "default_delay_ms"],
+        ["stallTimeoutMs", "default_stall_timeout_ms"],
+        ["stuckThresholdMs", "default_stuck_threshold_ms"],
+        ["gapWaitMs", "default_gap_wait_ms"],
+        ["pythPriceBufferMs", "default_pyth_price_buffer_ms"],
+        ["sviMaxAgeMs", "default_svi_max_age_ms"],
+        ["mintCapacity", "default_mint_capacity"],
+        ["sellCapacity", "default_sell_capacity"],
+        ["perAccountCap", "default_per_account_cap"],
+        ["orderFee", "default_order_fee"],
+        ["settleRefundBatch", "default_settle_refund_batch"],
+        ["settlePayoutBatch", "default_settle_payout_batch"],
+    ] as const) {
+        assert.equal(policy[field], macro(name), field);
+    }
+    // The launch channel is `fixed_rate@200ms` and the smallest sell is one position lot.
+    assert.match(
+        config,
+        /default_pyth_channel\(\): u8 \{ lazer_price::channel_fixed_rate_200ms!\(\) \}/,
+    );
+    const lazer = readFileSync(
+        new URL("../../predict_math/sources/lazer_price.move", import.meta.url),
+        "utf8",
+    );
+    assert.equal(
+        policy.pythChannel,
+        /macro fun channel_fixed_rate_200ms\(\): u8 \{ (\d+) \}/.exec(lazer)?.[1],
+    );
+    assert.match(config, /min_sell_quantity: constants::position_lot_size!\(\)/);
+    assert.equal(policy.minSellQuantity, "10000");
+    const desk = readFileSync(
+        new URL("../../predict_orders/sources/desk.move", import.meta.url),
+        "utf8",
+    );
+    assert.equal(
+        EXPECTED_ORDER_DESK.versionWatermark,
+        /public macro fun current_version\(\): u64 \{ (\d+) \}/.exec(desk)?.[1],
+    );
+});
+
+test("the companion publish records its OrderDesk, QueueRegistry, and UpgradeCap", () => {
+    const result = createDeploymentState();
+    const deployer = id("a");
+    const companion = id("9");
+    recordPublish(result, "predict_orders", {
+        digest: "companion-publish",
+        objectChanges: [
+            { type: "published", packageId: companion },
+            {
+                type: "created",
+                objectId: id("d"),
+                objectType: `${companion}::desk::OrderDesk`,
+                owner: { Shared: { initial_shared_version: 7 } },
+            },
+            {
+                type: "created",
+                objectId: id("e"),
+                objectType: `${companion}::desk::QueueRegistry`,
+                owner: { Shared: { initial_shared_version: 7 } },
+            },
+            {
+                type: "created",
+                objectId: id("c"),
+                objectType: "0x2::package::UpgradeCap",
+                owner: { AddressOwner: deployer },
+            },
+        ],
+    });
+    assert.equal(result.packages.predict_orders, companion);
+    assert.equal(result.publishTx.predict_orders, "companion-publish");
+    assert.deepEqual(result.sharedObjects.predict_orders, {
+        "desk::OrderDesk": id("d"),
+        "desk::QueueRegistry": id("e"),
+    });
+    assert.deepEqual(result.ownedCaps.predict_orders, { "package::UpgradeCap": id("c") });
+    const library = createDeploymentState();
+    recordPublish(library, "predict_math", {
+        digest: "library-publish",
+        objectChanges: [
+            { type: "published", packageId: id("8") },
+            {
+                type: "created",
+                objectId: id("b"),
+                objectType: "0x2::package::UpgradeCap",
+                owner: { AddressOwner: deployer },
+            },
+        ],
+    });
+    assert.equal(library.sharedObjects.predict_math, undefined);
+    assert.deepEqual(library.ownedCaps.predict_math, { "package::UpgradeCap": id("b") });
+});
+
+function orderFlowFixture() {
+    const result = createDeploymentState();
+    result.packages.predict = id("4");
+    result.packages.predict_orders = id("9");
+    result.sharedObjects.predict = { "protocol_config::ProtocolConfig": id("7") };
+    result.sharedObjects.predict_orders = { "desk::OrderDesk": id("8"), "desk::QueueRegistry": id("7") };
+    result.ownedCaps.predict = { "admin::AdminCap": id("6") };
+    return result;
+}
+
+test("enabling order flow allowlists the witness and re-states the launch order fee", () => {
+    const result = orderFlowFixture();
+    const data = enableOrderFlowTransaction(result, "20000").getData();
+    const calls = data.commands
+        .filter((command) => command.MoveCall)
+        .map((command) => command.MoveCall!);
+    assert.deepEqual(
+        calls.map((call) => [call.package, call.module, call.function]),
+        [
+            [id("4"), "protocol_config", "set_order_flow"],
+            [id("9"), "desk", "set_order_fee"],
+        ],
+    );
+    assert.deepEqual(calls[0].typeArguments, [`${id("9")}::order_flow::OrderFlow`]);
+    assert.equal(calls[0].arguments.length, 4);
+    // set_order_fee(desk, admin_cap, config, order_fee, clock), on the same AdminCap and config
+    // inputs as the allowlist.
+    assert.equal(calls[1].arguments.length, 5);
+    assert.deepEqual(calls[1].arguments[1], calls[0].arguments[1]);
+    assert.deepEqual(calls[1].arguments[2], calls[0].arguments[0]);
+    const fee = calls[1].arguments[3] as { Input: number };
+    const feeInput = data.inputs[fee.Input] as { Pure: { bytes: string } };
+    // 20_000 as a little-endian u64.
+    assert.deepEqual(
+        [...Buffer.from(feeInput.Pure.bytes, "base64")],
+        [0x20, 0x4e, 0, 0, 0, 0, 0, 0],
+    );
+});
+
+test("the order-flow receipt must allowlist the witness and record the desk's launch policy", () => {
+    const result = orderFlowFixture();
+    // The launch policy as the event's JSON carries it: snake_case fields, u8 as a number.
+    const launchPolicy = {
+        delay_ms: "800",
+        stall_timeout_ms: "5000",
+        stuck_threshold_ms: "1500",
+        gap_wait_ms: "2000",
+        pyth_price_buffer_ms: "0",
+        pyth_channel: 3,
+        svi_max_age_ms: "60000",
+        mint_capacity: "100",
+        sell_capacity: "100",
+        per_account_cap: "5",
+        order_fee: "20000",
+        min_sell_quantity: "10000",
+        settle_refund_batch: "450",
+        settle_payout_batch: "900",
+    };
+    const receipt = (policy: object, deskId = id("8"), enabled = true): Receipt => ({
+        digest: "digest",
+        events: [
+            {
+                type: `${id("4")}::config_events::OrderFlowUpdated`,
+                parsedJson: { enabled, onchain_timestamp_ms: "1" },
+            },
+            {
+                type: `${id("9")}::queue_events::DelayedExecutionPolicyUpdated`,
+                parsedJson: { desk_id: deskId, policy, onchain_timestamp_ms: "1" },
+            },
+        ],
+    });
+    assertOrderFlowReceipt(result, receipt(launchPolicy));
+    assert.throws(
+        () => assertOrderFlowReceipt(result, receipt(launchPolicy, id("8"), false)),
+        /no enabling OrderFlowUpdated/,
+    );
+    assert.throws(
+        () => assertOrderFlowReceipt(result, receipt(launchPolicy, id("a"))),
+        /names desk/,
+    );
+    assert.throws(
+        () => assertOrderFlowReceipt(result, receipt({ ...launchPolicy, order_fee: "30000" })),
+        /unexpected policy/,
+    );
+    const withoutPolicy = receipt(launchPolicy);
+    withoutPolicy.events = withoutPolicy.events!.slice(0, 1);
+    assert.throws(
+        () => assertOrderFlowReceipt(result, withoutPolicy),
+        /0 DelayedExecutionPolicyUpdated/,
+    );
+});
+
+// `derived_object::derive_address(registry, market)` hashes `DerivedObjectKey<ID>(market)` under
+// the desk's QueueRegistry the way Sui hashes a dynamic-field name: blake2b-256 over the 0xf0
+// scope byte, the parent, the key's length as a little-endian u64, the key, and the key's type
+// tag.
+function independentQueueId(registryId: string, marketId: string): string {
+    const hex = (value: string) =>
+        Uint8Array.from(Buffer.from(value.slice(2).padStart(64, "0"), "hex"));
+    const ascii = (value: string) => [value.length, ...Buffer.from(value, "ascii")];
+    const framework = [...hex("0x2")];
+    const typeTag = Uint8Array.from([
+        7, // struct
+        ...framework,
+        ...ascii("derived_object"),
+        ...ascii("DerivedObjectKey"),
+        1, // one type parameter
+        7,
+        ...framework,
+        ...ascii("object"),
+        ...ascii("ID"),
+        0,
+    ]);
+    const key = hex(marketId);
+    const keyLength = new Uint8Array(8);
+    keyLength[0] = key.length;
+    const digest = blake2b(
+        Uint8Array.from([0xf0, ...hex(registryId), ...keyLength, ...key, ...typeTag]),
+        { dkLen: 32 },
+    );
+    return `0x${Buffer.from(digest).toString("hex")}`;
+}
+
+test("each market's queue ID is derived from the desk's queue registry and the market", () => {
+    const registry = "0x" + "12".repeat(32);
+    const market = "0x" + "ab".repeat(32);
+    assert.equal(marketQueueId(registry, market), independentQueueId(registry, market));
+    assert.notEqual(marketQueueId(registry, market), marketQueueId(registry, id("c")));
+    assert.notEqual(marketQueueId(registry, market), marketQueueId(id("d"), market));
+    assert.equal(
+        bcs.TypeTag.serialize(
+            TypeTagSerializer.parseFromStr(
+                "0x2::derived_object::DerivedObjectKey<0x2::object::ID>",
+                true,
+            ),
+        ).toBytes().length,
+        2 + 32 + 15 + 17 + 1 + 32 + 7 + 3 + 1,
+    );
+});
+
+test("each initial market gets one queue, and an existing queue is recorded, not recreated", async () => {
+    const runtime = testRuntime();
+    const desk = id("d");
+    const registry = id("f");
+    runtime.result.packages.predict_orders = id("9");
+    runtime.result.sharedObjects.predict_orders = { "desk::OrderDesk": desk, "desk::QueueRegistry": registry };
+    const market = (marketId: string, createTx: string) => ({
+        id: marketId,
+        cadenceId: 0,
+        cadence: "1m",
+        expiryMs: "60000",
+        tickSize: "10000000",
+        admissionTickSize: "1000000000",
+        maxExpiryAllocation: "10000000000",
+        initialExpiryCash: "2000000000",
+        createTx,
+        cashBalance: "0",
+        queueId: null,
+        queueCreateTx: null,
+    });
+    runtime.result.transactions.create_market_1m_0 = "market-0";
+    runtime.result.transactions.create_market_1m_1 = "market-1";
+    runtime.result.wiring.markets = [market(id("1"), "market-0"), market(id("2"), "market-1")];
+    // Someone else already created the second market's queue.
+    const existing = new Set([independentQueueId(registry, id("2"))]);
+    const submitted: string[] = [];
+    let interrupted = false;
+    const ops: NonNullable<Parameters<typeof ensureMarketQueues>[1]> = {
+        objectExists: async (_runtime, queueId) => existing.has(queueId),
+        executeTransaction: async (_runtime, label, tx) => {
+            const calls = tx.getData().commands.filter((command) => command.MoveCall);
+            assert.deepEqual(
+                calls.map(
+                    (command) => `${command.MoveCall!.module}::${command.MoveCall!.function}`,
+                ),
+                ["queue::create_and_share"],
+            );
+            assert.equal(calls[0].MoveCall!.package, id("9"));
+            submitted.push(label);
+            const queueId = independentQueueId(registry, id("1"));
+            runtime.result.transactions[label] = `tx-${label}`;
+            existing.add(queueId);
+            if (!interrupted) {
+                interrupted = true;
+                throw new Error("lost response");
+            }
+            return {
+                digest: `tx-${label}`,
+                objectChanges: [
+                    {
+                        type: "created",
+                        objectId: queueId,
+                        objectType: `${id("9")}::queue::MarketQueue`,
+                    },
+                ],
+            };
+        },
+        writeState() {},
+    };
+    await assert.rejects(ensureMarketQueues(runtime, ops), /lost response/);
+    await ensureMarketQueues(runtime, ops);
+    await ensureMarketQueues(runtime, ops);
+    assert.deepEqual(submitted, ["create_queue_1m_0"]);
+    const [first, second] = runtime.result.wiring.markets;
+    assert.equal(first.queueId, independentQueueId(registry, id("1")));
+    assert.equal(first.queueCreateTx, "tx-create_queue_1m_0");
+    assert.equal(second.queueId, independentQueueId(registry, id("2")));
+    assert.equal(second.queueCreateTx, null);
+    second.queueId = id("e");
+    await assert.rejects(ensureMarketQueues(runtime, ops), /records queue/);
+    // create_and_share(registry, desk, market)
+    const creation = marketQueueCreationTransaction(runtime.result, id("1")).getData();
+    assert.equal(creation.inputs.length, 3);
+    assert.deepEqual(
+        creation.inputs.map((input) => input.UnresolvedObject?.objectId),
+        [registry, desk, id("1")],
+    );
 });
 
 test("target, toolchain, source, and worktree bindings fail closed", () => {
@@ -915,7 +1366,9 @@ test("every irreversible publish and transaction boundary resumes without rebroa
                 "usdc",
                 "account",
                 "propbook",
+                "predict_math",
                 "predict",
+                "predict_orders",
                 "deepbook_core_account",
                 "sessions",
             ] as const
@@ -973,12 +1426,25 @@ test("every irreversible publish and transaction boundary resumes without rebroa
     }
 });
 
-test("manifest validation requires all seven fresh packages and mutable-state anchors", () => {
+test("manifest validation requires all nine fresh packages and mutable-state anchors", () => {
     const manifest = manifestFixture();
     assert.doesNotThrow(() => assertIntegrationManifest(manifest));
-    const missingSessions = structuredClone(manifest) as unknown as Record<string, unknown>;
-    delete (missingSessions.packages as Record<string, unknown>).sessions;
-    assert.throws(() => assertIntegrationManifest(missingSessions), /packages keys/);
+    for (const name of ["sessions", "predictMath", "predictOrders"]) {
+        const missing = structuredClone(manifest) as unknown as Record<string, unknown>;
+        delete (missing.packages as Record<string, unknown>)[name];
+        assert.throws(() => assertIntegrationManifest(missing), /packages keys/, name);
+    }
+    const missingDesk = structuredClone(manifest) as unknown as Record<string, unknown>;
+    delete (missingDesk.objects as Record<string, unknown>).orderDesk;
+    assert.throws(() => assertIntegrationManifest(missingDesk), /objects keys/);
+    const missingDeskAnchor = structuredClone(manifest);
+    delete (
+        missingDeskAnchor.initialConfiguration.stateAnchors as unknown as Record<string, unknown>
+    ).orderDesk;
+    assert.throws(() => assertIntegrationManifest(missingDeskAnchor), /stateAnchors keys/);
+    const badPolicy = structuredClone(manifest);
+    badPolicy.initialConfiguration.delayedExecution.orderFee = "0.02";
+    assert.throws(() => assertIntegrationManifest(badPolicy), /unsigned integer/);
     const operatorField = structuredClone(manifest) as unknown as Record<string, unknown>;
     operatorField.deployer = id("a");
     assert.throws(() => assertIntegrationManifest(operatorField), /integration manifest keys/);
@@ -987,8 +1453,11 @@ test("manifest validation requires all seven fresh packages and mutable-state an
     assert.doesNotThrow(() => assertIntegrationManifest(unauthorized));
 });
 
-test("a complete audited state generates the independent schema-8 fixture", () => {
+test("a complete audited state generates the independent schema-10 fixture", () => {
     assert.deepEqual(buildIntegrationManifest(completeStateFixture()), manifestFixture());
+    const changedDesk = completeStateFixture();
+    changedDesk.verification!.orderDesk.policy.orderFee = "30000";
+    assert.throws(() => buildIntegrationManifest(changedDesk), /OrderDesk/);
 });
 
 test("a manifest cannot be generated before the chain audit completes", () => {
@@ -1071,6 +1540,7 @@ function orchestrationFixture(failAfter?: string) {
         ensureOracleObjects: () => step("wire_empty_oracle_objects"),
         ensureUnderlyingRegistered: () => step("underlying"),
         ensureCadences: () => step("cadences"),
+        ensureOrderFlow: () => step("order_flow"),
         ensureAccountWrapper: async () => {
             await step("account");
             return id("3");
@@ -1082,6 +1552,10 @@ function orchestrationFixture(failAfter?: string) {
                 "capitalization precedes market creation",
             );
             await step("markets");
+        },
+        ensureMarketQueues: async () => {
+            assert.ok(runtime.result.transactions.markets, "markets precede their queues");
+            await step("queues");
         },
         verifyDeployment: async () => {
             audits++;
@@ -1115,6 +1589,9 @@ test("the deployment orchestration completes without prices, references, authori
     assert.equal(fixture.manifests[0].externalAuthorizations.deepbookCoreAccount.authorized, false);
     assert.deepEqual(fixture.runtime.result.issuedCaps, {});
     assert.ok(fixture.calls.indexOf("capitalization") < fixture.calls.indexOf("markets"));
+    // The bootstrap flush needs the deployer's flush-operator grant.
+    assert.ok(fixture.calls.indexOf("order_flow") < fixture.calls.indexOf("capitalization"));
+    assert.ok(fixture.calls.indexOf("markets") < fixture.calls.indexOf("queues"));
     assert.equal(fixture.audits, 1);
 });
 
@@ -1124,7 +1601,9 @@ test("the full orchestration re-enters after every stage without repeating compl
         "publish_usdc",
         "publish_account",
         "publish_propbook",
+        "publish_predict_math",
         "publish_predict",
+        "publish_predict_orders",
         "publish_deepbook_core_account",
         "publish_sessions",
         "currency_usdc",
@@ -1136,9 +1615,11 @@ test("the full orchestration re-enters after every stage without repeating compl
         "wire_empty_oracle_objects",
         "underlying",
         "cadences",
+        "order_flow",
         "account",
         "capitalization",
         "markets",
+        "queues",
     ]) {
         const fixture = orchestrationFixture(boundary);
         await assert.rejects(
@@ -1260,7 +1741,7 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
     state.wiring.lifecycleCap.id = id("b");
     state.wiring.valuationCap.id = id("c");
     const recipient = id("a");
-    const tx = capIssuanceTransaction(state, recipient);
+    const tx = capIssuanceTransaction(state, recipient, false);
     assert.deepEqual(
         tx.getData().commands.map((command) => command.MoveCall?.function),
         ["single_owner", "public_party_transfer", "single_owner", "public_party_transfer"],
@@ -1285,7 +1766,36 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
             Buffer.from(recipient.slice(2), "hex").toString("base64"),
         );
     }
+    // A recipient that is not yet a flush operator is granted the role in the same
+    // transaction, through the deployer's AdminCap.
+    const grantTx = capIssuanceTransaction(state, recipient, true);
+    const grantCommands = grantTx.getData().commands;
+    assert.deepEqual(
+        grantCommands.map((command) => command.MoveCall?.function),
+        [
+            "single_owner",
+            "public_party_transfer",
+            "single_owner",
+            "public_party_transfer",
+            "add_flush_operator",
+        ],
+    );
+    const grantInputs = grantTx.getData().inputs;
+    const grantArguments = grantCommands[4].MoveCall!.arguments.map((argument) => {
+        if (argument.$kind !== "Input") throw new Error("grant arguments must be inputs");
+        return grantInputs[argument.Input];
+    });
+    assert.deepEqual(
+        grantArguments.map((input) => input.UnresolvedObject?.objectId ?? input.Pure?.bytes),
+        [
+            id("6"),
+            id("7"),
+            Buffer.from(recipient.slice(2), "hex").toString("base64"),
+            "0x0000000000000000000000000000000000000000000000000000000000000006",
+        ],
+    );
     const runtime = testRuntime(state);
+    const flushOperators = new Set<string>();
     let broadcasts = 0;
     let failOwnerRead = true;
     const owners: string[] = [];
@@ -1294,16 +1804,21 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
         verifyOperationalCapAllowlists: async () => {
             allowlistReads++;
         },
-        executeTransaction: async (_runtime, label) => {
+        executeTransaction: async (_runtime, label, tx) => {
             if (!state.transactions[label]) {
                 broadcasts++;
                 state.transactions[label] = "issued";
+                const granted = tx
+                    .getData()
+                    .commands.some((command) => command.MoveCall?.function === "add_flush_operator");
+                if (granted) flushOperators.add(recipient);
             }
             return {
                 digest: "issued",
                 objectChanges: [],
             };
         },
+        isFlushOperator: async (_runtime, operator) => flushOperators.has(operator),
         objectEvidence: async (_runtime, object, _type, owner) => {
             if (failOwnerRead) {
                 failOwnerRead = false;
@@ -1328,6 +1843,7 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
     assert.deepEqual(owners, [`party:${recipient}`, `party:${recipient}`]);
     await issueOperationalCaps(runtime, recipient, ops);
     assert.equal(broadcasts, 1);
+    assert.deepEqual([...flushOperators], [recipient]);
     assert.equal(allowlistReads, 5);
     assert.equal(operationalCapOwner(state), `party:${recipient}`);
     assert.equal(state.wiring.lifecycleCap.owner, "keeper");
@@ -1337,9 +1853,39 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
     assert.equal(state.status, "complete");
 });
 
+test("cap handoff fails closed when the recipient does not read back as a flush operator", async () => {
+    const state = completeStateFixture();
+    state.packages.predict = id("4");
+    state.sharedObjects.predict = {
+        "registry::Registry": id("5"),
+        "protocol_config::ProtocolConfig": id("6"),
+    };
+    state.ownedCaps.predict = { "admin::AdminCap": id("7") };
+    state.wiring.lifecycleCap.id = id("b");
+    state.wiring.valuationCap.id = id("c");
+    const ops: NonNullable<Parameters<typeof issueOperationalCaps>[2]> = {
+        verifyOperationalCapAllowlists: async () => {},
+        executeTransaction: async (_runtime, label) => {
+            state.transactions[label] = "issued";
+            return { digest: "issued", objectChanges: [] };
+        },
+        isFlushOperator: async () => false,
+        objectEvidence: async (_runtime, object, _type, owner) => ({
+            ...objectEvidence(object),
+            owner: owner!,
+        }),
+        writeState() {},
+    };
+    await assert.rejects(
+        issueOperationalCaps(testRuntime(state), id("a"), ops),
+        /not a flush operator/,
+    );
+    assert.deepEqual(state.issuedCaps, {});
+});
+
 test("cap handoff rejects missing setup caps, additional pairs and legacy duplicate issuance", () => {
     const state = completeStateFixture();
-    assert.throws(() => capIssuanceTransaction(state, id("a")), /setup lifecycle cap/);
+    assert.throws(() => capIssuanceTransaction(state, id("a"), true), /setup lifecycle cap/);
     state.wiring.lifecycleCap.id = id("b");
     state.wiring.valuationCap.id = id("c");
     const fields = {
@@ -1539,7 +2085,7 @@ test("network and deployer are explicit and invalid targets fail before wallet a
     assert.throws(() => configureDeployment("mainnet", id("0")));
 });
 
-test("Mainnet publishes six packages, retains Testnet identities, and cannot mint USDC or supply LP capital", () => {
+test("Mainnet publishes eight packages, retains Testnet identities, and cannot mint USDC or supply LP capital", () => {
     try {
         configureDeployment("mainnet", id("a"));
         const state = createDeploymentState();
@@ -1554,16 +2100,20 @@ test("Mainnet publishes six packages, retains Testnet identities, and cannot min
                 "publish_fixed_math",
                 "publish_account",
                 "publish_propbook",
+                "publish_predict_math",
                 "publish_predict",
+                "publish_predict_orders",
                 "publish_deepbook_core_account",
                 "publish_sessions",
             ],
         );
         const steps = plannedTransactionSteps();
+        assert.ok(steps.includes("enable_order_flow"));
         for (const forbidden of [
             "mint_deployer_usdc",
             "finalize_usdc_currency_registration",
             "create_deployer_account",
+            "add_deployer_flush_operator",
         ])
             assert.equal(steps.includes(forbidden), false);
         assertPackagePlan();
@@ -1773,7 +2323,9 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
             "publish_fixed_math",
             "publish_account",
             "publish_propbook",
+            "publish_predict_math",
             "publish_predict",
+            "publish_predict_orders",
             "publish_deepbook_core_account",
             "publish_sessions",
             "currency_plp",
@@ -1783,8 +2335,10 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
             "wire_empty_oracle_objects",
             "underlying",
             "cadences",
+            "order_flow",
             "capitalization",
             "markets",
+            "queues",
         ]) {
             const fixture = orchestrationFixture(boundary);
             fixture.ops.ensureDeployerUsdcMint = async () => {
@@ -1809,7 +2363,7 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
             assert.equal(fixture.runtime.result.status, "complete", boundary);
             assert.equal(fixture.mutations.length, new Set(fixture.mutations).size, boundary);
             assert.deepEqual(fixture.runtime.result.issuedCaps, {});
-            assert.equal(fixture.manifests[0].schemaVersion, 9);
+            assert.equal(fixture.manifests[0].schemaVersion, 11);
             assert.equal(
                 fixture.manifests[0].objects.usdcCurrency,
                 "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a",
@@ -1900,7 +2454,7 @@ test("Testnet USDC reuse requires explicit identities and binds the journal", ()
         assert.equal(state.wiring.currencies.usdc.mintedAmount, "0");
         assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
         assert.equal(state.wiring.bootstrap.supplyAmount, "250000000000");
-        assert.equal(irreversibleDeploymentSteps().length, 23);
+        assert.equal(irreversibleDeploymentSteps().length, 31);
         assert.ok(!irreversibleDeploymentSteps().includes("publish_usdc"));
         assert.ok(!plannedTransactionSteps().includes("mint_deployer_usdc"));
         assert.ok(!plannedTransactionSteps().includes("finalize_usdc_currency_registration"));
@@ -1941,7 +2495,9 @@ test("reused USDC orchestration resumes without minting or republication and rec
             "publish_fixed_math",
             "publish_account",
             "publish_propbook",
+            "publish_predict_math",
             "publish_predict",
+            "publish_predict_orders",
             "publish_deepbook_core_account",
             "publish_sessions",
             "authorize_apps",
@@ -1950,9 +2506,11 @@ test("reused USDC orchestration resumes without minting or republication and rec
             "wire_empty_oracle_objects",
             "underlying",
             "cadences",
+            "order_flow",
             "account",
             "capitalization",
             "markets",
+            "queues",
         ]) {
             const fixture = orchestrationFixture(boundary);
             fixture.ops.ensureDeployerUsdcMint = async () => {
@@ -2026,4 +2584,44 @@ test("DEEP resolution uses the module identity instead of an incidental token di
     } finally {
         rmSync(directory, { recursive: true, force: true });
     }
+});
+
+test("expected type origins skip test-only declarations, as a production publish does", () => {
+    const origins = moveSourceTypeOriginsOf([
+        {
+            path: "sources/queue.move",
+            source: [
+                "module pkg::queue;",
+                "",
+                "/// One per market.",
+                "public struct MarketQueue has key { id: UID }",
+                "",
+                "#[test_only]",
+                "/// Stands in for a verified update.",
+                "public struct TestUpdate has copy, drop { channel: u8 }",
+                "",
+                "#[allow(unused_field)]",
+                "public enum Phase has copy, drop { Drain, Pay }",
+            ].join("\n"),
+        },
+        {
+            path: "sources/fixture.move",
+            source: "#[test_only]\nmodule pkg::fixture;\n\npublic struct Fixture {}",
+        },
+    ]);
+    assert.deepEqual(origins, [
+        { module: "queue", datatype: "MarketQueue" },
+        { module: "queue", datatype: "Phase" },
+    ]);
+
+    // The companion declares `queue::TestUpdate` under `#[test_only]`, which its publish strips.
+    const directory = resolve(import.meta.dirname, "..", "..", "predict_orders", "sources");
+    const companion = moveSourceTypeOriginsOf(
+        readdirSync(directory)
+            .filter((name) => name.endsWith(".move"))
+            .map((name) => ({ path: name, source: readFileSync(join(directory, name), "utf8") })),
+    ).map((origin) => `${origin.module}::${origin.datatype}`);
+    assert.ok(companion.includes("queue::MarketQueue"));
+    assert.ok(companion.includes("desk::OrderDesk"));
+    assert.ok(!companion.includes("queue::TestUpdate"));
 });

@@ -18,6 +18,9 @@ public struct PricingConfig has store {
     /// not, moves a quote.
     use_pyth_spot_for_forward: bool,
     /// Fixed wall-clock maximum age for Pyth spot; it does not vary with time to expiry.
+    /// Past it, while `use_pyth_spot_for_forward` is set, a live load falls back to the Block
+    /// Scholes forward, which valuation prices on and every live trade (mint, mint quote, live
+    /// redeem) refuses.
     pyth_spot_freshness_ms: u64,
     /// Fixed wall-clock maximum age for Block Scholes spot and forward; it does not vary with time to expiry.
     block_scholes_price_freshness_ms: u64,
@@ -27,19 +30,19 @@ public struct PricingConfig has store {
 
 // === Public-Package Functions ===
 
-public(package) fun use_pyth_spot_for_forward(config: &PricingConfig): bool {
+public(package) fun pyth_forward(config: &PricingConfig): bool {
     config.use_pyth_spot_for_forward
 }
 
-public(package) fun pyth_spot_freshness_ms(config: &PricingConfig): u64 {
+public(package) fun pyth_age_ms(config: &PricingConfig): u64 {
     config.pyth_spot_freshness_ms
 }
 
-public(package) fun block_scholes_price_freshness_ms(config: &PricingConfig): u64 {
+public(package) fun bs_age_ms(config: &PricingConfig): u64 {
     config.block_scholes_price_freshness_ms
 }
 
-public(package) fun block_scholes_svi_freshness_ms(config: &PricingConfig): u64 {
+public(package) fun svi_age_ms(config: &PricingConfig): u64 {
     config.block_scholes_svi_freshness_ms
 }
 
@@ -57,16 +60,16 @@ public(package) fun set_use_pyth_spot_for_forward(config: &mut PricingConfig, en
 }
 
 public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, value: u64) {
-    config_constants::assert_pyth_spot_freshness_ms(value);
+    config_constants::chk_pyth_age(value);
     config.pyth_spot_freshness_ms = value;
 }
 
 public(package) fun set_block_scholes_price_freshness_ms(config: &mut PricingConfig, value: u64) {
-    config_constants::assert_block_scholes_price_freshness_ms(value);
+    config_constants::chk_bs_age(value);
     config.block_scholes_price_freshness_ms = value;
 }
 
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfig, value: u64) {
-    config_constants::assert_block_scholes_svi_freshness_ms(value);
+    config_constants::chk_svi_age(value);
     config.block_scholes_svi_freshness_ms = value;
 }

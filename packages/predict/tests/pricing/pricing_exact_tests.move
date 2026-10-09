@@ -25,14 +25,24 @@
 /// by small-variance points where both `d2 = -(k + w/2)/sqrt(w)` and the skew term's
 /// `1/sqrt(w)` denominator amplify fixed-point variance and slope dust. Far-wing
 /// strikes hit the normal CDF/PDF clamps and are EXACT (tolerance = 2-unit cushion).
+///
+/// Block Scholes SSVI slices whose `sigma` sits below 1e-3, and synthetic surfaces at
+/// the relaxed bounds (`sigma` at its 1e-5 floor, `a` past the former `|a| <= 100`
+/// cap), are checked against the generated `pricing_ssvi_reference_data` module
+/// (`tests/helper/reference/generate_ssvi_reference.py`) twice: at each slice's real
+/// forward, quoting the forward, where the contract's log-moneyness is exactly zero
+/// and the budget carries no `ln` error; and with the same shape seeded at a forward
+/// of 1.0, where only `ln(strike)` carries a raw-unit error, at strikes around the
+/// smile (`unit_forward_points`).
 #[test_only]
 module deepbook_predict::pricing_exact_tests;
 
 use deepbook_predict::{
     constants,
-    oracle_fixture,
+    oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing,
     pricing_reference_data as ref_data,
+    pricing_ssvi_reference_data as ssvi,
     range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
@@ -96,6 +106,196 @@ fun real_scenario_medium_variance() { run_scenario(1); }
 #[test]
 fun real_scenario_small_variance() { run_scenario(2); }
 
+/// Check SSVI reference slice `s` both ways the generator prices it: at its real
+/// forward (quoting the forward, where log-moneyness is exactly zero), then with
+/// the same SVI shape re-seeded one millisecond later at a forward of 1.0 (quoting
+/// strikes around the smile), so every series advances and the roll-down stays 1.
+fun run_ssvi_slice(s: u64) {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    seed_ssvi_slice(&mut fx, &mut oracle, s, ssvi::spot(s), ssvi::forward(s));
+    assert_ssvi_points(&mut fx, &oracle, ssvi::points(s));
+
+    let unit_forward = ssvi::unit_forward();
+    let reseeded_at_ms = test_constants::now_ms() + 1;
+    fx.set_clock_for_testing(reseeded_at_ms);
+    fx.set_pyth_bundle(&mut oracle, unit_forward, reseeded_at_ms);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, reseeded_at_ms, unit_forward);
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, reseeded_at_ms, unit_forward);
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        reseeded_at_ms,
+        ssvi::svi_a_magnitude(s),
+        ssvi::svi_a_is_negative(s),
+        ssvi::svi_b(s),
+        ssvi::svi_sigma(s),
+        ssvi::svi_rho_magnitude(s),
+        ssvi::svi_rho_is_negative(s),
+        ssvi::svi_m_magnitude(s),
+        ssvi::svi_m_is_negative(s),
+    );
+    assert_ssvi_points(&mut fx, &oracle, ssvi::unit_forward_points(s));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+fun assert_ssvi_points(
+    fx: &mut OracleFixture,
+    oracle: &OracleBundle,
+    points: vector<ssvi::RefPoint>,
+) {
+    let pricer = fx.load_pricer_bundle(oracle);
+    points.do_ref!(|p| {
+        let actual = pricer.range_price(strike(p.lower()), strike(p.higher())).probability();
+        test_helpers::assert_within(actual, p.reference(), p.tolerance());
+    });
+}
+
+fun seed_ssvi_slice(
+    fx: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    s: u64,
+    spot: u64,
+    forward: u64,
+) {
+    fx.prepare_real_oracle_bundle(
+        oracle,
+        spot,
+        forward,
+        ssvi::svi_a_magnitude(s),
+        ssvi::svi_a_is_negative(s),
+        ssvi::svi_b(s),
+        ssvi::svi_sigma(s),
+        ssvi::svi_rho_magnitude(s),
+        ssvi::svi_rho_is_negative(s),
+        ssvi::svi_m_magnitude(s),
+        ssvi::svi_m_is_negative(s),
+    );
+}
+
+#[test]
+fun short_dated_slice_with_the_smallest_sigma_prices_to_true_math() {
+    run_ssvi_slice(ssvi::smallest_sigma_slice());
+}
+
+/// `a` is negative and the rounded analytical minimum total variance is one raw
+/// unit, the smallest the load gate admits and the tightest margin in the backfill.
+#[test]
+fun short_dated_slice_with_negative_a_prices_to_true_math() {
+    run_ssvi_slice(ssvi::negative_a_slice());
+}
+
+/// The former 1e9 smile root floored `sigma^2` to three raw units here and missed
+/// the at-the-forward digital by about 562_500 units.
+#[test]
+fun one_minute_slice_the_1e9_root_mispriced_prices_to_true_math() {
+    run_ssvi_slice(ssvi::one_minute_root_miss_slice());
+}
+
+/// A slice two minutes from expiry.
+#[test]
+fun one_to_five_minute_slice_the_1e9_root_mispriced_prices_to_true_math() {
+    run_ssvi_slice(ssvi::one_to_five_minute_root_miss_slice());
+}
+
+/// A slice eight minutes from expiry.
+#[test]
+fun sub_hour_slice_the_1e9_root_mispriced_prices_to_true_math() {
+    run_ssvi_slice(ssvi::sub_hour_root_miss_slice());
+}
+
+/// `sigma` exactly at the 1e-5 floor with the smile's vertex at the forward: the
+/// former 1e9 root was zero here, so the skew slope's division aborted.
+#[test]
+fun surface_at_the_sigma_floor_prices_at_its_vertex() {
+    run_ssvi_slice(ssvi::floor_vertex_slice());
+}
+
+/// `k - m == -sigma` at the floor, so both squares under the root are a tenth of
+/// a raw unit at 1e9 and only the 1e18 input represents either; the former root
+/// was zero and the wing term went negative.
+#[test]
+fun surface_at_the_sigma_floor_prices_one_width_from_its_vertex() {
+    run_ssvi_slice(ssvi::floor_one_width_slice());
+}
+
+/// `k - m == 10 * sigma` at the floor, where `(k - m)^2` dominates the root.
+#[test]
+fun surface_at_the_sigma_floor_prices_in_its_wing() {
+    run_ssvi_slice(ssvi::floor_wing_slice());
+}
+
+/// `a = -150`, past the former `|a| <= 100` cap, offset by `b * sigma` at the
+/// `sigma` ceiling: the minimum total variance is 6.8, the forward's about 10, and
+/// the skew correction is live at every quoted strike.
+#[test]
+fun negative_svi_a_past_the_former_cap_prices_to_true_math() {
+    run_ssvi_slice(ssvi::negative_a_past_cap_slice());
+}
+
+/// `a = 101`, just past the former cap, on a slice-[0] shape.
+#[test]
+fun positive_svi_a_past_the_former_cap_prices_to_true_math() {
+    run_ssvi_slice(ssvi::positive_a_past_cap_slice());
+}
+
+/// RP-20's pin: the rounded minimum clears the load gate, and at the forward the
+/// true total variance is 0.99993e-9 — under one raw unit at 1e9 — so the 1e18
+/// variance path prices it where a variance floored to 1e9 would round to zero
+/// and abort `ENonPositiveVariance`.
+#[test]
+fun low_variance_surface_prices_where_the_1e9_path_aborted() {
+    run_ssvi_slice(ssvi::sub_unit_variance_slice());
+}
+
+/// The other side of the per-strike rounding boundary: the analytical minimum
+/// clears the load gate by one raw unit (min_increment 3 against `a = -2`), and the
+/// exact root makes the forward's total variance exactly one raw unit, so the
+/// surface prices.
+#[test]
+fun one_raw_unit_variance_surface_prices_to_true_math() {
+    run_ssvi_slice(ssvi::one_raw_unit_variance_slice());
+}
+
+/// `rho = -1`: the SVI increment's infimum over strikes is 0, so the minimum total
+/// variance is `a` alone, and one raw unit of positive `a` is the smallest that
+/// loads (`pricing_guard_tests` rejects `a = 0` and `a = -1` on the same shape).
+#[test]
+fun unit_rho_surface_with_one_unit_of_a_prices_to_true_math() {
+    run_ssvi_slice(ssvi::unit_rho_slice());
+}
+
+/// A one-minute slice seeded a minute before expiry and priced three quarters of
+/// the way there: `a` and `b` roll down to a quarter of their published values
+/// while `sigma` stays put, so the small-`sigma` root meets rolled variance.
+#[test]
+fun rolled_down_short_dated_slice_prices_to_true_math() {
+    let s = ssvi::rolled_slice();
+    let mut fx = oracle_fixture::setup_oracle(
+        ssvi::spot(s),
+        test_constants::default_tick_size(),
+        ssvi::rolled_expiry_ms(),
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    seed_ssvi_slice(&mut fx, &mut oracle, s, ssvi::spot(s), ssvi::forward(s));
+
+    let priced_at_ms = ssvi::rolled_priced_at_ms();
+    fx.set_clock_for_testing(priced_at_ms);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, priced_at_ms, ssvi::spot(s));
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, priced_at_ms, ssvi::forward(s));
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    test_helpers::assert_within(
+        pricer.up_price(strike(ssvi::forward(s))),
+        ssvi::rolled_up_at_forward(),
+        ssvi::rolled_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 #[test]
 fun positive_svi_slope_clamps_adjusted_digital_to_zero() {
     assert_eq!(skew_clamp_up_price(false), 0);
@@ -155,7 +355,7 @@ fun flat_surface_at_the_forward_matches_true_math() {
 }
 
 /// Production-valid SVI envelope point where strike == forward, m == 0, |rho| == 1,
-/// b == max_svi_input, and sigma == min_svi_sigma. Then d2 is near -0.158, so the
+/// b == max_svi_input, and sigma == 1e-3. Then d2 is near -0.158, so the
 /// normal CDF/PDF tail guards do not fire; the enormous signed `w'` term is what
 /// pushes the raw adjusted digital outside [0, 1] and exercises compute_nd2's final
 /// clamp.

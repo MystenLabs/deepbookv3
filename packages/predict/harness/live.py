@@ -90,7 +90,7 @@ def oracle_ready_localnet(
 
 
 def _read_meta() -> dict:
-    """Read the TS registry — { strategies: {...}, cadences: [{id, windowSize, periodMs}] } — by running
+    """Read the TS registry — { strategies: {...}, disabled: {name: reason}, cadences: [{id, windowSize, periodMs}] } — by running
     strategies/meta.ts, the single source of truth for runner config + the enabled cadence set."""
     run = subprocess.run(
         ["npx", "tsx", "strategies/meta.ts"], cwd=str(config.TS_DIR), capture_output=True, text=True
@@ -320,9 +320,13 @@ def _campaign_validation_error(
     timeout: int,
     strat_meta: dict,
     capacity: int,
+    disabled: dict | None = None,
 ) -> str | None:
     if timeout < 0:
         return "--timeout must be non-negative"
+    refused = [strategy for strategy in strategies if strategy in (disabled or {})]
+    if refused:
+        return ". ".join(f"strategy {name} is {disabled[name]}" for name in refused)
     unknown = [strategy for strategy in strategies if strategy not in strat_meta]
     if unknown:
         return "unknown strategies: " + ", ".join(unknown)
@@ -460,6 +464,7 @@ def campaign(
         timeout,
         strat_meta,
         localnet_capacity,
+        meta["disabled"],
     )
     if validation_error:
         print(f"campaign: {validation_error}")

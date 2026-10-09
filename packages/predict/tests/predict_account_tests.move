@@ -71,7 +71,7 @@ fun add_then_remove_position_round_trips_root_id() {
         REPLACEMENT_OPENED_AT_MS,
     );
 
-    let root = predict_account::remove_position(account, eid(EXPIRY_A), ORDER_B, scenario.ctx());
+    let root = predict_account::remove_pos(account, eid(EXPIRY_A), ORDER_B, scenario.ctx());
     assert_eq!(root, ROOT_PARENT);
     assert!(!predict_account::has_position(account, eid(EXPIRY_A), ORDER_B));
     finish(scenario, wrapper);
@@ -132,7 +132,7 @@ fun add_duplicate_position_aborts() {
 fun remove_unknown_position_aborts() {
     let (mut scenario, mut wrapper) = new_account();
     let account = wrapper.load_account_mut(auth(&mut scenario));
-    predict_account::remove_position(account, eid(EXPIRY_A), ORDER_A, scenario.ctx());
+    predict_account::remove_pos(account, eid(EXPIRY_A), ORDER_A, scenario.ctx());
     abort 999
 }
 

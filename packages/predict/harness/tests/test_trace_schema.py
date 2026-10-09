@@ -120,10 +120,57 @@ class TraceSchemaMatchesEmitters(unittest.TestCase):
             "direction": "UP",
             "moneyness": 1.0,
             "prob": 0.5,
+            "outcome": "filled",
+            "quantity": 20000,
+            "amount": 12.5,
+            "gas": 1000,
+            "fillGas": 2000,
+        }
+        analyze._validate_trace_record(record, "trader", "test")
+
+    def test_a_pre_queue_mint_record_is_rejected(self):
+        # The immediate-fill shape: one transaction, a premium, and no fill outcome.
+        record = {
+            "schema": 1,
+            "ts": 0,
+            "strategy": "mint-only",
+            "type": "mint",
+            "market": "0xabc",
+            "direction": "UP",
+            "moneyness": 1.0,
+            "prob": 0.5,
             "premium": 12.5,
             "gas": 1000,
         }
+        with self.assertRaises(ValueError):
+            analyze._validate_trace_record(record, "trader", "test")
+
+    def test_a_refunded_redeem_record_validates(self):
+        record = {
+            "schema": 1,
+            "ts": 0,
+            "strategy": "mixed-churn",
+            "type": "redeem",
+            "market": "0xabc",
+            "partial": True,
+            "outcome": "refunded",
+            "reason": 8,
+            "gas": 1000,
+            "fillGas": -50,
+        }
         analyze._validate_trace_record(record, "trader", "test")
+
+    def test_a_phased_keeper_settle_record_validates(self):
+        record = {
+            "schema": 1,
+            "ts": 0,
+            "type": "settle",
+            "market": "0xabc",
+            "expiryMs": 60000,
+            "phases": 3,
+            "straggler": True,
+        }
+        analyze._validate_trace_record(record, "keeper", "test")
 
     def test_a_leverage_era_mint_record_is_rejected(self):
         record = {

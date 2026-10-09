@@ -244,7 +244,7 @@ pub struct Balances {
     pub package: String,
     pub balance_manager_id: String,
     pub asset: String,
-    pub amount: i64,
+    pub amount: BigDecimal,
     pub deposit: bool,
 }
 

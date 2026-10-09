@@ -12,7 +12,7 @@ const EVersionWatermarkNotAdvanced: u64 = 1;
 // === Constants ===
 
 /// Every package upgrade must advance this compiled-in version.
-macro fun current_version(): u64 { 2 }
+macro fun current_version(): u64 { 3 }
 
 // === Structs ===
 

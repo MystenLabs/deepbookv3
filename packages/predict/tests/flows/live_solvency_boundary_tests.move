@@ -81,7 +81,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
         HALF_CLOSE,
     );
     let survivor_id = replacement.destroy_some();
-    let survivor = order::from_order_id(survivor_id);
+    let survivor = order::from_id(survivor_id);
     assert_eq!(survivor.quantity(), HALF_CLOSE);
     // Solvency: every unit that left expiry cash landed in the manager's balance.
     // The close moves value between the two sheets, it never creates or destroys.
