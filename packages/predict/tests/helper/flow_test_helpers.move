@@ -193,10 +193,6 @@ public fun setup_market(tick: u64): Fixture {
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
     config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
-    // Allowlist the default trader as a settled-redeem keeper so flow tests can
-    // compose `redeem_settled_permissionless` inside the trader's own transaction.
-    // The allowlist's own gating is covered with unlisted senders elsewhere.
-    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     // Model the production window between the package upgrade and its watermark
     // bump: this package runs while the watermark still names the previous
     // version, so the immediate mint and redeem paths stay live for the legacy
@@ -549,15 +545,6 @@ public fun add_settled_redeem_keeper_bundle(
     keeper: address,
 ) {
     market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
-}
-
-/// Revoke `keeper`'s access to `redeem_settled_permissionless`, through the real admin path.
-public fun remove_settled_redeem_keeper_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    keeper: address,
-) {
-    market.config.remove_settled_redeem_keeper(&self.admin_cap, keeper);
 }
 
 /// Pause / unpause global trading through the real admin path.
@@ -2143,9 +2130,10 @@ public fun redeem_live_bundle_with_limits(
     )
 }
 
-/// Keeper-path settled redeem (no owner auth): clears a settled order using app
-/// auth generated through the whitelisted `PredictApp`. The current scenario sender
-/// must be an allowlisted settled-redeem keeper. Does not price, so takes no Block
+/// Settled redeem with Predict app auth, as the retired keeper path took it, so
+/// any sender can clear the order. Runs Predict's test-only copy of the retired
+/// `redeem_settled`, which the legacy flow suites use to close the account-held
+/// positions they seed with the test-only mint. Does not price, so takes no Block
 /// Scholes feed.
 public fun redeem_settled(
     self: &mut Fixture,
@@ -2156,9 +2144,10 @@ public fun redeem_settled(
     order_id: u256,
 ) {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    market.redeem_settled_permissionless(
-        &account_registry,
+    let auth = predict_account::generate_auth_as_app(&account_registry);
+    market.redeem_settled_for_testing(
         wrapper,
+        auth,
         config,
         order_id,
         root,
@@ -2168,8 +2157,9 @@ public fun redeem_settled(
     return_shared(account_registry);
 }
 
-/// Owner-authorized settled redeem: clears a settled order using the current
-/// scenario sender's account auth. Does not price, so takes no Block Scholes feed.
+/// Owner-authorized settled redeem through the same test-only copy, using the
+/// current scenario sender's account auth. Does not price, so takes no Block
+/// Scholes feed.
 public fun redeem_settled_with_owner_auth(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -2179,7 +2169,7 @@ public fun redeem_settled_with_owner_auth(
     order_id: u256,
 ) {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.redeem_settled(
+    market.redeem_settled_for_testing(
         wrapper,
         auth,
         config,
