@@ -250,5 +250,5 @@ in the order-flow companion package. See
 | `enqueue_redeem_open` | sell to close / close-out | The holder queues a sale of an Open record back to the writer at the τ mark. |
 | `commit` / `resolve` | — | Anyone attaches the τ price and fills or refunds the order. |
 | `try_settle` / `settle_step` | cash settlement | `try_settle` records exact Pyth at expiry when available, or exact Block Scholes after the 30-second Pyth-exclusive window, plus terminal payout liability. `settle_step` then refunds waiting orders and pays each Open record the full `notional` in range and zero out of range. |
-| `redeem_settled` | cash settlement | Pays a position an immediate mint left in an account, without reading an oracle. |
+| `redeem_settled` | cash settlement | The retired settled redeem of a position an immediate mint left in an account. It aborts `EDelayedExecutionRequired` in package version 4. |
 | `mint_exact_*` / `redeem_live` | write / close-out | The retired immediate paths. They abort `EDelayedExecutionRequired` in package version 4. |
