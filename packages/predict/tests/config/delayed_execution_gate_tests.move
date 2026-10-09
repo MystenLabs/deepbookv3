@@ -3,8 +3,8 @@
 
 /// `ProtocolConfig` gates added for delayed execution: the flush-operator
 /// allowlist (add, remove, read, and the package `chk_operator`), the
-/// freeze-blind `chk_floor`, the `chk_cutover` check
-/// against the version watermark, and the `FlushOperatorUpdated` event layout.
+/// freeze-blind `chk_floor`, the `chk_cutover` check of the version watermark
+/// against the fixed v4 cutover, and the `FlushOperatorUpdated` event layout.
 #[test_only]
 module deepbook_predict::delayed_execution_gate_tests;
 
@@ -21,6 +21,8 @@ use sui::{clock::{Self, Clock}, event, test_scenario::{Self as test, Scenario, r
 const EVENT_TIMESTAMP_MS: u64 = 1_750_000_000_000;
 const ONE_EVENT: u64 = 1;
 const TWO_EVENTS: u64 = 2;
+/// The delayed-execution cutover: the v4 floor, whatever version runs later.
+const V4_CUTOVER: u64 = 4;
 
 /// Field-for-field mirror of `config_events::FlushOperatorUpdated`.
 public struct ExpectedFlushOperatorUpdated has copy, drop {
@@ -231,14 +233,34 @@ fun assert_cutover_reached_at_current_version() {
 }
 
 /// The window between the v4 upgrade and its `bump_version_watermark`: the
-/// watermark still names the previous version, so queued placement waits.
+/// watermark still names v3, so queued placement waits.
 #[test, expected_failure(abort_code = protocol_config::ECutoverNotReached)]
 fun assert_cutover_reached_one_version_below_aborts() {
     let (scenario, _admin_cap, config_id, _clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_version_watermark_for_testing(constants::current_version!() - 1);
+    config.set_version_watermark_for_testing(V4_CUTOVER - 1);
     config.chk_cutover();
     abort 999
+}
+
+/// The cutover is the fixed v4 floor, not the running version: a floor of
+/// exactly 4 keeps placement open whatever package version runs, so a later
+/// upgrade does not close placement until its own floor bump, and any later
+/// floor keeps it open too. Comparing against `current_version!()` instead
+/// would abort the first check once a later version runs.
+#[test]
+fun the_cutover_is_the_fixed_v4_floor() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    assert_eq!(constants::cutover_version!(), V4_CUTOVER);
+
+    config.set_version_watermark_for_testing(V4_CUTOVER);
+    config.chk_cutover();
+    config.set_version_watermark_for_testing(constants::current_version!() + 1);
+    config.chk_cutover();
+
+    assert_eq!(config.version_watermark(), constants::current_version!() + 1);
+    finish(scenario, admin_cap, config, clock);
 }
 
 #[test]

@@ -6,7 +6,7 @@
 /// This shared object owns the admin-tunable config structs, the fee-incentive
 /// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
 /// protocol-wide emergency freeze, the version watermark (reaching
-/// `current_version!()` is also the delayed-execution cutover), the allowlists of
+/// `constants::cutover_version!()` is also the delayed-execution cutover), the allowlists of
 /// keepers that may redeem settled orders without owner auth, of operators that
 /// may finish an LP flush, and of the order-flow companion witness types that may
 /// drive the order-flow primitives, and the full-pool valuation in-flight
@@ -255,7 +255,8 @@ public fun is_order_flow<W: drop>(config: &ProtocolConfig): bool {
 }
 
 /// Return the runtime version floor. For SDK, keeper, and devInspect reads: the
-/// delayed-execution cutover is reached once it equals `current_version!()`.
+/// delayed-execution cutover is reached once it is at least 4
+/// (`constants::cutover_version!()`).
 public fun version_watermark(config: &ProtocolConfig): u64 {
     config.version_watermark
 }
@@ -874,12 +875,14 @@ public(package) fun chk_flow<W: drop>(config: &ProtocolConfig) {
     assert!(config.is_order_flow<W>(), EOrderFlowNotAllowed);
 }
 
-/// Abort until the watermark has reached this package's `current_version!()`,
-/// which retires every older package version. Queued placement waits for it, so
-/// no older package that knows nothing about the queue can run while an order
-/// waits.
+/// Abort until the watermark has reached the delayed-execution cutover,
+/// `constants::cutover_version!()`, which retires every package version without
+/// the order flow. Queued placement waits for it, so no older package that knows
+/// nothing about the queue can run while an order waits. The cutover is a fixed
+/// version, not `current_version!()`, so a later upgrade keeps placement open
+/// before its own floor bump.
 public(package) fun chk_cutover(config: &ProtocolConfig) {
-    assert!(config.version_watermark >= constants::current_version!(), ECutoverNotReached);
+    assert!(config.version_watermark >= constants::cutover_version!(), ECutoverNotReached);
 }
 
 /// Abort only when the running package version is below the watermark floor.

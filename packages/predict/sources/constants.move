@@ -10,6 +10,11 @@ module deepbook_predict::constants;
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
 public macro fun current_version(): u64 { 4 }
 
+/// The version floor at which queued placement opens: the delayed-execution cutover, the first
+/// version that retires every package without the order flow. Fixed, so a later upgrade's own
+/// `current_version!()` never closes placement again until its floor is bumped.
+public(package) macro fun cutover_version(): u64 { 4 }
+
 // === Scaling ===
 
 /// Decimal exponent of `math::float_scaling!()` (i.e. `math::float_scaling!() == 10^9`).
