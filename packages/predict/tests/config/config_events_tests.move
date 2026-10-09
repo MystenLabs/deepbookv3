@@ -182,14 +182,14 @@ fun ewma_setters_emit_complete_post_state() {
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(EVENT_TIMESTAMP_MS);
 
-    config.set_ewma_params(
+    config.set_ewma_params_for_testing(
         &admin_cap,
         EWMA_ALPHA,
         EWMA_Z_SCORE_THRESHOLD,
         EWMA_PENALTY_RATE,
         &clock,
     );
-    config.set_ewma_enabled(&admin_cap, true, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, true, &clock);
 
     let events = event::events_by_type<config_events::EwmaConfigUpdated>();
     assert_eq!(events.length(), TWO_EVENTS);

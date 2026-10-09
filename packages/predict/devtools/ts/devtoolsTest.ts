@@ -14,7 +14,12 @@ import {
   verifyProviderBatchSignature,
 } from "./blockScholesWire.js";
 import { signedValueBatchBytes } from "./localBlockScholes.js";
-import { bytesToHex, hexToBytes } from "./localPyth.js";
+import {
+  LAZER_CHANNEL_FIXED_RATE_200MS,
+  buildLazerUpdateBytes,
+  bytesToHex,
+  hexToBytes,
+} from "./localPyth.js";
 
 const ORACLE_PACKAGE_ID = `0x${"11".repeat(32)}`;
 const EXPIRY_MS = 1_785_250_800_000n;
@@ -209,4 +214,41 @@ test("pricing time comes from the exact Clock input rather than the checkpoint",
   assert.deepEqual(requestedVersions, [41n]);
   assert.equal(timestampMs, 1_755_000_000_123);
   assert.notEqual(timestampMs, checkpointTimestampMs);
+});
+
+test("a queue-commit Lazer update carries the cohort's fixed-rate channel and τ", () => {
+  // Pyth Lazer LeEcdsa layout: update magic (u32) | 65-byte signature | payload length (u16) |
+  // payload. The payload is magic (u32) | envelope µs (u64) | channel (u8) | feed count (u8) |
+  // feed id (u32) | property count (u8) | then (property id, value) pairs, all little-endian.
+  const tauMs = 1_785_250_799_800n;
+  const update = buildLazerUpdateBytes({
+    signerPrivateKey: new Uint8Array(32).fill(7),
+    feedId: 1,
+    spot1e9: 65_000_000_000_000n,
+    sourceTimestampMs: tauMs,
+    channel: LAZER_CHANNEL_FIXED_RATE_200MS,
+  });
+  const view = new DataView(update.buffer, update.byteOffset, update.byteLength);
+  const payloadOffset = 4 + 65 + 2;
+  assert.equal(view.getUint16(4 + 65, true), update.length - payloadOffset);
+  assert.equal(view.getBigUint64(payloadOffset + 4, true), 1_785_250_799_800_000n);
+  assert.equal(update[payloadOffset + 12], 3);
+  // Feed: id 1 with price, exponent, and feed-update-time properties.
+  assert.equal(view.getUint32(payloadOffset + 14, true), 1);
+  assert.equal(update[payloadOffset + 18], 3);
+  assert.equal(view.getBigUint64(payloadOffset + 20, true), 65_000_000_000_000n);
+  // Property 12 (feed update time) is an Option<u64>: some, then τ in µs, so the price's
+  // generation time meets the order's earliest price time (τ).
+  const updateTimeOffset = payloadOffset + 20 + 8 + 1 + 2;
+  assert.equal(update[updateTimeOffset], 12);
+  assert.equal(update[updateTimeOffset + 1], 1);
+  assert.equal(view.getBigUint64(updateTimeOffset + 2, true), 1_785_250_799_800_000n);
+
+  const realTime = buildLazerUpdateBytes({
+    signerPrivateKey: new Uint8Array(32).fill(7),
+    feedId: 1,
+    spot1e9: 65_000_000_000_000n,
+    sourceTimestampMs: tauMs,
+  });
+  assert.equal(realTime[payloadOffset + 12], 1);
 });

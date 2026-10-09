@@ -154,8 +154,8 @@ fun bounded_range(): RangePrice {
 
 // Fixture prerequisites must not throw the policy abort expected from the target call.
 fun assert_admissible_probability(config: &StrikeExposureConfig, probability: u64) {
-    assert!(probability >= config.min_entry_probability());
-    assert!(probability <= config.max_entry_probability());
+    assert!(probability >= config.min_prob());
+    assert!(probability <= config.max_prob());
 }
 
 #[test]
@@ -267,8 +267,8 @@ fun leg_amounts_round_separately_before_summing() {
         ),
         2,
     );
-    config.set_expiry_fee_window_ms(RAMP_WINDOW_MS);
-    config.set_expiry_fee_max_multiplier(DOUBLE_MULTIPLIER);
+    config.set_fee_win(RAMP_WINDOW_MS);
+    config.set_fee_mult(DOUBLE_MULTIPLIER);
     // Halfway through a 1x -> 2x ramp: each 0.033 * 75 floors to 2.
     assert_eq!(
         config.trading_fee(
@@ -337,7 +337,7 @@ fun upper_tail_invalidates_an_otherwise_admissible_range() {
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
 fun admissible_legs_do_not_rescue_a_too_narrow_range() {
     let mut config = strike_exposure_config::new();
-    config.set_min_entry_probability(NARROW_MIN_PROBABILITY);
+    config.set_min_prob(NARROW_MIN_PROBABILITY);
     let price = bounded_range();
     assert_admissible_probability(&config, price.lower_up().destroy_some());
     assert_admissible_probability(&config, 1_000_000_000 - price.higher_up().destroy_some());
@@ -348,7 +348,7 @@ fun admissible_legs_do_not_rescue_a_too_narrow_range() {
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
 fun upper_leg_eligibility_uses_below_probability_under_asymmetric_bounds() {
     let mut config = strike_exposure_config::new();
-    config.set_max_entry_probability(ASYMMETRIC_MAX_PROBABILITY);
+    config.set_max_prob(ASYMMETRIC_MAX_PROBABILITY);
     let price = bounded_range();
     assert_admissible_probability(&config, price.lower_up().destroy_some());
     assert_admissible_probability(&config, price.higher_up().destroy_some());

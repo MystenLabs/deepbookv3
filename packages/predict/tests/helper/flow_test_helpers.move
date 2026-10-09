@@ -197,6 +197,13 @@ public fun setup_market(tick: u64): Fixture {
     // compose `redeem_settled_permissionless` inside the trader's own transaction.
     // The allowlist's own gating is covered with unlisted senders elsewhere.
     config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    // Model the production window between the package upgrade and its watermark
+    // bump: this package runs while the watermark still names the previous
+    // version, so the immediate mint and redeem paths stay live for the legacy
+    // flow suites. Queue tests cross the cutover through `cutover`.
+    config.set_version_watermark_for_testing(constants::current_version!() - 1);
+    // Allowlist the admin as a flush operator so flow tests can finish flushes.
+    config.add_flush_operator(&admin_cap, test_constants::admin(), &clock);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -378,6 +385,17 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
     expiry_id
+}
+
+/// Bump the watermark to this package's `current_version!()` through the real
+/// admin path: the delayed-execution cutover, which retires the immediate mint
+/// and live-redeem paths.
+public fun cutover(self: &mut Fixture) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared_by_id<ProtocolConfig>(self.config_id);
+    config.bump_version_watermark(&self.admin_cap);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
 }
 
 /// Set the PLP supply-leg fee rate through the real admin path.
@@ -589,8 +607,14 @@ public fun set_ewma_penalty(
     z_score_threshold: u64,
     penalty_rate: u64,
 ) {
-    config.set_ewma_params(&self.admin_cap, alpha, z_score_threshold, penalty_rate, &self.clock);
-    config.set_ewma_enabled(&self.admin_cap, true, &self.clock);
+    config.set_ewma_params_for_testing(
+        &self.admin_cap,
+        alpha,
+        z_score_threshold,
+        penalty_rate,
+        &self.clock,
+    );
+    config.set_ewma_enabled_for_testing(&self.admin_cap, true, &self.clock);
 }
 
 /// Enable the EWMA congestion penalty through a market bundle.
@@ -921,6 +945,10 @@ public fun return_account_bundle(bundle: AccountBundle) {
 /// The trader's account owner address.
 public fun owner(trader: &Trader): address { trader.owner }
 
+/// The trader's shared `AccountWrapper`, whose address is the account's
+/// receive address.
+public fun wrapper_id(trader: &Trader): ID { trader.wrapper_id }
+
 /// Whether the trader's account holds an open position for `order_id` in `expiry_id`.
 public fun has_position(wrapper: &AccountWrapper, expiry_id: ID, order_id: u256): bool {
     predict_account::has_position(wrapper.load_account(), expiry_id, order_id)
@@ -937,7 +965,7 @@ public fun account_balance<T>(
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
-    market.receive_pool_cash(coin::mint_for_testing<USDC>(
+    market.recv_cash(coin::mint_for_testing<USDC>(
         amount,
         self.scenario.ctx(),
     ).into_balance());
@@ -1578,7 +1606,7 @@ public fun quote_mint_bundle(
         );
     market
         .market
-        .quote_mint(
+        .quote_mint_for_testing(
             &market.config,
             &pricer,
             lower_tick,
@@ -1614,7 +1642,7 @@ public fun quote_mint_amount_bundle(
         );
     market
         .market
-        .quote_mint(
+        .quote_mint_for_testing(
             &market.config,
             &pricer,
             lower_tick,
@@ -1649,7 +1677,7 @@ public fun quote_mint_for_account_bundle(
         );
     market
         .market
-        .quote_mint_for_account(
+        .quote_mint_for_account_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1688,7 +1716,7 @@ public fun quote_mint_for_account_amount_bundle(
         );
     market
         .market
-        .quote_mint_for_account(
+        .quote_mint_for_account_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1728,7 +1756,7 @@ public fun quote_mint_exact_cost_for_account_bundle(
         );
     market
         .market
-        .quote_mint_exact_cost_for_account(
+        .quote_mint_exact_cost_for_account_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1768,7 +1796,7 @@ public fun mint_exact_quantity(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.mint_exact_quantity(
+    market.mint_exact_quantity_for_testing(
         wrapper,
         auth,
         config,
@@ -1838,7 +1866,7 @@ public fun mint_exact_amount(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.mint_exact_amount(
+    market.mint_exact_amount_for_testing(
         wrapper,
         auth,
         config,
@@ -1905,7 +1933,7 @@ public fun mint_exact_cost(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.mint_exact_cost(
+    market.mint_exact_cost_for_testing(
         wrapper,
         auth,
         config,
@@ -1929,7 +1957,7 @@ public fun load_pricer_bound_to_bundle(
     expiry_market_id: ID,
 ): pricing::Pricer {
     pricing::load_live_pricer(
-        market.config.pricing_config(),
+        market.config.pricing_cfg(),
         &market.oracle_registry,
         &market.pyth,
         market.bs.values(),
@@ -1957,7 +1985,7 @@ public fun mint_exact_cost_with_pricer_bundle(
     let auth = account::generate_auth(self.scenario.ctx());
     market
         .market
-        .mint_exact_cost(
+        .mint_exact_cost_for_testing(
             &mut account.wrapper,
             auth,
             &market.config,
@@ -1986,7 +2014,7 @@ public fun quote_mint_exact_cost_for_account_with_pricer_bundle(
 ): MintQuote {
     market
         .market
-        .quote_mint_exact_cost_for_account(
+        .quote_mint_exact_cost_for_account_for_testing(
             &account.wrapper,
             &market.config,
             pricer,
@@ -2026,7 +2054,7 @@ public fun redeem_live(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.redeem_live(
+    market.redeem_live_for_testing(
         wrapper,
         auth,
         config,
@@ -2542,7 +2570,7 @@ public fun finish_flush(
 
 /// S1 — expiry cash backing: the market's USDC custody covers its payout
 /// liability plus its isolated inventory-impact escrow, mirroring the contract's
-/// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
+/// `expiry_cash::chk_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
     assert!(market.cash_balance() >= market.payout_liability() + market.inventory_impact_reserve());
@@ -2621,6 +2649,18 @@ public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario 
 
 public fun clock(self: &Fixture): &Clock { &self.clock }
 
+/// Borrow the fixture clock and the scenario context together, so a helper can
+/// pass both to one call.
+public fun clock_and_ctx(self: &mut Fixture): (&Clock, &mut TxContext) {
+    (&self.clock, self.scenario.ctx())
+}
+
+/// Borrow the fixture `AdminCap`, clock, and scenario context together, for an
+/// admin entrypoint that also takes `&Clock` and a context.
+public fun admin_parts(self: &mut Fixture): (&AdminCap, &Clock, &mut TxContext) {
+    (&self.admin_cap, &self.clock, self.scenario.ctx())
+}
+
 public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
     self.clock.set_for_testing(timestamp_ms);
 }
@@ -2637,9 +2677,34 @@ public fun vault(bundle: &MarketBundle): &PoolVault { &bundle.vault }
 /// Borrow the protocol config inside a bundle for independent snapshot assertions.
 public fun config(bundle: &MarketBundle): &ProtocolConfig { &bundle.config }
 
+/// Mutably borrow the protocol config inside a bundle for admin setters.
+public fun config_mut(bundle: &mut MarketBundle): &mut ProtocolConfig { &mut bundle.config }
+
+public fun pyth(bundle: &MarketBundle): &PythFeed { &bundle.pyth }
+
+public fun oracle_registry(bundle: &MarketBundle): &OracleRegistry { &bundle.oracle_registry }
+
+public fun bs_values(bundle: &MarketBundle): &BlockScholesValueStore { bundle.bs.values() }
+
+public fun bs_svi(bundle: &MarketBundle): &BlockScholesSVIStore { bundle.bs.svi() }
+
+/// Borrow every bundle object a market flow takes at once, so one call can
+/// receive the market mutably beside the shared reads: `(market, config,
+/// oracle registry, Pyth feed, Block Scholes feeds)`.
+public fun market_parts_mut(
+    bundle: &mut MarketBundle,
+): (&mut ExpiryMarket, &mut ProtocolConfig, &OracleRegistry, &PythFeed, &BlockScholesFeed) {
+    (&mut bundle.market, &mut bundle.config, &bundle.oracle_registry, &bundle.pyth, &bundle.bs)
+}
+
+/// Borrow the account wrapper mutably beside the accumulator root.
+public fun account_parts_mut(account: &mut AccountBundle): (&mut AccountWrapper, &AccumulatorRoot) {
+    (&mut account.wrapper, &account.root)
+}
+
 /// Engage the valuation lock on a bundled protocol config.
-public fun begin_valuation(bundle: &mut MarketBundle) {
-    bundle.config.begin_valuation();
+public fun begin_val(bundle: &mut MarketBundle) {
+    bundle.config.begin_val();
 }
 
 /// Account balance through an account bundle.

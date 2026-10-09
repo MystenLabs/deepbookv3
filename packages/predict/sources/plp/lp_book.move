@@ -128,7 +128,7 @@ public(package) fun total_supply<LP>(book: &LpBook<LP>): u64 {
 /// Mint the permanent minimum-liquidity shares held by the book and never
 /// withdrawable, keeping `total_supply > 0` after genesis so the supply==0
 /// bootstrap branch is structurally unreachable. Called once by `plp::lock_capital`.
-public(package) fun mint_locked_liquidity<LP>(book: &mut LpBook<LP>, amount: u64) {
+public(package) fun mint_locked<LP>(book: &mut LpBook<LP>, amount: u64) {
     book.locked_lp.join(book.treasury_cap.mint_balance(amount));
 }
 
@@ -143,12 +143,12 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
 /// Next index the supply queue will assign. Sampled at a flush's snapshot instant
 /// as the drain's eligibility cutoff: only requests indexed strictly below it may
 /// fill at that flush's mark.
-public(package) fun next_supply_request_index<LP>(book: &LpBook<LP>): u64 {
+public(package) fun next_sup_idx<LP>(book: &LpBook<LP>): u64 {
     book.supply_queue.next_index
 }
 
-/// Withdraw-queue counterpart of `next_supply_request_index`.
-public(package) fun next_withdraw_request_index<LP>(book: &LpBook<LP>): u64 {
+/// Withdraw-queue counterpart of `next_sup_idx`.
+public(package) fun next_wd_idx<LP>(book: &LpBook<LP>): u64 {
     book.withdraw_queue.next_index
 }
 
@@ -179,7 +179,7 @@ public(package) fun cancel_supply_request<LP>(
     recipient: address,
     index: u64,
 ): (ID, u64, Balance<USDC>) {
-    let (request, refund) = book.supply_queue.remove_for_recipient(index, recipient);
+    let (request, refund) = book.supply_queue.remove_for(index, recipient);
     (request.account_id, request.amount, refund)
 }
 
@@ -188,22 +188,22 @@ public(package) fun cancel_withdraw_request<LP>(
     recipient: address,
     index: u64,
 ): (ID, u64, Balance<LP>) {
-    let (request, refund) = book.withdraw_queue.remove_for_recipient(index, recipient);
+    let (request, refund) = book.withdraw_queue.remove_for(index, recipient);
     (request.account_id, request.amount, refund)
 }
 
-public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
+public(package) fun new_mark(pool_value: u64, total_supply: u64): FlushMark {
     FlushMark {
         pool_value,
         total_supply,
-        executable: is_executable_mark(pool_value, total_supply),
+        executable: is_exec_mark(pool_value, total_supply),
     }
 }
 
 /// Freeze the flush's fee rates, supply leg first. Built from the two named config
 /// getters at the one call site, so a transposition is visible there; a swap is also
 /// caught by `flush_freezes_both_configured_fee_rates`.
-public(package) fun new_fee_rates(supply: u64, withdraw: u64): FeeRates {
+public(package) fun new_fees(supply: u64, withdraw: u64): FeeRates {
     FeeRates { supply, withdraw }
 }
 
@@ -211,24 +211,24 @@ public(package) fun new_fee_rates(supply: u64, withdraw: u64): FeeRates {
 /// re-read from config so the flush event reports what the drain was actually
 /// handed: a wrong rate is otherwise invisible to every observer, since the withdraw
 /// leg cannot be driven behaviourally from a Move test.
-public(package) fun supply_fee_rate(fees: &FeeRates): u64 {
+public(package) fun sup_fee_rate(fees: &FeeRates): u64 {
     fees.supply
 }
 
 /// The withdraw-leg rate this flush froze; same reasoning as `supply_fee_rate`.
-public(package) fun withdraw_fee_rate(fees: &FeeRates): u64 {
+public(package) fun wd_fee_rate(fees: &FeeRates): u64 {
     fees.withdraw
 }
 
-public(package) fun supplies_filled(summary: &DrainSummary): u64 {
+public(package) fun sups_filled(summary: &DrainSummary): u64 {
     summary.supplies_filled
 }
 
-public(package) fun withdrawals_filled(summary: &DrainSummary): u64 {
+public(package) fun wds_filled(summary: &DrainSummary): u64 {
     summary.withdrawals_filled
 }
 
-public(package) fun requests_processed(summary: &DrainSummary): u64 {
+public(package) fun processed(summary: &DrainSummary): u64 {
     summary.requests_processed
 }
 
@@ -272,7 +272,7 @@ public(package) fun drain<LP>(
     max_pool_value: u64,
     ctx: &mut TxContext,
 ): DrainSummary {
-    let (supplies_filled, supplies_processed) = drain_supply_queue(
+    let (supplies_filled, supplies_processed) = drain_supply(
         book,
         ledger,
         &mark,
@@ -283,7 +283,7 @@ public(package) fun drain<LP>(
         max_limit_misses,
         max_pool_value,
     );
-    let (withdrawals_filled, withdrawals_processed) = drain_withdraw_queue(
+    let (withdrawals_filled, withdrawals_processed) = drain_wd(
         book,
         ledger,
         &mark,
@@ -302,7 +302,7 @@ public(package) fun drain<LP>(
     }
 }
 
-fun drain_supply_queue<LP>(
+fun drain_supply<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
     mark: &FlushMark,
@@ -322,19 +322,19 @@ fun drain_supply_queue<LP>(
     let mut pool_value = mark.pool_value;
 
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
-        let request = book.supply_queue.front_request();
+        let request = book.supply_queue.front_req();
         // Eligibility cutoff: a request younger than the flush's snapshot instant
         // waits for the next mark. Indexes are monotone along the strict-FIFO
         // queue, so the first too-young head ends the pass. Without this, dropping
         // the queue gates would let a requester watch the frozen mark form and
         // submit against a price it already knows is stale.
         if (request.index >= cutoff) break;
-        let quote = mark.quote_supply_shares(fees, request.amount);
+        let quote = mark.quote_shares(fees, request.amount);
         if (quote.is_none()) {
             processed = processed + 1;
             quote.destroy_none();
             let (request, escrowed) = book.supply_queue.pop_front();
-            refund_supply_request(
+            refund_sup(
                 pool_vault_id,
                 request,
                 escrowed,
@@ -352,7 +352,7 @@ fun drain_supply_queue<LP>(
                 let missed_flushes = request.missed_flushes + 1;
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed) = book.supply_queue.pop_front();
-                    refund_supply_request(
+                    refund_sup(
                         pool_vault_id,
                         request,
                         escrowed,
@@ -360,8 +360,8 @@ fun drain_supply_queue<LP>(
                         book.supply_queue.pending,
                     );
                 } else {
-                    book.supply_queue.record_front_limit_miss();
-                    emit_request_limit_missed(
+                    book.supply_queue.note_miss();
+                    limit_missed(
                         pool_vault_id,
                         &request,
                         true,
@@ -377,7 +377,7 @@ fun drain_supply_queue<LP>(
                 let headroom = max_pool_value.saturating_sub(pool_value);
                 let fill_amount = request.amount.min(headroom);
                 let partial = fill_amount < request.amount;
-                let fill_quote = mark.quote_supply_shares(fees, fill_amount);
+                let fill_quote = mark.quote_shares(fees, fill_amount);
                 if (fill_quote.is_none()) {
                     // No room, or a prefix so small it prices to zero shares. Stop the
                     // pass: with the cap reached, nothing behind this head could fill
@@ -393,7 +393,7 @@ fun drain_supply_queue<LP>(
                     if (!partial) {
                         processed = processed + 1;
                         let (request, escrowed) = book.supply_queue.pop_front();
-                        refund_supply_request(
+                        refund_sup(
                             pool_vault_id,
                             request,
                             escrowed,
@@ -416,7 +416,7 @@ fun drain_supply_queue<LP>(
                 if (fill_shares < min_for_prefix) break;
                 processed = processed + 1;
                 let escrowed = if (partial) {
-                    book.supply_queue.fill_front_partially(fill_amount)
+                    book.supply_queue.fill_partial(fill_amount)
                 } else {
                     let (_, escrowed) = book.supply_queue.pop_front();
                     escrowed
@@ -425,7 +425,7 @@ fun drain_supply_queue<LP>(
                 pool_value = pool_value + fill_amount;
                 let shares_minted = book.treasury_cap.mint_balance(fill_shares);
                 balance::send_funds(shares_minted, request.recipient);
-                vault_events::emit_supply_filled(
+                vault_events::supply_done(
                     pool_vault_id,
                     request.account_id,
                     request.recipient,
@@ -445,7 +445,7 @@ fun drain_supply_queue<LP>(
     (filled, processed)
 }
 
-fun drain_withdraw_queue<LP>(
+fun drain_wd<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
     mark: &FlushMark,
@@ -460,16 +460,16 @@ fun drain_withdraw_queue<LP>(
     let mut processed = 0;
 
     while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
-        let request = book.withdraw_queue.front_request();
+        let request = book.withdraw_queue.front_req();
         // Same eligibility cutoff as the supply pass: fills only pre-snapshot
         // requests at this flush's mark.
         if (request.index >= cutoff) break;
-        let quote = mark.quote_withdraw_usdc(fees, request.amount);
+        let quote = mark.quote_usdc(fees, request.amount);
         if (quote.is_none()) {
             quote.destroy_none();
             let (request, escrowed_lp) = book.withdraw_queue.pop_front();
             processed = processed + 1;
-            refund_withdraw_request(
+            refund_wd(
                 pool_vault_id,
                 request,
                 escrowed_lp,
@@ -483,7 +483,7 @@ fun drain_withdraw_queue<LP>(
                 let missed_flushes = request.missed_flushes + 1;
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed_lp) = book.withdraw_queue.pop_front();
-                    refund_withdraw_request(
+                    refund_wd(
                         pool_vault_id,
                         request,
                         escrowed_lp,
@@ -491,8 +491,8 @@ fun drain_withdraw_queue<LP>(
                         book.withdraw_queue.pending,
                     );
                 } else {
-                    book.withdraw_queue.record_front_limit_miss();
-                    emit_request_limit_missed(
+                    book.withdraw_queue.note_miss();
+                    limit_missed(
                         pool_vault_id,
                         &request,
                         false,
@@ -539,7 +539,7 @@ fun drain_withdraw_queue<LP>(
                         affordable,
                         request.amount,
                     );
-                    let partial_quote = mark.quote_withdraw_usdc(fees, affordable);
+                    let partial_quote = mark.quote_usdc(fees, affordable);
                     if (partial_quote.is_none() || partial_quote.borrow().output < min_for_prefix) {
                         // Idle buys no whole share, or those shares price to nothing.
                         // Carry the head and stop, as the dry queue always has.
@@ -553,15 +553,15 @@ fun drain_withdraw_queue<LP>(
                 };
                 let partial = burn_shares < request.amount;
                 let escrowed_lp = if (partial) {
-                    book.withdraw_queue.fill_front_partially(burn_shares)
+                    book.withdraw_queue.fill_partial(burn_shares)
                 } else {
                     let (_, escrowed_lp) = book.withdraw_queue.pop_front();
                     escrowed_lp
                 };
-                let payout_cash = ledger.withdraw_idle(payout);
+                let payout_cash = ledger.take_idle(payout);
                 book.treasury_cap.burn(escrowed_lp.into_coin(ctx));
                 balance::send_funds(payout_cash, request.recipient);
-                vault_events::emit_withdraw_filled(
+                vault_events::wd_done(
                     pool_vault_id,
                     request.account_id,
                     request.recipient,
@@ -590,7 +590,7 @@ fun under_budget(budget: &Option<u64>, processed: u64): bool {
     budget.is_none() || processed < *budget.borrow()
 }
 
-fun refund_supply_request(
+fun refund_sup(
     pool_vault_id: ID,
     request: RequestEntry,
     escrowed: Balance<USDC>,
@@ -598,7 +598,7 @@ fun refund_supply_request(
     requests_pending_after: u64,
 ) {
     balance::send_funds(escrowed, request.recipient);
-    vault_events::emit_request_cancelled(
+    vault_events::req_cancel(
         pool_vault_id,
         request.account_id,
         request.recipient,
@@ -610,7 +610,7 @@ fun refund_supply_request(
     );
 }
 
-fun refund_withdraw_request<LP>(
+fun refund_wd<LP>(
     pool_vault_id: ID,
     request: RequestEntry,
     escrowed_lp: Balance<LP>,
@@ -618,7 +618,7 @@ fun refund_withdraw_request<LP>(
     requests_pending_after: u64,
 ) {
     balance::send_funds(escrowed_lp, request.recipient);
-    vault_events::emit_request_cancelled(
+    vault_events::req_cancel(
         pool_vault_id,
         request.account_id,
         request.recipient,
@@ -630,7 +630,7 @@ fun refund_withdraw_request<LP>(
     );
 }
 
-fun emit_request_limit_missed(
+fun limit_missed(
     pool_vault_id: ID,
     request: &RequestEntry,
     is_supply: bool,
@@ -638,7 +638,7 @@ fun emit_request_limit_missed(
     missed_flushes: u64,
     max_limit_misses: u64,
 ) {
-    vault_events::emit_request_limit_missed(
+    vault_events::limit_missed(
         pool_vault_id,
         request.account_id,
         request.recipient,
@@ -678,7 +678,7 @@ fun enqueue<T>(
 ): u64 {
     let index = queue.next_index;
     queue.next_index = index + 1;
-    let page_id = queue.ensure_tail_page_for_index(index);
+    let page_id = queue.ensure_page(index);
     let amount = escrow.value();
     queue
         .pages
@@ -697,14 +697,14 @@ fun enqueue<T>(
     index
 }
 
-fun front_request<T>(queue: &RequestQueue<T>): RequestEntry {
+fun front_req<T>(queue: &RequestQueue<T>): RequestEntry {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();
     queue.pages[page_id].entries[0]
 }
 
 fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
-    let request = queue.front_request();
+    let request = queue.front_req();
     queue.remove(request.index)
 }
 
@@ -716,7 +716,7 @@ fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
 /// asking for the same *price* it originally did, and it is rounded **up** so the
 /// carried limit is never laxer than what the requester signed up for: at worst they
 /// are held to a fractionally stricter price, never a worse one.
-fun fill_front_partially<T>(queue: &mut RequestQueue<T>, filled: u64): Balance<T> {
+fun fill_partial<T>(queue: &mut RequestQueue<T>, filled: u64): Balance<T> {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();
     let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
@@ -732,7 +732,7 @@ fun fill_front_partially<T>(queue: &mut RequestQueue<T>, filled: u64): Balance<T
 /// Persist a miss on the head so it survives to the next flush. Only called when the
 /// request keeps an attempt; a miss that refunds counts off the caller's copy instead,
 /// so the refund path writes no page.
-fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>) {
+fun note_miss<T>(queue: &mut RequestQueue<T>) {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();
     let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
@@ -740,7 +740,7 @@ fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>) {
 }
 
 fun remove<T>(queue: &mut RequestQueue<T>, index: u64): (RequestEntry, Balance<T>) {
-    let page_id = page_id_for_index(index);
+    let page_id = page_of(index);
     assert!(queue.pages.contains(page_id), ERequestNotFound);
     let (request, page_empty) = {
         let page = queue.pages.borrow_mut(page_id);
@@ -749,19 +749,19 @@ fun remove<T>(queue: &mut RequestQueue<T>, index: u64): (RequestEntry, Balance<T
         (request, page.entries.length() == 0)
     };
     if (page_empty) {
-        queue.unlink_empty_page(page_id);
+        queue.unlink_page(page_id);
     };
     queue.pending = queue.pending - 1;
     let escrow = queue.escrow.split(request.amount);
     (request, escrow)
 }
 
-fun remove_for_recipient<T>(
+fun remove_for<T>(
     queue: &mut RequestQueue<T>,
     index: u64,
     recipient: address,
 ): (RequestEntry, Balance<T>) {
-    let page_id = page_id_for_index(index);
+    let page_id = page_of(index);
     assert!(queue.pages.contains(page_id), ERequestNotFound);
     let page = &queue.pages[page_id];
     let offset = entry_offset(&page.entries, index);
@@ -769,8 +769,8 @@ fun remove_for_recipient<T>(
     queue.remove(index)
 }
 
-fun ensure_tail_page_for_index<T>(queue: &mut RequestQueue<T>, index: u64): u64 {
-    let next_page_id = page_id_for_index(index);
+fun ensure_page<T>(queue: &mut RequestQueue<T>, index: u64): u64 {
+    let next_page_id = page_of(index);
     if (queue.tail_page_id.is_none()) {
         queue.pages.add(next_page_id, new_page(option::none(), option::none()));
         queue.head_page_id = option::some(next_page_id);
@@ -793,7 +793,7 @@ fun new_page(prev: Option<u64>, next: Option<u64>): RequestPage {
     RequestPage { prev, next, entries: vector[] }
 }
 
-fun unlink_empty_page<T>(queue: &mut RequestQueue<T>, page_id: u64) {
+fun unlink_page<T>(queue: &mut RequestQueue<T>, page_id: u64) {
     let RequestPage { prev, next, entries } = queue.pages.remove(page_id);
     entries.destroy_empty();
 
@@ -812,7 +812,7 @@ fun unlink_empty_page<T>(queue: &mut RequestQueue<T>, page_id: u64) {
     };
 }
 
-fun page_id_for_index(index: u64): u64 {
+fun page_of(index: u64): u64 {
     index / PAGE_CAPACITY
 }
 
@@ -830,7 +830,7 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// as USDC no shares were issued against, which is how it accrues to existing
 /// holders. `None` means the mark/request pair is not executable and the queued
 /// request must be refunded.
-fun quote_supply_shares(mark: &FlushMark, fees: &FeeRates, amount: u64): Option<FillQuote> {
+fun quote_shares(mark: &FlushMark, fees: &FeeRates, amount: u64): Option<FillQuote> {
     if (!mark.executable) return option::none();
     let fee = fee_on(amount, fees.supply);
     // = net * total_supply / pool_value, round down (supplier mints ≤1 ulp
@@ -845,7 +845,7 @@ fun quote_supply_shares(mark: &FlushMark, fees: &FeeRates, amount: u64): Option<
 /// full `shares` are burned, which is how it accrues to remaining holders. `None`
 /// means the mark/request pair is not executable and the queued request must be
 /// refunded.
-fun quote_withdraw_usdc(mark: &FlushMark, fees: &FeeRates, shares: u64): Option<FillQuote> {
+fun quote_usdc(mark: &FlushMark, fees: &FeeRates, shares: u64): Option<FillQuote> {
     if (!mark.executable) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
@@ -865,7 +865,7 @@ fun fee_on(amount: u64, rate: u64): u64 {
     math::mul_div_up(amount, rate, math::float_scaling!())
 }
 
-fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
+fun is_exec_mark(pool_value: u64, total_supply: u64): bool {
     if (total_supply == 0) return false;
     // Executable iff the mark price is within band× of unit parity in both
     // directions (USDC and PLP share 6 decimals, so unit price is raw-unit

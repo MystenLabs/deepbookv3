@@ -20,6 +20,22 @@ import {
   subscriptionItemMatches,
 } from "./marketSource.js";
 import { rollDownSvi } from "./pricer.js";
+import {
+  type KeeperChain,
+  type LaneMarket,
+  settleAndFlush,
+  settleExpired,
+  settleFailed,
+  settleThenFlush,
+} from "./keeperLanes.js";
+import {
+  enqueuedOrder,
+  heldAfterSell,
+  orderQuantity,
+  recordOutcome,
+  settlementComplete,
+  settlementMadeProgress,
+} from "./queueEvents.js";
 import { gridExpiries } from "./runnerConfig.js";
 import { pricingEnvFromSnapshot, type Snap } from "./strategyPricing.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
@@ -417,4 +433,265 @@ test("Block Scholes subscriptions keep expected SIDs local and send complete des
   );
   const { exchange: _exchange, ...missingExchange } = acknowledged;
   assert.equal(subscriptionItemMatches(forward.request, missingExchange), false);
+});
+
+const PKG = "0x1234";
+const queueEvent = (name: string, parsedJson: any) => ({
+  type: `${PKG}::order_events::${name}`,
+  parsedJson,
+});
+
+test("an enqueue receipt yields the record, its τ, and its channel", () => {
+  const order = enqueuedOrder([
+    { type: `${PKG}::account::Withdrawn`, parsedJson: {} },
+    queueEvent("OrderEnqueued", {
+      record_id: "7",
+      timing: { placed_at_ms: "1000", earliest_price_ms: "2000", tau_ms: "2000", deadline_ms: "7000", cutoff_ms: "50000", pyth_channel: 3 },
+    }),
+  ]);
+  assert.deepEqual(order, { recordId: 7n, tauMs: 2000n, channel: 3 });
+  assert.throws(() => enqueuedOrder([]), /no OrderEnqueued/);
+});
+
+test("a filled position's quantity decodes from the packed order id", () => {
+  // order.move packs (lots << 100) | (lower_tick << 70) | (higher_tick << 40) | sequence,
+  // with 10_000 quantity units per lot.
+  const orderId = (25n << 100n) | (123n << 70n) | (456n << 40n) | 9n;
+  assert.equal(orderQuantity(orderId), 250_000n);
+  assert.equal(orderQuantity(0n), 0n);
+});
+
+test("a commit+resolve receipt reports each record's fill, refund, or wait", () => {
+  const remaining = (3n << 100n) | (1n << 70n) | (2n << 40n);
+  const events = [
+    queueEvent("CohortCommitted", { tau_ms: "2000" }),
+    queueEvent("QueuedOrderFilled", {
+      record_id: "4", quantity: "20000", amount: "11000000",
+      position: { order_id: remaining.toString(), root_id: "1", opened_at_ms: "2000" },
+    }),
+    queueEvent("QueuedOrderFilled", {
+      record_id: "5", quantity: "10000", amount: "3000000",
+      position: { order_id: "0", root_id: "0", opened_at_ms: "0" },
+    }),
+    queueEvent("QueuedOrderRefunded", { record_id: "6", reason: 8, position_returned: true }),
+  ];
+  assert.deepEqual(recordOutcome(events, 4n), {
+    status: "filled", quantity: 20_000n, amount: 11_000_000n, remainingQuantity: 30_000n,
+  });
+  assert.deepEqual(recordOutcome(events, 5n), {
+    status: "filled", quantity: 10_000n, amount: 3_000_000n, remainingQuantity: 0n,
+  });
+  assert.deepEqual(recordOutcome(events, 6n), { status: "refunded", reason: 8, positionReturned: true });
+  assert.deepEqual(recordOutcome(events, 9n), { status: "waiting" });
+});
+
+test("settlement phases stop on completion or on a call that made no progress", () => {
+  assert.equal(settlementComplete({ settled: false, payoutCursor: 0n, nextId: 0n }), false);
+  assert.equal(settlementComplete({ settled: true, payoutCursor: 3n, nextId: 5n }), false);
+  assert.equal(settlementComplete({ settled: true, payoutCursor: 5n, nextId: 5n }), true);
+  // A market that never had a queue reads (0, 0) once settled.
+  assert.equal(settlementComplete({ settled: true, payoutCursor: 0n, nextId: 0n }), true);
+
+  assert.equal(settlementMadeProgress([queueEvent("QueuedOrderRefunded", {})]), true);
+  assert.equal(settlementMadeProgress([{ type: `${PKG}::config_events::MarketSettled`, parsedJson: {} }]), true);
+  assert.equal(settlementMadeProgress([queueEvent("OpenRecordSettled", {})]), true);
+  assert.equal(settlementMadeProgress([queueEvent("MarketPayoutsCompleted", {})]), true);
+  // Only the Propbook observation insert: try_settle returned without moving.
+  assert.equal(
+    settlementMadeProgress([{ type: `${PKG}::oracle_lane::ObservationInserted<${PKG}::x::Y>`, parsedJson: {} }]),
+    false,
+  );
+  assert.equal(settlementMadeProgress(undefined), false);
+});
+
+test("a refunded sell keeps the position tracked in the reopened sell record", () => {
+  // Record 4 holds 30_000. Enqueueing a sell of 10_000 closes record 4 and moves the whole
+  // position into sell record 9; the refund reopens record 9 with it.
+  const held = { recordId: 4n, marketId: "0xm", quantity: 30_000n };
+  const afterRefund = heldAfterSell(held, 9n, { status: "refunded", reason: 8, positionReturned: true });
+  assert.deepEqual(afterRefund, { recordId: 9n, marketId: "0xm", quantity: 30_000n });
+  // The retry sells from record 9, not the closed record 4, and a partial fill leaves the
+  // remainder in the retry's own record 12.
+  const afterRetry = heldAfterSell(afterRefund!, 12n, {
+    status: "filled", quantity: 10_000n, amount: 4_000_000n, remainingQuantity: 20_000n,
+  });
+  assert.deepEqual(afterRetry, { recordId: 12n, marketId: "0xm", quantity: 20_000n });
+  // A full close leaves nothing; a sell still waiting holds the position in its record.
+  assert.equal(
+    heldAfterSell(afterRetry!, 15n, { status: "filled", quantity: 20_000n, amount: 1n, remainingQuantity: 0n }),
+    null,
+  );
+  assert.deepEqual(heldAfterSell(afterRetry!, 15n, { status: "waiting" }), {
+    recordId: 15n, marketId: "0xm", quantity: 20_000n,
+  });
+});
+
+// A model of the chain the keeper lanes drive. Each market has `waiting` queued orders and
+// `nextId` records; try_settle refunds waiting orders, then settles, then moves the payout
+// cursor `payoutBatch` records per call, as `expiry_market::try_settle` does. A settle PTB
+// with `sweep` and the flush snapshot both deactivate a settled market, as
+// rebalance_expiry_cash and plp::snapshot_expiry_pricer do, and the snapshot aborts on an
+// expired unsettled market. A PTB that fails changes nothing.
+interface ModelMarket {
+  id: string;
+  expiryMs: number;
+  active: boolean;
+  settled: boolean;
+  waiting: number;
+  nextId: number;
+  cursor: number;
+}
+
+class ModelChain implements KeeperChain {
+  now = 0;
+  payoutBatch = 1;
+  flushes: string[][] = [];
+  violations: string[] = [];
+  failSettle: ((market: ModelMarket) => boolean) | null = null;
+  failAfterSnapshot = false;
+  // Advances the clock between the pre-flush settlement pass and the snapshot.
+  clockAtSnapshot: number | null = null;
+  readonly markets = new Map<string, ModelMarket>();
+
+  add(id: string, expiryMs: number, waiting: number, openRecords: number): void {
+    this.markets.set(id, {
+      id, expiryMs, active: true, settled: false, waiting, nextId: waiting + openRecords, cursor: 0,
+    });
+  }
+
+  // No settled market with unpaid records may leave the active set: nothing rediscovers it.
+  private check(): void {
+    for (const m of this.markets.values()) {
+      if (m.settled && m.cursor < m.nextId && !m.active) this.violations.push(m.id);
+    }
+  }
+
+  async clockMs() { return this.now; }
+
+  async activeMarkets(): Promise<LaneMarket[]> {
+    return [...this.markets.values()].filter((m) => m.active).map((m) => ({ id: m.id, expiryMs: m.expiryMs }));
+  }
+
+  async settlementProgress(marketId: string) {
+    const m = this.markets.get(marketId)!;
+    return { settled: m.settled, payoutCursor: BigInt(m.cursor), nextId: BigInt(m.nextId) };
+  }
+
+  async settlePhase(market: LaneMarket, sweep: boolean) {
+    const m = this.markets.get(market.id)!;
+    if (this.failSettle?.(m)) throw new Error(`settle PTB aborted for ${m.id}`);
+    const events: { type: string; parsedJson: object }[] = [];
+    const emit = (name: string) => events.push({ type: `0x1::order_events::${name}`, parsedJson: {} });
+    if (!m.settled) {
+      if (this.now < m.expiryMs) return events;
+      if (m.waiting > 0) {
+        m.waiting -= 1;
+        emit("QueuedOrderRefunded");
+      } else {
+        m.settled = true;
+        events.push({ type: "0x1::config_events::MarketSettled", parsedJson: {} });
+      }
+    } else if (m.cursor < m.nextId) {
+      m.cursor = Math.min(m.nextId, m.cursor + this.payoutBatch);
+      emit("OpenRecordSettled");
+      if (m.cursor === m.nextId) emit("MarketPayoutsCompleted");
+    }
+    if (sweep && m.settled) m.active = false;
+    this.check();
+    return events;
+  }
+
+  async flush(marketIds: string[]) {
+    if (this.clockAtSnapshot !== null) this.now = this.clockAtSnapshot;
+    const members = marketIds.map((id) => this.markets.get(id)!).filter((m) => m.active);
+    const expiredUnsettled = members.find((m) => !m.settled && this.now >= m.expiryMs);
+    if (expiredUnsettled) throw new Error(`EExpiredMarketNotSettled ${expiredUnsettled.id}`);
+    for (const m of members) if (m.settled) m.active = false;
+    this.check();
+    this.flushes.push(marketIds);
+    if (this.failAfterSnapshot) throw new Error("finish_flush leg failed after the snapshot");
+    return { events: [] };
+  }
+
+  unpaid(): string[] {
+    return [...this.markets.values()].filter((m) => m.settled && m.cursor < m.nextId).map((m) => m.id);
+  }
+}
+
+test("a flush failure after the snapshot never strands a settled market's unpaid records", async () => {
+  const chain = new ModelChain();
+  chain.add("a", 1_000, 1, 2);
+  chain.add("b", 5_000, 1, 3);
+  chain.add("c", 60_000, 0, 2);
+
+  // Tick 1: the settlement lane finishes and sweeps `a`. `b` then expires before the flush
+  // lane (a boundary-race straggler): the lane settles and pays it before the snapshot, so the
+  // snapshot meets no settled market with unpaid records, and the leg failing after the
+  // snapshot loses nothing.
+  chain.now = 2_000;
+  const settled = await settleExpired(chain);
+  assert.deepEqual(settled.map((r) => [r.market.id, settleFailed(r)]), [["a", false]]);
+  chain.now = 6_000;
+  chain.failAfterSnapshot = true;
+  const lane = await settleThenFlush(chain);
+  assert.deepEqual(lane.preFlush.map((r) => [r.market.id, settleFailed(r)]), [["b", false]]);
+  assert.match(String(lane.error), /after the snapshot/);
+  assert.deepEqual(chain.flushes, [["c"]]);
+  assert.deepEqual(chain.unpaid(), []);
+  assert.deepEqual(chain.violations, []);
+
+  // A market that expires after the pre-flush pass makes the snapshot abort instead: it stays
+  // active and unsettled, and the next tick (a fresh keeper, as after a restart) settles it.
+  chain.failAfterSnapshot = false;
+  chain.clockAtSnapshot = 61_000;
+  const raced = await settleAndFlush(chain);
+  assert.equal(raced.settled.length, 0);
+  assert.equal(raced.flush, null);
+  const deferred = await settleThenFlush(chain);
+  assert.match(String(deferred.error), /EExpiredMarketNotSettled c/);
+  assert.equal(chain.markets.get("c")!.active, true);
+  chain.clockAtSnapshot = null;
+  const next = await settleAndFlush(chain);
+  assert.deepEqual(next.settled.map((r) => [r.market.id, settleFailed(r)]), [["c", false]]);
+  assert.equal(next.flush?.error, undefined);
+  assert.deepEqual(chain.unpaid(), []);
+  assert.deepEqual(chain.violations, []);
+});
+
+test("a payout failure keeps the market active and holds the flush until a later tick pays it", async () => {
+  const chain = new ModelChain();
+  chain.add("a", 1_000, 0, 3);
+  chain.add("b", 60_000, 0, 1);
+  chain.now = 2_000;
+  // The second payout batch aborts once.
+  let failures = 1;
+  chain.failSettle = (m) => m.id === "a" && m.settled && m.cursor === 1 && failures-- > 0;
+
+  const failed = await settleAndFlush(chain);
+  assert.deepEqual(failed.settled.map((r) => [r.market.id, settleFailed(r)]), [["a", true]]);
+  assert.equal(failed.flush, null);
+  assert.deepEqual(chain.flushes, []);
+  const a = chain.markets.get("a")!;
+  assert.deepEqual([a.settled, a.cursor, a.active], [true, 1, true]);
+  assert.deepEqual(chain.violations, []);
+
+  // The next tick rebuilds its work list from the active set, which still holds `a`.
+  const resumed = await settleAndFlush(chain);
+  assert.deepEqual(resumed.settled.map((r) => [r.market.id, settleFailed(r)]), [["a", false]]);
+  assert.deepEqual([a.cursor, a.active], [3, false]);
+  assert.deepEqual(chain.flushes, [["b"]]);
+
+  // A payout failure in the pre-flush pass skips the flush the same way.
+  chain.add("c", 70_000, 0, 2);
+  chain.now = 75_000;
+  failures = 1;
+  chain.failSettle = (m) => m.id === "c" && m.settled && m.cursor === 1 && failures-- > 0;
+  const lane = await settleThenFlush(chain);
+  assert.equal(lane.skipped, true);
+  assert.deepEqual(chain.flushes, [["b"]]);
+  assert.equal(chain.markets.get("c")!.active, true);
+  assert.deepEqual(chain.violations, []);
+  await settleAndFlush(chain);
+  assert.deepEqual(chain.unpaid(), []);
+  assert.deepEqual(chain.violations, []);
 });

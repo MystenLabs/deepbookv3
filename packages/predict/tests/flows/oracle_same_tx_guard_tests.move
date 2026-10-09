@@ -378,10 +378,7 @@ fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
     );
     // The load reads the row this transaction wrote, so the write landed and was
     // read without tripping the guard.
-    assert_eq!(
-        fx.load_pricer_bundle(&market).pyth_spot_source_timestamp_ms(),
-        STALE_PYTH_SOURCE_MS,
-    );
+    assert_eq!(fx.load_pricer_bundle(&market).pyth_ts(), STALE_PYTH_SOURCE_MS);
     // With no orders the mark is the market's seeded cash, whatever the forward.
     assert_eq!(fx.current_nav_bundle(&market), test_constants::default_seeded_expiry_cash());
 

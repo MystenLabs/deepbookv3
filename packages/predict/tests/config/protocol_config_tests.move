@@ -30,7 +30,7 @@ const UPDATED_MAX_LP_POOL_VALUE: u64 = 5_000_000_000_000;
 fun new_config_seeds_protocol_reserve_profit_share() {
     let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    assert_eq!(config.protocol_reserve_profit_share(), DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE);
+    assert_eq!(config.rsv_share(), DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE);
 
     destroy(admin_cap);
     return_shared(reg);
@@ -43,7 +43,7 @@ fun set_ewma_params_and_enabled_update_config() {
     let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
 
-    config.set_ewma_params(
+    config.set_ewma_params_for_testing(
         &admin_cap,
         config_constants::min_ewma_alpha!(),
         config_constants::min_ewma_z_score_threshold!(),
@@ -57,9 +57,9 @@ fun set_ewma_params_and_enabled_update_config() {
     );
     assert_eq!(config.ewma_config().penalty_rate(), config_constants::min_ewma_penalty_rate!());
 
-    config.set_ewma_enabled(&admin_cap, true, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, true, &clock);
     assert!(config.ewma_config().enabled());
-    config.set_ewma_enabled(&admin_cap, false, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, false, &clock);
     assert!(!config.ewma_config().enabled());
 
     destroy(admin_cap);
@@ -75,11 +75,11 @@ fun set_ewma_params_and_enabled_update_config() {
 #[test]
 fun new_config_ships_with_no_retry() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.lp_request_limit_flush_attempts(), 1);
+    assert_eq!(config.req_attempts(), 1);
 
     // And the admin path moves it, so the getter is not reading a frozen constant.
     config.set_lp_request_limit_flush_attempts(&admin_cap, 3);
-    assert_eq!(config.lp_request_limit_flush_attempts(), 3);
+    assert_eq!(config.req_attempts(), 3);
 
     destroy(admin_cap);
     return_shared(reg);
@@ -93,7 +93,7 @@ fun set_lp_request_limit_flush_attempts_during_valuation_aborts() {
     // moving it under a valuation in flight would change the drain policy between the
     // mark being frozen and the queues being drained against it.
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    config.begin_valuation();
+    config.begin_val();
     config.set_lp_request_limit_flush_attempts(
         &admin_cap,
         config_constants::max_lp_request_limit_flush_attempts!(),
@@ -106,10 +106,10 @@ fun set_lp_request_limit_flush_attempts_during_valuation_aborts() {
 #[test]
 fun new_config_ships_with_500k_usdc_cap() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.max_lp_pool_value(), DEFAULT_MAX_LP_POOL_VALUE);
+    assert_eq!(config.max_pool(), DEFAULT_MAX_LP_POOL_VALUE);
 
     config.set_max_lp_pool_value(&admin_cap, UPDATED_MAX_LP_POOL_VALUE);
-    assert_eq!(config.max_lp_pool_value(), UPDATED_MAX_LP_POOL_VALUE);
+    assert_eq!(config.max_pool(), UPDATED_MAX_LP_POOL_VALUE);
 
     destroy(admin_cap);
     return_shared(reg);
@@ -122,7 +122,7 @@ fun set_max_lp_pool_value_during_valuation_aborts() {
     // The flush reads the cap mid-PTB and applies it to the supply pass; moving it
     // under a valuation in flight would change capacity after the mark was frozen.
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    config.begin_valuation();
+    config.begin_val();
     config.set_max_lp_pool_value(&admin_cap, config_constants::min_max_lp_pool_value!());
     abort 999
 }
@@ -163,12 +163,12 @@ fun frozen_defaults_false_and_admin_toggles() {
 
 #[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
 fun frozen_blocks_version_gated_flow() {
-    // The freeze folds into `assert_version`, so every version-gated flow aborts
+    // The freeze folds into `chk_version`, so every version-gated flow aborts
     // while frozen. `set_ewma_enabled` is a representative gated entrypoint.
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
     config.set_frozen(&admin_cap, true);
-    config.set_ewma_enabled(&admin_cap, true, &clock);
+    config.set_ewma_enabled_for_testing(&admin_cap, true, &clock);
     abort 999
 }
 
@@ -225,7 +225,7 @@ fun bump_version_watermark_at_current_version_aborts() {
 /// stalled flush cannot trap it: the knobs that are gated become unreachable
 /// exactly when an operator most needs to widen a safety control (RP-29's
 /// recovery path). That property is invisible to a negative test, so it is
-/// pinned positively here — a refactor applying `assert_not_valuation_in_progress`
+/// pinned positively here — a refactor applying `chk_no_val`
 /// uniformly across setters would trap the control while every other test in this
 /// file stayed green.
 #[test]
@@ -233,7 +233,7 @@ fun set_no_trade_window_during_valuation_succeeds() {
     let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
 
-    config.begin_valuation();
+    config.begin_val();
     assert!(config.valuation_in_progress());
 
     config.set_no_trade_window_ms(&admin_cap, config_constants::max_no_trade_window_ms!(), &clock);
@@ -259,7 +259,7 @@ fun set_fee_incentive_subsidy_rate_during_valuation_succeeds() {
     let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
 
-    config.begin_valuation();
+    config.begin_val();
     config.set_fee_incentive_subsidy_rate(
         &admin_cap,
         config_constants::min_fee_incentive_subsidy_rate!(),
@@ -282,7 +282,7 @@ fun set_fee_incentive_allocation_rates_during_valuation_succeeds() {
     let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
 
-    config.begin_valuation();
+    config.begin_val();
     config.set_template_fee_incentive_lifetime_cap_rate(
         &admin_cap,
         config_constants::max_fee_incentive_lifetime_cap_rate!(),
@@ -310,7 +310,7 @@ fun set_use_pyth_spot_for_forward_during_valuation_aborts() {
     // the source change mid-valuation would mix two marks into one NAV.
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
-    config.begin_valuation();
+    config.begin_val();
     config.set_use_pyth_spot_for_forward(&admin_cap, false, &clock);
     abort 999
 }
@@ -319,7 +319,7 @@ fun set_use_pyth_spot_for_forward_during_valuation_aborts() {
 fun set_pyth_spot_freshness_during_valuation_aborts() {
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
-    config.begin_valuation();
+    config.begin_val();
     config.set_pyth_spot_freshness_ms(
         &admin_cap,
         config_constants::min_pyth_spot_freshness_ms!(),
@@ -332,7 +332,7 @@ fun set_pyth_spot_freshness_during_valuation_aborts() {
 fun set_block_scholes_price_freshness_during_valuation_aborts() {
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
-    config.begin_valuation();
+    config.begin_val();
     config.set_block_scholes_price_freshness_ms(
         &admin_cap,
         config_constants::min_block_scholes_price_freshness_ms!(),
@@ -345,7 +345,7 @@ fun set_block_scholes_price_freshness_during_valuation_aborts() {
 fun set_block_scholes_svi_freshness_during_valuation_aborts() {
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);
-    config.begin_valuation();
+    config.begin_val();
     config.set_block_scholes_svi_freshness_ms(
         &admin_cap,
         config_constants::min_block_scholes_svi_freshness_ms!(),
@@ -357,7 +357,7 @@ fun set_block_scholes_svi_freshness_during_valuation_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_protocol_reserve_profit_share_during_valuation_aborts() {
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    config.begin_valuation();
+    config.begin_val();
     config.set_protocol_reserve_profit_share(
         &admin_cap,
         config_constants::min_protocol_reserve_profit_share!(),
@@ -369,13 +369,13 @@ fun set_protocol_reserve_profit_share_during_valuation_aborts() {
 #[test]
 fun max_valuation_window_ships_at_five_minutes_and_is_tunable() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.max_valuation_window_ms(), 5 * constants::one_minute_ms!());
+    assert_eq!(config.val_window(), 5 * constants::one_minute_ms!());
 
     config.set_max_valuation_window_ms(
         &admin_cap,
         config_constants::min_max_valuation_window_ms!(),
     );
-    assert_eq!(config.max_valuation_window_ms(), config_constants::min_max_valuation_window_ms!());
+    assert_eq!(config.val_window(), config_constants::min_max_valuation_window_ms!());
 
     destroy(admin_cap);
     return_shared(reg);
@@ -409,7 +409,7 @@ fun max_valuation_window_above_the_ceiling_aborts() {
 fun set_max_valuation_window_during_valuation_aborts() {
     // `finish_flush` measures its deadline against a flush already in flight; moving the window under one would shift its finish cutoff after the fact.
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    config.begin_valuation();
+    config.begin_val();
     config.set_max_valuation_window_ms(
         &admin_cap,
         config_constants::min_max_valuation_window_ms!(),
@@ -425,9 +425,9 @@ fun set_max_valuation_window_during_valuation_aborts() {
 fun settled_redeem_keeper_allowlist_starts_empty() {
     let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
 
-    assert!(!config.is_settled_redeem_keeper(test_constants::admin()));
-    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
-    assert!(!config.is_settled_redeem_keeper(test_constants::bob()));
+    assert!(!config.is_keeper(test_constants::admin()));
+    assert!(!config.is_keeper(test_constants::alice()));
+    assert!(!config.is_keeper(test_constants::bob()));
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }
@@ -437,9 +437,9 @@ fun add_settled_redeem_keeper_allows_only_that_address() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
 
     config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
-    assert!(config.is_settled_redeem_keeper(test_constants::alice()));
-    assert!(!config.is_settled_redeem_keeper(test_constants::bob()));
-    assert!(!config.is_settled_redeem_keeper(test_constants::admin()));
+    assert!(config.is_keeper(test_constants::alice()));
+    assert!(!config.is_keeper(test_constants::bob()));
+    assert!(!config.is_keeper(test_constants::admin()));
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }
@@ -451,8 +451,8 @@ fun remove_settled_redeem_keeper_revokes_only_that_address() {
     config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     config.add_settled_redeem_keeper(&admin_cap, test_constants::bob());
     config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
-    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
-    assert!(config.is_settled_redeem_keeper(test_constants::bob()));
+    assert!(!config.is_keeper(test_constants::alice()));
+    assert!(config.is_keeper(test_constants::bob()));
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }
@@ -465,9 +465,9 @@ fun removed_settled_redeem_keeper_can_be_added_again() {
 
     config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
-    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(!config.is_keeper(test_constants::alice()));
     config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
-    assert!(config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(config.is_keeper(test_constants::alice()));
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }
@@ -508,7 +508,7 @@ fun add_settled_redeem_keeper_while_frozen_aborts() {
 
 /// The mirror of the frozen add: revocation is deliberately ungated so admin can
 /// drop a compromised keeper during an incident. A refactor that routed removal
-/// through `assert_version` would pass every negative test and fail only here.
+/// through `chk_version` would pass every negative test and fail only here.
 #[test]
 fun remove_settled_redeem_keeper_while_frozen_succeeds() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
@@ -516,7 +516,7 @@ fun remove_settled_redeem_keeper_while_frozen_succeeds() {
     config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     config.set_frozen(&admin_cap, true);
     config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
-    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(!config.is_keeper(test_constants::alice()));
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }

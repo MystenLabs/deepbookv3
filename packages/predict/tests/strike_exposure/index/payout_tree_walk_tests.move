@@ -27,6 +27,7 @@ use deepbook_predict::{
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
+use sui::vec_map;
 
 /// Inflated SVI base variance (0.1 in 1e9 fixed point) so adjacent-tick strikes
 /// price close together and smoothly — a real clustered-price regime.
@@ -164,23 +165,23 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
 
     // Removing the middle range deletes two interior boundary nodes through GC; the walk, settlement,
     // and rebuilt-tree assertions below prove those boundaries left no trace.
-    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
+    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, &vec_map::empty());
 
     let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
     rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
     rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     let settlement_a_only = GC_SETTLEMENT_A_ONLY_TICK * tick_size();
-    let settled_a_only = tree.settled_payout_liability(settlement_a_only, tick_size());
-    assert_eq!(settled_a_only, rebuilt.settled_payout_liability(settlement_a_only, tick_size()));
+    let settled_a_only = tree.settled_liab(settlement_a_only, tick_size());
+    assert_eq!(settled_a_only, rebuilt.settled_liab(settlement_a_only, tick_size()));
     assert_eq!(settled_a_only, GC_SURVIVOR_A_QUANTITY);
     let settlement_overlap = GC_SETTLEMENT_OVERLAP_TICK * tick_size();
-    let settled_overlap = tree.settled_payout_liability(settlement_overlap, tick_size());
-    assert_eq!(settled_overlap, rebuilt.settled_payout_liability(settlement_overlap, tick_size()));
+    let settled_overlap = tree.settled_liab(settlement_overlap, tick_size());
+    assert_eq!(settled_overlap, rebuilt.settled_liab(settlement_overlap, tick_size()));
     assert_eq!(settled_overlap, GC_SURVIVOR_A_QUANTITY + GC_SURVIVOR_C_QUANTITY);
     let settlement_c_only = GC_SETTLEMENT_C_ONLY_TICK * tick_size();
-    let settled_c_only = tree.settled_payout_liability(settlement_c_only, tick_size());
-    assert_eq!(settled_c_only, rebuilt.settled_payout_liability(settlement_c_only, tick_size()));
+    let settled_c_only = tree.settled_liab(settlement_c_only, tick_size());
+    assert_eq!(settled_c_only, rebuilt.settled_liab(settlement_c_only, tick_size()));
     assert_eq!(settled_c_only, GC_SURVIVOR_C_QUANTITY);
 
     let mutated_walk = walk_linear(&tree, &pricer);

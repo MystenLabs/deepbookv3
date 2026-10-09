@@ -9,8 +9,8 @@ use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, return_shared};
 
 const ADMIN: address = @0xAD;
-const OLDER_VERSION: u64 = 1;
-const CURRENT_VERSION: u64 = 2;
+const OLDER_VERSION: u64 = 2; // The Mainnet v2 floor this upgrade retires.
+const CURRENT_VERSION: u64 = 3;
 const EUnexpectedSuccess: u64 = 999;
 
 #[test]

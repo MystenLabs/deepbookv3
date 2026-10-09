@@ -21,7 +21,7 @@
 /// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
 /// so it is not duplicated here.
 ///
-/// The `assert_inputs_pricing_safe` envelope rejects (`EBlockScholesInputsInvalid`)
+/// The `chk_inputs` envelope rejects (`EBlockScholesInputsInvalid`)
 /// is covered here too: one test per reachable branch seeds a surface that violates
 /// exactly that bound (`forward` ceiling, `basis`, `b`, `rho`, `m`, `sigma` below
 /// its 1e-5 floor, at zero, and above its ceiling), leaving every other input
@@ -389,7 +389,7 @@ fun live_quote_with_stale_block_scholes_surface_aborts() {
     // stale and the quote aborts before any pricing.
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
     live_quote(
@@ -406,7 +406,7 @@ fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
@@ -425,7 +425,7 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::now_ms()
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
@@ -452,7 +452,7 @@ fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.retransmit_bs_spot_for_testing(
@@ -478,7 +478,7 @@ fun live_quote_with_a_retransmitted_aged_forward_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
@@ -509,7 +509,7 @@ fun live_quote_with_a_retransmitted_aged_svi_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
@@ -624,7 +624,7 @@ fun pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off() {
     // Ignored for the forward, still snapshotted for provenance: an out-of-envelope
     // print is not a missing observation, so it must not read back as the `0`
     // sentinel that means "no usable normalized Pyth read".
-    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), oversized_source_ms);
+    assert_eq!(pricer.pyth_ts(), oversized_source_ms);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -1440,7 +1440,7 @@ fun default_svi_sigma(): u64 { test_constants::default_svi_sigma() }
 fun default_svi_m_magnitude(): u64 { test_constants::default_svi_m() }
 
 /// Seed a surface with the given spot/forward and default SVI, then load the pricer
-/// (where `assert_inputs_pricing_safe` runs).
+/// (where `chk_inputs` runs).
 fun load_pricer_with_spot_forward(spot: u64, forward: u64) {
     load_pricer_with_full_svi_and_spot(
         spot,
@@ -1518,7 +1518,7 @@ fun load_pricer_with_full_svi_and_spot(
         svi_m_magnitude,
         svi_m_is_negative,
     );
-    // `load_pricer` runs `assert_inputs_pricing_safe`; the invalid surface aborts
+    // `load_pricer` runs `chk_inputs`; the invalid surface aborts
     // here before the pricer is returned.
     let _pricer = fx.load_pricer_bundle(&oracle);
 

@@ -10,6 +10,11 @@ module deepbook_predict::constants;
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
 public macro fun current_version(): u64 { 4 }
 
+/// The version floor at which queued placement opens: the delayed-execution cutover, the first
+/// version that retires every package without the order flow. Fixed, so a later upgrade's own
+/// `current_version!()` never closes placement again until its floor is bumped.
+public(package) macro fun cutover_version(): u64 { 4 }
+
 // === Scaling ===
 
 /// Decimal exponent of `math::float_scaling!()` (i.e. `math::float_scaling!() == 10^9`).
@@ -159,6 +164,59 @@ public(package) macro fun settlement_fallback_grace_ms(): u64 { 30_000 }
 public(package) macro fun settlement_source_pyth(): u8 { 0 }
 
 public(package) macro fun settlement_source_block_scholes(): u8 { 1 }
+
+// === Order Flow ===
+// Codes and ceilings the order-flow companion shares with Predict's order-flow primitives.
+// Macros, so they add no Predict bytecode. Never renumbered after publish; new codes append.
+
+/// Queued mint kind: an exact quantity, with an entry-probability cap.
+public macro fun mint_kind_exact_quantity(): u8 { 0 }
+
+/// Queued mint kind: sized under a premium budget, at least a minimum quantity.
+public macro fun mint_kind_exact_amount(): u8 { 1 }
+
+/// Queued mint kind: sized so the all-in cost fits the cost cap, at least a minimum quantity.
+public macro fun mint_kind_exact_cost(): u8 { 2 }
+
+/// Kind of an early-sell admission. `3` stays reserved.
+public macro fun order_kind_sell(): u8 { 4 }
+
+/// Fill refund reason: the order missed its own limits at the tick. The order fee is kept.
+public macro fun fill_reason_limits(): u8 { 1 }
+
+/// Fill refund reason: the order failed mint admission or could not be priced at its committed
+/// tick. The order fee is kept.
+public macro fun fill_reason_admission(): u8 { 2 }
+
+/// Fill refund reason: a pinned payout-tree node was missing at the fill (a backstop).
+public macro fun fill_reason_missing_node(): u8 { 4 }
+
+/// Fill refund reason: the order reached its deadline unfilled.
+public macro fun fill_reason_deadline(): u8 { 5 }
+
+/// Fill refund reason: the market's cash could not cover the fill.
+public macro fun fill_reason_no_cash(): u8 { 8 }
+
+/// Fill refund reason: USDC sent to the order's receive address would abort the transaction,
+/// because the address is on USDC's deny list for the current epoch or USDC is globally paused.
+/// The fill is refused before anything moves, and the order fee is returned.
+public macro fun fill_reason_recipient_denied(): u8 { 9 }
+
+/// `OrderReceipt` stage: a mint admitted and not yet filled or released.
+public macro fun receipt_stage_mint(): u8 { 1 }
+
+/// `OrderReceipt` stage: an open position the order-flow companion holds.
+public macro fun receipt_stage_open(): u8 { 2 }
+
+/// `OrderReceipt` stage: an early sell of the open position admitted and not yet filled or released.
+public macro fun receipt_stage_sell(): u8 { 3 }
+
+/// Every admitted order's deadline falls at least this long before expiry, so no admitted order
+/// can fill once its market expires.
+public macro fun deadline_expiry_margin_ms(): u64 { 5_000 }
+
+/// Oldest Block Scholes SVI an order-flow admission accepts into its volatility snapshot.
+public macro fun max_svi_max_age_ms(): u64 { 120_000 }
 
 // === Strike Tick Domain ===
 

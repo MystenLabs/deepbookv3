@@ -31,6 +31,7 @@ import {
     resolvedModuleAddress,
     mergePublishedMetadata,
     EXPECTED_PROTOCOL_CONFIG,
+    EXPECTED_SESSIONS_VERSION_WATERMARK,
     MANIFEST_RELATIVE,
     STATE_RELATIVE,
     assertScriptRecovery,
@@ -788,9 +789,29 @@ test("the package plan is complete and topological", () => {
 });
 
 test("gas funding derives the complete fresh transaction plan", () => {
-    assert.equal(plannedTransactionCount(), 19);
-    assert.equal(maximumTransactionCountPerRun(), 19);
-    assert.equal(irreversibleDeploymentSteps().length, 26);
+    assert.equal(plannedTransactionCount(), 21);
+    assert.equal(maximumTransactionCountPerRun(), 21);
+    assert.equal(irreversibleDeploymentSteps().length, 28);
+    const steps = plannedTransactionSteps();
+    // Queued trading needs the policy, and the bootstrap flush needs its operator.
+    assert.ok(steps.indexOf("init_delayed_execution_policy") < steps.indexOf("bootstrap_pool"));
+    assert.ok(steps.indexOf("add_deployer_flush_operator") < steps.indexOf("bootstrap_pool"));
+});
+
+test("the expected fresh version watermarks are the compiled current_version", () => {
+    // A fresh publish sets the watermark to `current_version!()`, past the
+    // delayed-execution cutover, so the audit must expect that value.
+    const constants = readFileSync(new URL("../sources/constants.move", import.meta.url), "utf8");
+    const version = /public macro fun current_version\(\): u64 \{ (\d+) \}/.exec(constants);
+    assert.ok(version, "constants.move declares current_version");
+    assert.equal(EXPECTED_PROTOCOL_CONFIG.versionWatermark, version[1]);
+    const sessions = readFileSync(
+        new URL("../../sessions/sources/session_config.move", import.meta.url),
+        "utf8",
+    );
+    const sessionsVersion = /macro fun current_version\(\): u64 \{ (\d+) \}/.exec(sessions);
+    assert.ok(sessionsVersion, "session_config.move declares current_version");
+    assert.equal(EXPECTED_SESSIONS_VERSION_WATERMARK, sessionsVersion[1]);
 });
 
 test("target, toolchain, source, and worktree bindings fail closed", () => {
@@ -1071,6 +1092,7 @@ function orchestrationFixture(failAfter?: string) {
         ensureOracleObjects: () => step("wire_empty_oracle_objects"),
         ensureUnderlyingRegistered: () => step("underlying"),
         ensureCadences: () => step("cadences"),
+        ensureDelayedExecution: () => step("delayed_execution"),
         ensureAccountWrapper: async () => {
             await step("account");
             return id("3");
@@ -1115,6 +1137,8 @@ test("the deployment orchestration completes without prices, references, authori
     assert.equal(fixture.manifests[0].externalAuthorizations.deepbookCoreAccount.authorized, false);
     assert.deepEqual(fixture.runtime.result.issuedCaps, {});
     assert.ok(fixture.calls.indexOf("capitalization") < fixture.calls.indexOf("markets"));
+    // The bootstrap flush needs the deployer's flush-operator grant.
+    assert.ok(fixture.calls.indexOf("delayed_execution") < fixture.calls.indexOf("capitalization"));
     assert.equal(fixture.audits, 1);
 });
 
@@ -1136,6 +1160,7 @@ test("the full orchestration re-enters after every stage without repeating compl
         "wire_empty_oracle_objects",
         "underlying",
         "cadences",
+        "delayed_execution",
         "account",
         "capitalization",
         "markets",
@@ -1260,7 +1285,7 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
     state.wiring.lifecycleCap.id = id("b");
     state.wiring.valuationCap.id = id("c");
     const recipient = id("a");
-    const tx = capIssuanceTransaction(state, recipient);
+    const tx = capIssuanceTransaction(state, recipient, false);
     assert.deepEqual(
         tx.getData().commands.map((command) => command.MoveCall?.function),
         ["single_owner", "public_party_transfer", "single_owner", "public_party_transfer"],
@@ -1285,7 +1310,36 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
             Buffer.from(recipient.slice(2), "hex").toString("base64"),
         );
     }
+    // A recipient that is not yet a flush operator is granted the role in the same
+    // transaction, through the deployer's AdminCap.
+    const grantTx = capIssuanceTransaction(state, recipient, true);
+    const grantCommands = grantTx.getData().commands;
+    assert.deepEqual(
+        grantCommands.map((command) => command.MoveCall?.function),
+        [
+            "single_owner",
+            "public_party_transfer",
+            "single_owner",
+            "public_party_transfer",
+            "add_flush_operator",
+        ],
+    );
+    const grantInputs = grantTx.getData().inputs;
+    const grantArguments = grantCommands[4].MoveCall!.arguments.map((argument) => {
+        if (argument.$kind !== "Input") throw new Error("grant arguments must be inputs");
+        return grantInputs[argument.Input];
+    });
+    assert.deepEqual(
+        grantArguments.map((input) => input.UnresolvedObject?.objectId ?? input.Pure?.bytes),
+        [
+            id("6"),
+            id("7"),
+            Buffer.from(recipient.slice(2), "hex").toString("base64"),
+            "0x0000000000000000000000000000000000000000000000000000000000000006",
+        ],
+    );
     const runtime = testRuntime(state);
+    const flushOperators = new Set<string>();
     let broadcasts = 0;
     let failOwnerRead = true;
     const owners: string[] = [];
@@ -1294,16 +1348,21 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
         verifyOperationalCapAllowlists: async () => {
             allowlistReads++;
         },
-        executeTransaction: async (_runtime, label) => {
+        executeTransaction: async (_runtime, label, tx) => {
             if (!state.transactions[label]) {
                 broadcasts++;
                 state.transactions[label] = "issued";
+                const granted = tx
+                    .getData()
+                    .commands.some((command) => command.MoveCall?.function === "add_flush_operator");
+                if (granted) flushOperators.add(recipient);
             }
             return {
                 digest: "issued",
                 objectChanges: [],
             };
         },
+        isFlushOperator: async (_runtime, operator) => flushOperators.has(operator),
         objectEvidence: async (_runtime, object, _type, owner) => {
             if (failOwnerRead) {
                 failOwnerRead = false;
@@ -1328,6 +1387,7 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
     assert.deepEqual(owners, [`party:${recipient}`, `party:${recipient}`]);
     await issueOperationalCaps(runtime, recipient, ops);
     assert.equal(broadcasts, 1);
+    assert.deepEqual([...flushOperators], [recipient]);
     assert.equal(allowlistReads, 5);
     assert.equal(operationalCapOwner(state), `party:${recipient}`);
     assert.equal(state.wiring.lifecycleCap.owner, "keeper");
@@ -1337,9 +1397,39 @@ test("cap handoff transfers the setup pair without minting and recovers the rece
     assert.equal(state.status, "complete");
 });
 
+test("cap handoff fails closed when the recipient does not read back as a flush operator", async () => {
+    const state = completeStateFixture();
+    state.packages.predict = id("4");
+    state.sharedObjects.predict = {
+        "registry::Registry": id("5"),
+        "protocol_config::ProtocolConfig": id("6"),
+    };
+    state.ownedCaps.predict = { "admin::AdminCap": id("7") };
+    state.wiring.lifecycleCap.id = id("b");
+    state.wiring.valuationCap.id = id("c");
+    const ops: NonNullable<Parameters<typeof issueOperationalCaps>[2]> = {
+        verifyOperationalCapAllowlists: async () => {},
+        executeTransaction: async (_runtime, label) => {
+            state.transactions[label] = "issued";
+            return { digest: "issued", objectChanges: [] };
+        },
+        isFlushOperator: async () => false,
+        objectEvidence: async (_runtime, object, _type, owner) => ({
+            ...objectEvidence(object),
+            owner: owner!,
+        }),
+        writeState() {},
+    };
+    await assert.rejects(
+        issueOperationalCaps(testRuntime(state), id("a"), ops),
+        /not a flush operator/,
+    );
+    assert.deepEqual(state.issuedCaps, {});
+});
+
 test("cap handoff rejects missing setup caps, additional pairs and legacy duplicate issuance", () => {
     const state = completeStateFixture();
-    assert.throws(() => capIssuanceTransaction(state, id("a")), /setup lifecycle cap/);
+    assert.throws(() => capIssuanceTransaction(state, id("a"), true), /setup lifecycle cap/);
     state.wiring.lifecycleCap.id = id("b");
     state.wiring.valuationCap.id = id("c");
     const fields = {
@@ -1564,6 +1654,7 @@ test("Mainnet publishes six packages, retains Testnet identities, and cannot min
             "mint_deployer_usdc",
             "finalize_usdc_currency_registration",
             "create_deployer_account",
+            "add_deployer_flush_operator",
         ])
             assert.equal(steps.includes(forbidden), false);
         assertPackagePlan();
@@ -1900,7 +1991,7 @@ test("Testnet USDC reuse requires explicit identities and binds the journal", ()
         assert.equal(state.wiring.currencies.usdc.mintedAmount, "0");
         assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
         assert.equal(state.wiring.bootstrap.supplyAmount, "250000000000");
-        assert.equal(irreversibleDeploymentSteps().length, 23);
+        assert.equal(irreversibleDeploymentSteps().length, 25);
         assert.ok(!irreversibleDeploymentSteps().includes("publish_usdc"));
         assert.ok(!plannedTransactionSteps().includes("mint_deployer_usdc"));
         assert.ok(!plannedTransactionSteps().includes("finalize_usdc_currency_registration"));

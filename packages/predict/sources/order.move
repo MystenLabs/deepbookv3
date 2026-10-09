@@ -42,7 +42,7 @@ public struct Order has copy, drop {
 // === Public-Package Functions ===
 
 /// Validate a packed order ID and return it as an `Order` view.
-public(package) fun from_order_id(order_id: u256): Order {
+public(package) fun from_id(order_id: u256): Order {
     let order = Order { id: order_id };
     order.assert_valid();
     order
@@ -66,42 +66,43 @@ public(package) fun higher_tick(order: &Order): u64 {
 
 /// Return the immutable quantity encoded in this order.
 public(package) fun quantity(order: &Order): u64 {
-    order.quantity_lots() * constants::position_lot_size!()
+    order.qty_lots() * constants::position_lot_size!()
 }
 
 /// Construct an order ID from validated strike ticks.
-public(package) fun new_from_ticks(
+public(package) fun from_ticks(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
     sequence: u64,
 ): Order {
-    new(lower_tick, higher_tick, quantity_lots_from_quantity(quantity), sequence)
+    new(lower_tick, higher_tick, lots_of(quantity), sequence)
 }
 
 /// Construct a lower-quantity order with the same range and a new sequence.
 public(package) fun replacement(old_order: &Order, quantity: u64, sequence: u64): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
-    new_from_ticks(old_order.lower_tick(), old_order.higher_tick(), quantity, sequence)
+    from_ticks(old_order.lower_tick(), old_order.higher_tick(), quantity, sequence)
 }
 
 /// Assert that a user-facing position quantity can be encoded in an order.
-public(package) fun assert_valid_quantity(quantity: u64) {
+public(package) fun chk_quantity(quantity: u64) {
     let lot_size = constants::position_lot_size!();
     assert!(quantity > 0 && quantity % lot_size == 0, EInvalidQuantity);
     assert!(quantity / lot_size <= U32_MASK as u64, EInvalidQuantity);
 }
 
-public(package) fun max_quantity_lots(): u64 {
-    U32_MASK as u64
-}
+/// Return the largest lot count an order ID can encode, the width of its quantity field. That
+/// layout is frozen, so this never changes. A macro, so callers outside Predict share it at no
+/// bytecode cost.
+public macro fun max_quantity_lots(): u64 { (1u64 << 32) - 1 }
 
 fun new(lower_tick: u64, higher_tick: u64, quantity_lots: u64, sequence: u64): Order {
     assert!(lower_tick <= tick_mask!() as u64, EInvalidTick);
     assert!(higher_tick <= tick_mask!() as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
-    assert_valid_order_shape(lower_tick, higher_tick);
+    chk_shape(lower_tick, higher_tick);
 
     let id =
         ((quantity_lots as u256) << QUANTITY_LOTS_OFFSET)
@@ -118,22 +119,22 @@ fun decode_tick(id: u256, offset: u8): u64 {
     ((id >> offset) & tick_mask!()) as u64
 }
 
-fun quantity_lots_from_quantity(quantity: u64): u64 {
-    assert_valid_quantity(quantity);
+fun lots_of(quantity: u64): u64 {
+    chk_quantity(quantity);
     quantity / constants::position_lot_size!()
 }
 
 fun assert_valid(order: &Order) {
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
-    assert!(order.quantity_lots() > 0, EInvalidQuantity);
-    assert_valid_order_shape(order.lower_tick(), order.higher_tick());
+    assert!(order.qty_lots() > 0, EInvalidQuantity);
+    chk_shape(order.lower_tick(), order.higher_tick());
 }
 
-fun quantity_lots(order: &Order): u64 {
+fun qty_lots(order: &Order): u64 {
     ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
 }
 
-fun assert_valid_order_shape(lower_tick: u64, higher_tick: u64) {
+fun chk_shape(lower_tick: u64, higher_tick: u64) {
     let pos_inf_tick = constants::pos_inf_tick!();
     assert!(lower_tick <= pos_inf_tick, EInvalidTick);
     assert!(higher_tick <= pos_inf_tick, EInvalidTick);

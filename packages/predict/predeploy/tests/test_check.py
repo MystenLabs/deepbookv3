@@ -80,6 +80,10 @@ class PredeployCheckTests(unittest.TestCase):
             root = Path(raw_tmp)
             predict = root / "packages" / "predict"
             propbook = root / "packages" / "propbook"
+            # The order-flow companion and the math library point inside the fixture too, so the
+            # repository's own test sources never satisfy a fixture pin.
+            predict_orders = root / "packages" / "predict_orders"
+            predict_math = root / "packages" / "predict_math"
             predeploy = predict / "predeploy"
             propbook_tests = propbook / "tests"
             predeploy.mkdir(parents=True)
@@ -92,11 +96,13 @@ class PredeployCheckTests(unittest.TestCase):
                 mock.patch.object(check, "HERE", str(predeploy)),
                 mock.patch.object(check, "PREDICT", str(predict)),
                 mock.patch.object(check, "PROPBOOK", str(propbook)),
+                mock.patch.object(check, "PREDICT_ORDERS", str(predict_orders)),
+                mock.patch.object(check, "PREDICT_MATH", str(predict_math)),
                 mock.patch.object(check, "ROOT", str(root)),
             )
 
             errors: list[str] = []
-            with patches[0], patches[1], patches[2], patches[3]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
                 check.check_pinning_tests(errors)
             self.assertEqual(
                 errors,
@@ -104,7 +110,8 @@ class PredeployCheckTests(unittest.TestCase):
                     "response-policies.md entry 'RP-1: Fixture' pins test "
                     "`creating_a_second_store_pair_for_an_underlying_aborts` but no "
                     "`fun creating_a_second_store_pair_for_an_underlying_aborts` exists under "
-                    "packages/predict/tests/ or packages/propbook/tests/"
+                    "packages/predict/tests/, packages/propbook/tests/, "
+                    "packages/predict_orders/tests/, or packages/predict_math/tests/"
                 ],
             )
 
@@ -112,12 +119,18 @@ class PredeployCheckTests(unittest.TestCase):
                 "fun creating_a_second_store_pair_for_an_underlying_aborts() {}\n"
             )
             errors = []
-            with (
-                mock.patch.object(check, "HERE", str(predeploy)),
-                mock.patch.object(check, "PREDICT", str(predict)),
-                mock.patch.object(check, "PROPBOOK", str(propbook)),
-                mock.patch.object(check, "ROOT", str(root)),
-            ):
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+                check.check_pinning_tests(errors)
+            self.assertEqual(errors, [])
+
+            # A pin that lives in the companion's tests is found there as well.
+            (propbook_tests / "registry_tests.move").unlink()
+            (predict_orders / "tests").mkdir(parents=True)
+            (predict_orders / "tests" / "queue_tests.move").write_text(
+                "fun creating_a_second_store_pair_for_an_underlying_aborts() {}\n"
+            )
+            errors = []
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
                 check.check_pinning_tests(errors)
             self.assertEqual(errors, [])
 

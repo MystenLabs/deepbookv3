@@ -5,7 +5,7 @@
 ///
 /// The packed-id expectations are derived INDEPENDENTLY from the documented u256
 /// layout (order.move module doc), not from the contract's pack expression:
-///   [100,132) quantity_lots (32b)  [70,100) lower_tick (30b)
+///   [100,132) qty_lots (32b)  [70,100) lower_tick (30b)
 ///   [ 40, 70) higher_tick   (30b)  [  0, 40) sequence  (40b)
 /// The exact-id assertions catch field overlap/offset/truncation bugs; the public
 /// getter assertions verify contract fields; the abort tests cover all five guards.
@@ -46,7 +46,7 @@ const NON_LOT_QUANTITY: u64 = 10_001; // not a multiple of position_lot_size
 
 #[test]
 fun open_lower_order_packs_to_independent_layout() {
-    let o = order::new_from_ticks(
+    let o = order::from_ticks(
         0,
         OPEN_LOWER_HIGHER,
         OPEN_LOWER_QUANTITY,
@@ -57,7 +57,7 @@ fun open_lower_order_packs_to_independent_layout() {
 
 #[test]
 fun finite_range_order_packs_to_independent_layout() {
-    let o = order::new_from_ticks(FINITE_LOWER, FINITE_HIGHER, FINITE_QUANTITY, FINITE_SEQUENCE);
+    let o = order::from_ticks(FINITE_LOWER, FINITE_HIGHER, FINITE_QUANTITY, FINITE_SEQUENCE);
     assert_eq!(o.id(), FINITE_RANGE_ID);
 }
 
@@ -65,7 +65,7 @@ fun finite_range_order_packs_to_independent_layout() {
 
 #[test]
 fun every_getter_decodes_its_own_field() {
-    let o = order::from_order_id(FINITE_RANGE_ID);
+    let o = order::from_id(FINITE_RANGE_ID);
     assert_eq!(o.lower_tick(), FINITE_LOWER);
     assert_eq!(o.higher_tick(), FINITE_HIGHER);
     assert_eq!(o.quantity(), FINITE_QUANTITY);
@@ -73,7 +73,7 @@ fun every_getter_decodes_its_own_field() {
 
 #[test]
 fun open_lower_order_round_trips_through_the_packed_id() {
-    let o = order::from_order_id(OPEN_LOWER_ID);
+    let o = order::from_id(OPEN_LOWER_ID);
     assert_eq!(o.lower_tick(), 0);
     assert_eq!(o.higher_tick(), OPEN_LOWER_HIGHER);
     assert_eq!(o.quantity(), OPEN_LOWER_QUANTITY);
@@ -86,7 +86,7 @@ fun max_quantity_lots_round_trips_without_truncation() {
     // round-trip must recover it exactly rather than truncating into lower_tick.
     let max_lots = ((1u256 << 32) - 1) as u64;
     let max_quantity = max_lots * constants::position_lot_size!();
-    let o = order::new_from_ticks(
+    let o = order::from_ticks(
         FINITE_LOWER,
         FINITE_HIGHER,
         max_quantity,
@@ -99,7 +99,7 @@ fun max_quantity_lots_round_trips_without_truncation() {
 
 #[test]
 fun replacement_keeps_the_range_and_takes_the_new_quantity_and_sequence() {
-    let original = order::new_from_ticks(
+    let original = order::from_ticks(
         FINITE_LOWER,
         FINITE_HIGHER,
         FINITE_QUANTITY,
@@ -117,20 +117,20 @@ fun replacement_keeps_the_range_and_takes_the_new_quantity_and_sequence() {
 #[test, expected_failure(abort_code = order::EInvalidOrderId)]
 fun from_order_id_rejects_bits_above_envelope() {
     // The first bit above the dense 132-bit order envelope.
-    order::from_order_id(1u256 << 132);
+    order::from_id(1u256 << 132);
     abort 999
 }
 
 #[test, expected_failure(abort_code = order::EInvalidQuantity)]
 fun new_rejects_non_lot_quantity() {
-    order::new_from_ticks(0, OPEN_LOWER_HIGHER, NON_LOT_QUANTITY, OPEN_LOWER_SEQUENCE);
+    order::from_ticks(0, OPEN_LOWER_HIGHER, NON_LOT_QUANTITY, OPEN_LOWER_SEQUENCE);
     abort 999
 }
 
 #[test, expected_failure(abort_code = order::EInvalidTick)]
 fun new_rejects_tick_over_u30() {
     // A tick one past the 30-bit domain (pos_inf_tick is the max encodable tick).
-    order::new_from_ticks(
+    order::from_ticks(
         U30_OVERFLOW,
         U30_OVERFLOW + 1,
         OPEN_LOWER_QUANTITY,
@@ -141,13 +141,13 @@ fun new_rejects_tick_over_u30() {
 
 #[test, expected_failure(abort_code = order::EInvalidRange)]
 fun new_rejects_lower_not_below_higher() {
-    order::new_from_ticks(7, 5, OPEN_LOWER_QUANTITY, OPEN_LOWER_SEQUENCE);
+    order::from_ticks(7, 5, OPEN_LOWER_QUANTITY, OPEN_LOWER_SEQUENCE);
     abort 999
 }
 
 #[test, expected_failure(abort_code = order::EInvalidRange)]
 fun new_rejects_full_open_range() {
-    order::new_from_ticks(
+    order::from_ticks(
         0,
         constants::pos_inf_tick!(),
         OPEN_LOWER_QUANTITY,
@@ -158,6 +158,6 @@ fun new_rejects_full_open_range() {
 
 #[test, expected_failure(abort_code = order::EInvalidSequence)]
 fun new_rejects_sequence_over_u40() {
-    order::new_from_ticks(0, OPEN_LOWER_HIGHER, OPEN_LOWER_QUANTITY, U40_OVERFLOW);
+    order::from_ticks(0, OPEN_LOWER_HIGHER, OPEN_LOWER_QUANTITY, U40_OVERFLOW);
     abort 999
 }

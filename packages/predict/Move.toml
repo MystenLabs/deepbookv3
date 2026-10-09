@@ -13,6 +13,10 @@ usdc = { local = "../usdc" }
 # and its app-data slot live here; the former PredictManager / cap / proof layer
 # collapses onto it. Declared `local` like the other in-repo packages.
 account = { local = "../account" }
+# Pure pricing-math and price-provenance library. Predict's order-flow commit
+# takes a `lazer_price::LazerPrice`, which only this library builds from a
+# Pyth-verified Lazer update.
+deepbook_predict_math = { local = "../predict_math" }
 # Standalone Pyth + split Block Scholes oracle feeds. Predict consumes
 # `propbook::pyth_feed` plus the BS spot/forward/SVI feeds for live pricing (the
 # former in-package `market_oracle`/`pyth_source` modules were extracted into

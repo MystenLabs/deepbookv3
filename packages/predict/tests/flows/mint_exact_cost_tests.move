@@ -185,7 +185,7 @@ fun budget_below_the_next_lot_mints_the_largest_fitting_fill() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
@@ -223,7 +223,7 @@ fun budget_at_the_next_lot_all_in_cost_spends_it_exactly() {
         NEXT_LOT_QUANTITY,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), NEXT_LOT_QUANTITY);
+    assert_eq!(order::from_id(order_id).quantity(), NEXT_LOT_QUANTITY);
     assert_eq!(fx.account_balance_bundle<USDC>(&account), test_constants::mint_deposit() - budget);
 
     helpers::return_account_bundle(account);
@@ -328,7 +328,7 @@ fun account_quote_is_the_exact_debit_of_the_mint_it_sizes() {
         0,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
+    assert_eq!(order::from_id(order_id).quantity(), quote.quantity());
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - quote.all_in_cost(),
@@ -456,7 +456,7 @@ fun builder_fee_is_sized_inside_the_budget() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - fill.all_in_cost(),
@@ -495,7 +495,7 @@ fun sponsor_subsidy_is_sized_inside_the_budget() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - fill.all_in_cost(),
@@ -537,7 +537,7 @@ fun configured_subsidy_rate_is_sized_inside_the_budget() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - fill.all_in_cost(),
@@ -589,7 +589,7 @@ fun account_quote_at_a_configured_subsidy_rate_is_the_exact_debit_of_the_mint_it
         0,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
+    assert_eq!(order::from_id(order_id).quantity(), quote.quantity());
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - quote.all_in_cost(),
@@ -628,7 +628,7 @@ fun subsidy_capped_by_the_sponsored_balance_still_sizes_exactly() {
         SUBSIDY_CAP_QUANTITY,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), SUBSIDY_CAP_QUANTITY);
+    assert_eq!(order::from_id(order_id).quantity(), SUBSIDY_CAP_QUANTITY);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::default_manager_deposit() - fill.all_in_cost(),
@@ -682,7 +682,7 @@ fun congestion_surcharge_after_the_quote_resizes_instead_of_aborting() {
 
     assert!(quote.penalty_fee() > 0);
     assert!(quote.quantity() < TEN_THOUSAND_LOTS);
-    assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
+    assert_eq!(order::from_id(order_id).quantity(), quote.quantity());
     assert!(quote.all_in_cost() <= budget);
     assert!(one_more_lot.all_in_cost() > budget);
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
@@ -747,7 +747,7 @@ fun inventory_impact_is_sized_inside_the_budget() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - fill.all_in_cost());
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), fill.inventory_impact_charge());
     helpers::assert_market_backed_bundle(&market);
@@ -1064,7 +1064,7 @@ fun fill_whose_cost_equals_its_maximum_payout_mints() {
         MAX_PAYOUT_BOUNDARY_QUANTITY,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), MAX_PAYOUT_BOUNDARY_QUANTITY);
+    assert_eq!(order::from_id(order_id).quantity(), MAX_PAYOUT_BOUNDARY_QUANTITY);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - MAX_PAYOUT_BOUNDARY_QUANTITY,
@@ -1121,7 +1121,7 @@ fun overshoot_past_the_maximum_payout_steps_down_instead_of_aborting() {
     // balance stays unspent, because the bound stopped sizing, not the money.
     assert!(quote.all_in_cost() < balance_before / 2);
     assert_eq!(capped_budget.quantity(), quote.quantity());
-    assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
+    assert_eq!(order::from_id(order_id).quantity(), quote.quantity());
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
     helpers::assert_market_backed_bundle(&market);
 
@@ -1244,7 +1244,7 @@ fun fill_at_the_largest_admissible_quantity_clears_its_own_floor() {
         RAZOR_LARGEST_ADMISSIBLE,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), RAZOR_LARGEST_ADMISSIBLE);
+    assert_eq!(order::from_id(order_id).quantity(), RAZOR_LARGEST_ADMISSIBLE);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - RAZOR_LARGEST_ADMISSIBLE,
@@ -1274,7 +1274,7 @@ fun budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot() {
         0,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), RAZOR_STEPPED_DOWN);
+    assert_eq!(order::from_id(order_id).quantity(), RAZOR_STEPPED_DOWN);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - RAZOR_STEPPED_DOWN,
@@ -1402,7 +1402,7 @@ fun quantity_floor_at_the_repriced_fill_mints() {
         repriced.quantity(),
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), repriced.quantity());
+    assert_eq!(order::from_id(order_id).quantity(), repriced.quantity());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -1700,7 +1700,7 @@ fun two_finite_legs_size_exactly() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - fill.all_in_cost(),
@@ -1749,7 +1749,7 @@ fun builder_fee_at_its_own_rate_cap_sizes_exactly() {
         TEN_THOUSAND_LOTS,
     );
 
-    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - fill.all_in_cost(),
@@ -1799,7 +1799,7 @@ fun price_move_after_the_quote_resizes_instead_of_aborting() {
     assert!(repriced.entry_probability() > quoted_before.entry_probability());
     assert!(repriced.quantity() < TEN_THOUSAND_LOTS);
     assert!(repriced.all_in_cost() <= budget);
-    assert_eq!(order::from_order_id(order_id).quantity(), repriced.quantity());
+    assert_eq!(order::from_id(order_id).quantity(), repriced.quantity());
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - repriced.all_in_cost());
 
     helpers::return_account_bundle(account);

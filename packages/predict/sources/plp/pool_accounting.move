@@ -97,18 +97,17 @@ public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 
 }
 
 /// Sum the net USDC the pool has funded into its active expiries (sent minus
-/// received, per expiry, floored at zero). Cash that `send_expiry_cash` moved out of
+/// received, per expiry, floored at zero). Cash that `send_expiry` moved out of
 /// idle is still pool value — each market's NAV counts its cash — so a bound on pool
 /// value that reads idle alone can be sidestepped by moving idle into a market. The
 /// per-expiry floor means idle sent into an expiry that has already returned more than
 /// it was sent is not counted until it makes up that difference.
 /// Walks the active set, which the flush's snapshot stage already walks in a single
 /// transaction; expired markets stay in it until they are settled and swept.
-public(package) fun deployed_expiry_cash(ledger: &Ledger): u64 {
+public(package) fun deployed(ledger: &Ledger): u64 {
     let mut deployed = 0;
     ledger.active_expiry_markets.do_ref!(|m| {
-        deployed =
-            deployed + flow_net_funding(ledger.registered_expiries.borrow(m.expiry_market_id));
+        deployed = deployed + net_funding(ledger.registered_expiries.borrow(m.expiry_market_id));
     });
     deployed
 }
@@ -126,39 +125,39 @@ public(package) fun pending_protocol_profit(ledger: &Ledger): u64 {
 }
 
 /// Return the USDC pool allocation cap snapshotted for one expiry.
-public(package) fun max_expiry_allocation(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun max_alloc(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.chk_expiry(expiry_market_id);
     ledger.registered_expiries.borrow(expiry_market_id).max_expiry_allocation
 }
 
 /// Return the minimum USDC cash target snapshotted for one expiry.
-public(package) fun initial_expiry_cash(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun init_cash(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.chk_expiry(expiry_market_id);
     ledger.registered_expiries.borrow(expiry_market_id).initial_expiry_cash
 }
 
 /// Return the lifetime USDC the pool has sent into one expiry.
-public(package) fun sent_to_expiry(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun sent_cash(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.chk_expiry(expiry_market_id);
     ledger.registered_expiries.borrow(expiry_market_id).sent_to_expiry
 }
 
 /// Return the lifetime USDC one expiry has returned to the pool.
-public(package) fun received_from_expiry(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun received(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.chk_expiry(expiry_market_id);
     ledger.registered_expiries.borrow(expiry_market_id).received_from_expiry
 }
 
 /// Return remaining net USDC the pool may fund into one expiry under its
 /// snapshotted allocation cap.
-public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun avail_fund(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.chk_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
-    flow.max_expiry_allocation.saturating_sub(flow_net_funding(flow))
+    flow.max_expiry_allocation.saturating_sub(net_funding(flow))
 }
 
 /// Abort unless this expiry is registered to the pool.
-public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: ID) {
+public(package) fun chk_expiry(ledger: &Ledger, expiry_market_id: ID) {
     assert!(ledger.registered_expiries.contains(expiry_market_id), EUnknownRegisteredExpiry);
 }
 
@@ -167,7 +166,7 @@ public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: 
 /// absolute fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`, so a
 /// later change to that rate reaches only expiries registered after it. Returns the
 /// absolute cap it snapshotted, for the caller's registration event.
-public(package) fun register_expiry(
+public(package) fun register_exp(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     expiry_ms: u64,
@@ -200,8 +199,8 @@ public(package) fun register_expiry(
 }
 
 /// Remove an expiry from active valuation if present, returning whether it was active.
-public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_market_id: ID): bool {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun deactivate(ledger: &mut Ledger, expiry_market_id: ID): bool {
+    ledger.chk_expiry(expiry_market_id);
     let idx = ledger.active_expiry_markets.find_index!(|m| m.expiry_market_id == expiry_market_id);
     if (idx.is_none()) return false;
     ledger.active_expiry_markets.swap_remove(idx.destroy_some());
@@ -214,31 +213,31 @@ public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<USDC>) {
 }
 
 /// Split idle USDC.
-public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<USDC> {
+public(package) fun take_idle(ledger: &mut Ledger, amount: u64): Balance<USDC> {
     ledger.idle_balance.split(amount)
 }
 
 /// Split idle USDC into an expiry while recording the funding flow and enforcing
 /// the expiry's snapshotted allocation cap.
-public(package) fun send_expiry_cash(
+public(package) fun send_expiry(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     amount: u64,
 ): Balance<USDC> {
     if (amount == 0) return balance::zero();
-    ledger.record_sent_to_expiry(expiry_market_id, amount);
+    ledger.note_sent(expiry_market_id, amount);
     ledger.idle_balance.split(amount)
 }
 
 /// Record up to `requested_amount` of sponsor-funded fee incentives under the
 /// expiry lifetime cap. Returns the amount recorded and lifetime allocated total
 /// after the update.
-public(package) fun record_fee_incentives_allocated_up_to(
+public(package) fun note_alloc(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     requested_amount: u64,
 ): (u64, u64) {
-    ledger.assert_registered_expiry(expiry_market_id);
+    ledger.chk_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
     // Registration starts allocated at zero. Every update adds at most the
@@ -250,7 +249,7 @@ public(package) fun record_fee_incentives_allocated_up_to(
 }
 
 /// Receive USDC returned from an expiry.
-public(package) fun receive_expiry_cash(
+public(package) fun recv_expiry(
     ledger: &mut Ledger,
     cash: Balance<USDC>,
     expiry_market_id: ID,
@@ -261,7 +260,7 @@ public(package) fun receive_expiry_cash(
         return 0
     };
     ledger.idle_balance.join(cash);
-    ledger.record_received_from_expiry(expiry_market_id, amount);
+    ledger.note_recv(expiry_market_id, amount);
     amount
 }
 
@@ -269,11 +268,11 @@ public(package) fun receive_expiry_cash(
 /// carried forward in `net_losses_to_fill` and must be refilled by later gains
 /// before more profit is recognized. Materialization is forward-only: a later
 /// loss does not reduce profit recognized from an earlier expiry.
-public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
+public(package) fun materialize(ledger: &mut Ledger, expiry_market_id: ID): u64 {
+    ledger.chk_expiry(expiry_market_id);
     let (initial_loss, profit) = {
         let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
-        let initial_loss = start_terminal_accounting_if_needed(flow);
+        let initial_loss = start_term(flow);
         let received = flow.received_from_expiry;
         let profit = if (received > flow.terminal_received_watermark) {
             let profit = received - flow.terminal_received_watermark;
@@ -304,7 +303,7 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
 /// idle so a settled-market sweep can never abort when the cut's cash is
 /// temporarily deployed in other active markets; the uncovered remainder stays in
 /// `pending_protocol_profit` and is realized on a later sweep that refills idle.
-public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balance<USDC> {
+public(package) fun realize_pend(ledger: &mut Ledger): Balance<USDC> {
     let draw = ledger.pending_protocol_profit.min(ledger.idle_balance.value());
     ledger.pending_protocol_profit = ledger.pending_protocol_profit - draw;
     ledger.idle_balance.split(draw)
@@ -313,38 +312,38 @@ public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balanc
 /// Accrue a freshly materialized protocol cut, then realize what idle can currently
 /// cover. In the common case idle covers the cut, so the full amount is split out
 /// immediately and nothing is carried.
-public(package) fun realize_protocol_profit(ledger: &mut Ledger, amount: u64): Balance<USDC> {
+public(package) fun realize_prof(ledger: &mut Ledger, amount: u64): Balance<USDC> {
     ledger.pending_protocol_profit = ledger.pending_protocol_profit + amount;
-    ledger.realize_pending_protocol_profit()
+    ledger.realize_pend()
 }
 
-fun record_sent_to_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
+fun note_sent(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
     if (amount == 0) return;
-    ledger.assert_registered_expiry(expiry_market_id);
+    ledger.chk_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
-    let current_net_funding = flow_net_funding(flow);
+    let current_net_funding = net_funding(flow);
     assert!(current_net_funding + amount <= flow.max_expiry_allocation, EMaxExpiryFundingExceeded);
     flow.sent_to_expiry = flow.sent_to_expiry + amount;
     ledger.profit_basis_debits = ledger.profit_basis_debits + amount;
 }
 
-fun record_received_from_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
+fun note_recv(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
     if (amount == 0) return;
-    ledger.assert_registered_expiry(expiry_market_id);
+    ledger.chk_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     flow.received_from_expiry = flow.received_from_expiry + amount;
     ledger.profit_basis_credits = ledger.profit_basis_credits + amount;
 }
 
-fun flow_net_funding(flow: &RegisteredExpiry): u64 {
+fun net_funding(flow: &RegisteredExpiry): u64 {
     flow.sent_to_expiry.saturating_sub(flow.received_from_expiry)
 }
 
 /// Latch terminal accounting on first call and return the expiry's opening net
 /// loss (sent over received). Sets the received watermark so the normal
-/// received-delta path in `materialize_expiry_profit` recognizes only later gains.
-fun start_terminal_accounting_if_needed(flow: &mut RegisteredExpiry): u64 {
+/// received-delta path in `materialize` recognizes only later gains.
+fun start_term(flow: &mut RegisteredExpiry): u64 {
     if (flow.terminal_accounting_started) {
         return 0
     };
