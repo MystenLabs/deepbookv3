@@ -2,21 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// The order-flow companion's shared `OrderDesk`: the delayed-execution policy
-/// every market queue runs under, and the companion's version floor.
+/// every market queue runs under, and the companion's version floor. Also the
+/// desk's `QueueRegistry`, the parent every market's queue ID derives from.
 ///
-/// One desk per deployment: `init` creates and shares it when the package is
-/// published, and nothing else builds one. Each market's `MarketQueue` sits at
-/// an ID derived from the desk and the market (`queue::create_and_share`), so a
-/// single desk gives each market exactly one queue, and with it one per-account
-/// cap, stuck gate, policy, and version floor. The desk exists before Predict
-/// allowlists this package's witness; until `protocol_config::set_order_flow`
-/// does, Predict's admission, commit, and fill primitives refuse the companion.
+/// One desk and one registry per deployment: `init` creates and shares both
+/// when the package is published, and nothing else builds one. Each market's
+/// `MarketQueue` sits at an ID derived from the registry and the market
+/// (`queue::create_and_share`), so a deployment gives each market exactly one
+/// queue, and with it one per-account cap, stuck gate, policy, and version
+/// floor. The desk exists before Predict allowlists this package's witness;
+/// until `protocol_config::set_order_flow` does, Predict's admission, commit,
+/// and fill primitives refuse the companion.
 ///
 /// Predict's `AdminCap` administers the desk. Its setters check the desk floor
 /// and refuse while Predict is frozen, through the public
 /// `protocol_config::frozen`; the policy cannot move funds, and every Predict
-/// invariant holds inside Predict's primitives whatever it says. Only queue
-/// creation takes the desk mutably, so trading never serializes on it.
+/// invariant holds inside Predict's primitives whatever it says. Every trading
+/// call reads the desk, and only those admin setters write it. Queue creation,
+/// which anyone may call, writes the registry instead, which no trading call
+/// reads, so creation cannot contend with trading.
 module deepbook_predict_orders::desk;
 
 use deepbook_predict::{admin::AdminCap, protocol_config::ProtocolConfig};
@@ -43,17 +47,27 @@ public struct OrderDesk has key {
     version_watermark: u64,
 }
 
+/// The parent each market's `MarketQueue` ID is derived from, bound to one
+/// desk. A separate shared object so permissionless queue creation never
+/// writes the desk every trading call reads.
+public struct QueueRegistry has key {
+    id: UID,
+    desk_id: ID,
+}
+
 /// Create and share the deployment's one desk at publish, with the launch
-/// policy and the launch floor. Emits no `DelayedExecutionPolicyUpdated`:
-/// `init` has no `Clock` for its `onchain_timestamp_ms`, and the launch policy
-/// is the desk's state in the publish transaction. Every setter emits the
-/// complete policy from then on.
+/// policy and the launch floor, and its queue registry. Emits no
+/// `DelayedExecutionPolicyUpdated`: `init` has no `Clock` for its
+/// `onchain_timestamp_ms`, and the launch policy is the desk's state in the
+/// publish transaction. Every setter emits the complete policy from then on.
 fun init(ctx: &mut TxContext) {
-    transfer::share_object(OrderDesk {
+    let desk = OrderDesk {
         id: object::new(ctx),
         policy: delayed_execution_config::new(),
         version_watermark: current_version!(),
-    });
+    };
+    transfer::share_object(QueueRegistry { id: object::new(ctx), desk_id: desk.id() });
+    transfer::share_object(desk);
 }
 
 // === Public Functions ===
@@ -71,6 +85,12 @@ public fun policy(desk: &OrderDesk): DelayedExecutionPolicy {
 /// Return the desk's version floor, for SDK and devInspect reads.
 public fun version_watermark(desk: &OrderDesk): u64 {
     desk.version_watermark
+}
+
+/// Return the queue registry's object ID, for discovery and for deriving each
+/// market's queue ID (`queue::queue_id`) in PTB construction.
+public fun registry_id(registry: &QueueRegistry): ID {
+    registry.id.to_inner()
 }
 
 /// Set every timing field and the Pyth channel in one call, so the relational
@@ -169,11 +189,15 @@ public(package) fun policy_ref(desk: &OrderDesk): &DelayedExecutionPolicy {
     &desk.policy
 }
 
-/// The desk's UID, which each market's queue ID is derived from
+public(package) fun registry_desk_id(registry: &QueueRegistry): ID {
+    registry.desk_id
+}
+
+/// The registry's UID, which each market's queue ID is derived from
 /// (`queue::create_and_share` claims it inline, as Sui's object-construction
 /// check requires).
-public(package) fun uid_mut(desk: &mut OrderDesk): &mut UID {
-    &mut desk.id
+public(package) fun registry_uid_mut(registry: &mut QueueRegistry): &mut UID {
+    &mut registry.id
 }
 
 // === Private Functions ===
@@ -187,8 +211,9 @@ fun assert_admin_allowed(desk: &OrderDesk, config: &ProtocolConfig) {
 // === Test-Only Functions ===
 
 #[test_only]
-/// Run `init`: create and share a desk at the launch policy. Calling it again
-/// shares another desk, which only the wrong-desk binding tests want.
+/// Run `init`: create and share a desk at the launch policy and its queue
+/// registry. Calling it again shares another pair, which only the wrong-desk
+/// binding tests want.
 public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx);
 }

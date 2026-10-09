@@ -3,8 +3,8 @@
 
 /// Flow fixture for the companion's queue tests: Predict's live test market
 /// past the cutover with this package's `OrderFlow` witness allowlisted, an
-/// `OrderDesk`, and the market's `MarketQueue`, held together with one trader's
-/// account for the current transaction.
+/// `OrderDesk` and its `QueueRegistry`, and the market's `MarketQueue`, held
+/// together with one trader's account for the current transaction.
 ///
 /// The desk runs the launch policy except for a 1_000 ms delay, which the
 /// hand-derived fixtures assume: from the fixture clock 120_000, τ =
@@ -25,7 +25,7 @@ use deepbook_predict::{
 };
 use deepbook_predict_math::lazer_price;
 use deepbook_predict_orders::{
-    desk::{Self, OrderDesk},
+    desk::{Self, OrderDesk, QueueRegistry},
     order_flow::OrderFlow,
     order_queue::{Self, OrderView},
     queue::{Self, MarketQueue, TestUpdate}
@@ -48,12 +48,18 @@ public struct QueueTest {
     fx: Fixture,
     expiry_id: ID,
     trader: Trader,
-    desk_id: ID,
-    queue_id: ID,
+    ids: QueueIds,
     market: MarketBundle,
     account: AccountBundle,
     desk: OrderDesk,
     queue: MarketQueue,
+}
+
+/// The shared objects a queue test retakes in every transaction.
+public struct QueueIds has copy, drop {
+    desk_id: ID,
+    registry_id: ID,
+    queue_id: ID,
 }
 
 // === Setup ===
@@ -152,7 +158,9 @@ fun assemble(mut fx: Fixture, expiry_id: ID, trader: Trader, cross_cutover: bool
     helpers::return_market_bundle(market);
     fx.scenario_mut().next_tx(test_constants::admin());
     let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
+    let registry_id = most_recent_id_shared<QueueRegistry>().destroy_some();
     let mut desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
+    let mut registry = fx.scenario_mut().take_shared_by_id<QueueRegistry>(registry_id);
     let market = fx.take_market_bundle(expiry_id);
     let queue_id = {
         let (admin_cap, clock, ctx) = fx.admin_parts();
@@ -168,22 +176,19 @@ fun assemble(mut fx: Fixture, expiry_id: ID, trader: Trader, cross_cutover: bool
             SVI_MAX_AGE_MS,
             clock,
         );
-        queue::create_and_share(&mut desk, helpers::market(&market), ctx)
+        queue::create_and_share(&mut registry, &desk, helpers::market(&market), ctx)
     };
     helpers::return_market_bundle(market);
     return_shared(desk);
+    return_shared(registry);
     let owner = trader.owner();
     fx.scenario_mut().next_tx(owner);
-    take(fx, expiry_id, trader, desk_id, queue_id)
+    take(fx, expiry_id, trader, QueueIds { desk_id, registry_id, queue_id })
 }
 
 /// Return every shared object and end the scenario.
 public fun finish(q: QueueTest) {
-    let QueueTest { fx, market, account, desk, queue, .. } = q;
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    return_shared(desk);
-    return_shared(queue);
+    let (fx, _, _, _) = q.put_back();
     fx.finish();
 }
 
@@ -205,86 +210,79 @@ public fun as_trader(q: QueueTest, trader: Trader): QueueTest {
 /// Create and fund a new trader at `owner`, then continue in that trader's
 /// transaction holding its account. Returns its handle.
 public fun new_trader(q: QueueTest, owner: address, deposit: u64): (QueueTest, Trader) {
-    let QueueTest { fx, expiry_id, desk_id, queue_id, market, account, desk, queue, .. } = q;
-    let mut fx = fx;
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    return_shared(desk);
-    return_shared(queue);
+    let (mut fx, expiry_id, _, ids) = q.put_back();
     let trader = fx.create_funded_manager_as(owner, deposit);
-    (take(fx, expiry_id, trader, desk_id, queue_id), trader)
+    (take(fx, expiry_id, trader, ids), trader)
 }
 
 /// Create a builder code and link it to the current trader's account, then
 /// continue in the trader's next transaction. Returns the code's ID.
 public fun link_builder_code(q: QueueTest, code_index: u64): (QueueTest, ID) {
-    let QueueTest { fx, expiry_id, trader, desk_id, queue_id, market, account, desk, queue } = q;
-    let mut fx = fx;
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    return_shared(desk);
-    return_shared(queue);
+    let (mut fx, expiry_id, trader, ids) = q.put_back();
     let code_id = fx.create_and_link_builder_code(code_index, &trader);
     fx.scenario_mut().next_tx(trader.owner());
-    (take(fx, expiry_id, trader, desk_id, queue_id), code_id)
+    (take(fx, expiry_id, trader, ids), code_id)
 }
 
 /// Continue in a new transaction holding `expiry_id`'s market in place of the
 /// queue's own, for the binding checks.
 public fun with_market(q: QueueTest, expiry_id: ID): QueueTest {
-    let QueueTest { fx, trader, desk_id, queue_id, market, account, desk, queue, .. } = q;
-    let mut fx = fx;
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    return_shared(desk);
-    return_shared(queue);
+    let (mut fx, _, trader, ids) = q.put_back();
     fx.scenario_mut().next_tx(trader.owner());
-    take(fx, expiry_id, trader, desk_id, queue_id)
+    take(fx, expiry_id, trader, ids)
 }
 
-/// Share a second desk, which only a test can build, and continue in a new
-/// transaction holding it in place of the queue's own, for the binding checks.
+/// Share a second desk and its registry, which only a test can build, and
+/// continue in a new transaction holding the new desk in place of the queue's
+/// own, for the binding checks. The fixture's registry stays the first desk's.
 public fun with_new_desk(q: QueueTest): QueueTest {
-    let QueueTest { fx, expiry_id, trader, queue_id, market, account, desk, queue, .. } = q;
-    let mut fx = fx;
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    return_shared(desk);
-    return_shared(queue);
+    let (mut fx, expiry_id, trader, ids) = q.put_back();
     desk::init_for_testing(fx.scenario_mut().ctx());
     fx.scenario_mut().next_tx(trader.owner());
     let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
-    take(fx, expiry_id, trader, desk_id, queue_id)
+    let QueueIds { registry_id, queue_id, .. } = ids;
+    take(fx, expiry_id, trader, QueueIds { desk_id, registry_id, queue_id })
 }
 
-/// Create a queue for the held market under the held desk.
+/// Create a queue for the held market under the held desk, through the
+/// fixture's queue registry.
 public fun create_queue(q: &mut QueueTest): ID {
-    let QueueTest { fx, market, desk, .. } = q;
+    let QueueTest { fx, market, desk, ids, .. } = q;
+    let mut registry = fx.scenario_mut().take_shared_by_id<QueueRegistry>(ids.registry_id);
     let (_, ctx) = fx.clock_and_ctx();
-    queue::create_and_share(desk, helpers::market(market), ctx)
+    let queue_id = queue::create_and_share(&mut registry, desk, helpers::market(market), ctx);
+    return_shared(registry);
+    queue_id
 }
 
-public fun desk_id(q: &QueueTest): ID { q.desk_id }
+public fun desk_id(q: &QueueTest): ID { q.ids.desk_id }
 
-public fun queue_id(q: &QueueTest): ID { q.queue_id }
+public fun registry_id(q: &QueueTest): ID { q.ids.registry_id }
+
+public fun queue_id(q: &QueueTest): ID { q.ids.queue_id }
 
 fun retake(q: QueueTest, trader: Trader, sender: address): QueueTest {
-    let QueueTest { fx, expiry_id, desk_id, queue_id, market, account, desk, queue, .. } = q;
-    let mut fx = fx;
+    let (mut fx, expiry_id, _, ids) = q.put_back();
+    fx.scenario_mut().next_tx(sender);
+    take(fx, expiry_id, trader, ids)
+}
+
+/// Return every shared object the transaction holds.
+fun put_back(q: QueueTest): (Fixture, ID, Trader, QueueIds) {
+    let QueueTest { fx, expiry_id, trader, ids, market, account, desk, queue } = q;
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     return_shared(desk);
     return_shared(queue);
-    fx.scenario_mut().next_tx(sender);
-    take(fx, expiry_id, trader, desk_id, queue_id)
+    (fx, expiry_id, trader, ids)
 }
 
-fun take(mut fx: Fixture, expiry_id: ID, trader: Trader, desk_id: ID, queue_id: ID): QueueTest {
+fun take(mut fx: Fixture, expiry_id: ID, trader: Trader, ids: QueueIds): QueueTest {
     let market = fx.take_market_bundle(expiry_id);
     let account = fx.take_account_bundle(&trader);
-    let desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
-    let queue = fx.scenario_mut().take_shared_by_id<MarketQueue>(queue_id);
-    QueueTest { fx, expiry_id, trader, desk_id, queue_id, market, account, desk, queue }
+    let desk = fx.scenario_mut().take_shared_by_id<OrderDesk>(ids.desk_id);
+    let queue = fx.scenario_mut().take_shared_by_id<MarketQueue>(ids.queue_id);
+    QueueTest { fx, expiry_id, trader, ids, market, account, desk, queue }
 }
 
 // === Accessors ===

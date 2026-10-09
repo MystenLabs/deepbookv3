@@ -30,7 +30,7 @@ use deepbook_predict::{
 use deepbook_predict_math::{lazer_price::{Self, LazerPrice}, math as pmath};
 use deepbook_predict_orders::{
     delayed_execution_config::{Self, DelayedExecutionPolicy},
-    desk::OrderDesk,
+    desk::{OrderDesk, QueueRegistry},
     order_flow,
     order_queue::{Self, OrderBook, OrderRequest, OrderTiming, OrderView, HeldPosition},
     queue_events
@@ -70,9 +70,9 @@ const PHASE_DRAIN: u8 = 0;
 const PHASE_PAY: u8 = 1;
 const PHASE_DONE: u8 = 2;
 
-/// One market's queue under one desk, shared at the ID derived from the desk
-/// and the market (`queue_id`). Trading takes it mutably, so calls on one
-/// market's queue serialize here and never on the desk.
+/// One market's queue under one desk, shared at the ID derived from the desk's
+/// queue registry and the market (`queue_id`). Trading takes it mutably, so
+/// calls on one market's queue serialize here and never on the desk.
 public struct MarketQueue has key {
     id: UID,
     desk_id: ID,
@@ -104,10 +104,10 @@ public fun phase_pay(): u8 { PHASE_PAY }
 
 public fun phase_done(): u8 { PHASE_DONE }
 
-/// Return the ID of `expiry_market_id`'s queue under `desk_id`, whether or not
-/// it exists yet. For PTB construction.
-public fun queue_id(desk_id: ID, expiry_market_id: ID): ID {
-    derived_object::derive_address(desk_id, expiry_market_id).to_id()
+/// Return the ID of `expiry_market_id`'s queue under the queue registry
+/// `registry_id`, whether or not it exists yet. For PTB construction.
+public fun queue_id(registry_id: ID, expiry_market_id: ID): ID {
+    derived_object::derive_address(registry_id, expiry_market_id).to_id()
 }
 
 public fun id(queue: &MarketQueue): ID { queue.id.to_inner() }
@@ -202,14 +202,22 @@ public fun quote_redeem_open(
 // --- Queue creation ---
 
 /// Create and share `market`'s queue under `desk`. Permissionless; the caller
-/// pays its storage. The queue's ID is derived from the desk and the market, so
-/// a second call for the same market aborts.
-public fun create_and_share(desk: &mut OrderDesk, market: &ExpiryMarket, ctx: &mut TxContext): ID {
+/// pays its storage. The queue's ID is derived from the desk's registry and the
+/// market, so a second call for the same market aborts. Writes only the
+/// registry, which no trading call reads, so creation never contends with
+/// trading on the desk. Aborts `EWrongDesk` for another desk's registry.
+public fun create_and_share(
+    registry: &mut QueueRegistry,
+    desk: &OrderDesk,
+    market: &ExpiryMarket,
+    ctx: &mut TxContext,
+): ID {
     desk.assert_version();
-    let expiry_market_id = market.id();
     let desk_id = desk.id();
+    assert!(registry.registry_desk_id() == desk_id, EWrongDesk);
+    let expiry_market_id = market.id();
     let queue = MarketQueue {
-        id: derived_object::claim(desk.uid_mut(), expiry_market_id),
+        id: derived_object::claim(registry.registry_uid_mut(), expiry_market_id),
         desk_id,
         expiry_market_id,
         book: order_queue::new_book(ctx),

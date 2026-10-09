@@ -20,7 +20,7 @@ use deepbook_predict::{
     test_constants
 };
 use deepbook_predict_orders::{
-    desk::{Self, OrderDesk},
+    desk::{Self, OrderDesk, QueueRegistry},
     order_flow::OrderFlow,
     order_queue::{Self, OrderView},
     queue::{Self, MarketQueue},
@@ -499,14 +499,17 @@ fun setup(): QueueSessionFixture {
     predict_helpers::return_market_bundle(market);
     predict.scenario_mut().next_tx(test_constants::admin());
     let desk_id = most_recent_id_shared<OrderDesk>().destroy_some();
-    let mut desk = predict.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
+    let registry_id = most_recent_id_shared<QueueRegistry>().destroy_some();
+    let desk = predict.scenario_mut().take_shared_by_id<OrderDesk>(desk_id);
+    let mut registry = predict.scenario_mut().take_shared_by_id<QueueRegistry>(registry_id);
     let market = predict.take_market_bundle(market_id);
     let queue_id = {
         let (_, ctx) = predict.clock_and_ctx();
-        queue::create_and_share(&mut desk, predict_helpers::market(&market), ctx)
+        queue::create_and_share(&mut registry, &desk, predict_helpers::market(&market), ctx)
     };
     predict_helpers::return_market_bundle(market);
     return_shared(desk);
+    return_shared(registry);
     predict.scenario_mut().next_tx(test_constants::admin());
     QueueSessionFixture {
         predict,

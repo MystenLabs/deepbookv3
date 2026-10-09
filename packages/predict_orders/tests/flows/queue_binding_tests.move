@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Queue creation and binding: each market's queue sits at the ID derived from
-/// the desk and the market, a second queue for one market aborts, and every
-/// queue entry point refuses another desk or another market's objects before
-/// it reaches Predict.
+/// the desk's queue registry and the market, a second queue for one market
+/// aborts, creation refuses another desk's registry, and every queue entry
+/// point refuses another desk or another market's objects before it reaches
+/// Predict.
 #[test_only]
 module deepbook_predict_orders::queue_binding_tests;
 
@@ -20,7 +21,7 @@ const MAX_ORDERS: u64 = 10;
 // === Creation ===
 
 #[test]
-fun the_queue_sits_at_the_id_derived_from_the_desk_and_the_market() {
+fun the_queue_sits_at_the_id_derived_from_the_registry_and_the_market() {
     let q = fixture::new();
     let desk_id = q.desk_id();
     let expiry_id = q.expiry_id();
@@ -28,7 +29,9 @@ fun the_queue_sits_at_the_id_derived_from_the_desk_and_the_market() {
     assert_eq!(q.queue().id(), q.queue_id());
     assert_eq!(q.queue().desk_id(), desk_id);
     assert_eq!(q.queue().expiry_market_id(), expiry_id);
-    assert_eq!(queue::queue_id(desk_id, expiry_id), q.queue_id());
+    assert_eq!(queue::queue_id(q.registry_id(), expiry_id), q.queue_id());
+    // The registry is its own object, apart from the desk.
+    assert!(q.registry_id() != desk_id);
     // An empty queue: nothing waiting and nothing to pay.
     let (payout_cursor, next_id, payouts_completed) = q.queue().payout_progress();
     assert_eq!(payout_cursor, 0);
@@ -58,13 +61,23 @@ fun a_second_queue_for_the_same_market_aborts() {
 fun anyone_creates_another_markets_queue_at_its_derived_id() {
     let (q, other) = fixture::new_with_other_market();
     let mut q = q.with_market(other).next_tx(test_constants::bob());
-    let desk_id = q.desk_id();
+    let registry_id = q.registry_id();
 
     let created = q.create_queue();
 
-    assert_eq!(created, queue::queue_id(desk_id, other));
+    assert_eq!(created, queue::queue_id(registry_id, other));
     assert!(created != q.queue_id());
     q.finish();
+}
+
+/// The registry belongs to one desk: creating a queue through it with another
+/// desk aborts before claiming an ID.
+#[test, expected_failure(abort_code = queue::EWrongDesk)]
+fun creating_a_queue_with_another_desks_registry_aborts() {
+    let (q, other) = fixture::new_with_other_market();
+    let mut q = q.with_market(other).with_new_desk();
+    q.create_queue();
+    abort 999
 }
 
 // === Binding ===
