@@ -2281,6 +2281,28 @@ export async function readSettlementProgress(marketId: string): Promise<Settleme
     };
 }
 
+// Every market Predict created, from its `MarketCreated` events, oldest first. A keeper that
+// restarts rebuilds its unfinished settlement work from these: the active set alone misses a
+// market someone else swept before its queue's payout walk completed.
+export async function readCreatedMarkets(): Promise<Array<{ id: string; expiryMs: bigint }>> {
+    const markets: Array<{ id: string; expiryMs: bigint }> = [];
+    let after: string | null = null;
+    for (;;) {
+        const page: any = await client.listEvents({
+            filter: { eventType: `${PACKAGE_ID}::config_events::MarketCreated` },
+            include: { json: true },
+            limit: 50,
+            after,
+        } as any);
+        for (const event of page.events) {
+            markets.push({ id: event.json.expiry_market_id, expiryMs: BigInt(event.json.expiry) });
+        }
+        if (!page.hasNextPage) return markets;
+        if (!page.endCursor) throw new Error("Sui gRPC returned an event page without its next cursor");
+        after = page.endCursor;
+    }
+}
+
 // Create the sender's canonical derived account wrapper and share it. `new` derives
 // the wrapper at a deterministic address (see `deriveAccountWrapperId`); `share`
 // publishes the shared object the trade flows borrow against.

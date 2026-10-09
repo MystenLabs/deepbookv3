@@ -2,12 +2,13 @@
 // ordering rules can be unit-tested without a localnet. `keeperService.ts` supplies the real
 // chain; the tests supply a model of it.
 //
-// The rule both lanes keep: a market whose queue's settlement payout walk is unfinished never
-// leaves `plp::active_expiry_markets`. The keeper rebuilds its work list from that set every tick
-// (and after a restart), so a settled market swept out of it with Open queue records still
-// unpaid would never be revisited. Two things sweep a settled market: the settlement lane's
-// `rebalance_expiry_cash`, and the flush snapshot, which sweeps every settled market it
-// snapshots. So the settlement lane sweeps only after the walk completes, and the flush runs
+// The rule both lanes keep: a market whose queue's settlement is unfinished stays on the
+// keeper's work list until its payout walk completes, its records are cleaned up, and it has left
+// `plp::active_expiry_markets`. The work list is the active set plus a durable list of every
+// market with a queue whose settlement has not finished, because the active set alone is not
+// enough: `rebalance_expiry_cash` is permissionless, so anyone can sweep a settled market out of
+// it with Open queue records still unpaid, and the flush snapshot sweeps every settled market it
+// snapshots. The keeper's own lanes still sweep only after the walk completes, and the flush runs
 // only once every expired market's walk has completed and settles nothing itself.
 import { type QueueEvent, marketSettledIn } from "./queueEvents.js";
 
@@ -26,8 +27,12 @@ export interface SettlementProgress {
 
 export interface KeeperChain {
   clockMs(): Promise<number>;
-  // The chain's active expiry markets with their expiries: the keeper's only work list.
+  // The chain's active expiry markets with their expiries.
   activeMarkets(): Promise<LaneMarket[]>;
+  // The durable list of markets with a queue whose settlement has not finished, active or not.
+  pendingMarkets(): Promise<LaneMarket[]>;
+  // Drop a market from the durable list once its settlement has finished.
+  retire(marketId: string): Promise<void>;
   settlementProgress(marketId: string): Promise<SettlementProgress>;
   // One PTB: insert the exact expiry spot and call Predict's try_settle. Returns its events.
   trySettle(market: LaneMarket): Promise<QueueEvent[] | undefined>;
@@ -48,11 +53,12 @@ export const MAX_SETTLE_PHASES = 32;
 
 // Drive one market's settlement to completion, one call per PTB, then clean up and sweep it:
 // Predict's try_settle until the market is settled, the queue's settle_step until its payout
-// walk completes, cleanup of its finished records, and the sweep. Returns the number of settle
-// transactions it sent before the cleanup. A throw (a failed PTB, a try_settle that did not
-// settle, or the phase cap) leaves the market unswept, so it stays in the active set and the
-// next pass resumes it from chain state.
-export async function settleMarket(chain: KeeperChain, market: LaneMarket): Promise<number> {
+// walk completes, cleanup of its finished records, and the sweep. A market someone else already
+// swept out of the active set (`active` false) skips the sweep, which would abort. The market
+// then leaves the durable list. Returns the number of settle transactions it sent before the
+// cleanup. A throw (a failed PTB, a try_settle that did not settle, or the phase cap) leaves the
+// market unswept and listed, so the next pass resumes it from chain state.
+export async function settleMarket(chain: KeeperChain, market: LaneMarket, active = true): Promise<number> {
   let phases = 0;
   let progress = await chain.settlementProgress(market.id);
   if (!progress.settled) {
@@ -72,7 +78,8 @@ export async function settleMarket(chain: KeeperChain, market: LaneMarket): Prom
     progress = await chain.settlementProgress(market.id);
   }
   if (progress.nextId > 0n) await chain.cleanup(market, progress.nextId);
-  await chain.sweep(market);
+  if (active) await chain.sweep(market);
+  await chain.retire(market.id);
   return phases;
 }
 
@@ -83,14 +90,18 @@ export type SettleResult =
 export const settleFailed = (result: SettleResult): result is { market: LaneMarket; error: unknown } =>
   "error" in result;
 
-// Settle every active market at or past expiry, each on its own so one failure stays local.
+// Settle every market at or past expiry on the work list (the active set, then the listed
+// markets that already left it), each on its own so one failure stays local.
 export async function settleExpired(chain: KeeperChain): Promise<SettleResult[]> {
   const now = await chain.clockMs();
+  const active = await chain.activeMarkets();
+  const activeIds = new Set(active.map((market) => market.id));
+  const swept = (await chain.pendingMarkets()).filter((market) => !activeIds.has(market.id));
   const results: SettleResult[] = [];
-  for (const market of await chain.activeMarkets()) {
+  for (const market of [...active, ...swept]) {
     if (market.expiryMs > now) continue;
     try {
-      results.push({ market, phases: await settleMarket(chain, market) });
+      results.push({ market, phases: await settleMarket(chain, market, activeIds.has(market.id)) });
     } catch (error) {
       results.push({ market, error });
     }

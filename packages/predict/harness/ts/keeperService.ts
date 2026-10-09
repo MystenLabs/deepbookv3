@@ -14,6 +14,8 @@
 // keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint), so a BS
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
+import { readFileSync } from "node:fs";
+
 import { CADENCES } from "./predictConfig.js";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
@@ -33,10 +35,13 @@ import {
   fundAddressUsdcTx,
   keeperFlushTxs,
   keeperTrySettleTx,
+  objectExists,
   readActiveMarketIds,
+  readCreatedMarkets,
   readMarketExpiry,
   readSettlementProgress,
   readValuationInProgress,
+  deriveMarketQueueId,
   rebalanceExpiryCashTx,
   settleStepTx,
 } from "../../devtools/ts/runtime.js";
@@ -50,6 +55,7 @@ const CADENCE_IDS = Object.keys(CADENCES)
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
 const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
+const WORKLIST_PATH = `${requiredEnv("INSTANCE_DIR")}/keeper-worklist.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_USDC = BigInt(requiredEnv("TRADER_USDC"));
 
@@ -67,6 +73,35 @@ const funded = new Set<string>();
 // Markets whose queue is known to exist. A market picked up from chain after a restart is
 // checked, and its queue created, before it is funded and advertised.
 const queued = new Set<string>();
+// The durable settlement work list: every market with a queue whose settlement (payout walk,
+// cleanup, and sweep) has not finished, kept on disk and rebuilt from events at start. The active
+// set alone is not enough, because anyone can sweep a settled market out of it first.
+const worklist = new Map<string, number>();
+
+function persistWorklist(): void {
+  atomicWriteFile(WORKLIST_PATH, JSON.stringify([...worklist].map(([id, expiryMs]) => ({ id, expiryMs }))));
+}
+
+function listMarket(id: string, expiryMs: number): void {
+  if (worklist.get(id) === expiryMs) return;
+  worklist.set(id, expiryMs);
+  persistWorklist();
+}
+
+// Restore the list after a restart: the file, then every created market whose queue exists and
+// whose payout walk has not completed, which covers a market swept while the keeper was down.
+async function rebuildWorklist(): Promise<void> {
+  try {
+    for (const m of JSON.parse(readFileSync(WORKLIST_PATH, "utf8")) as Mkt[]) worklist.set(m.id, m.expiryMs);
+  } catch {
+    // First start, or a torn file: the events below rebuild it.
+  }
+  for (const m of await readCreatedMarkets()) {
+    if (worklist.has(m.id) || !(await objectExists(deriveMarketQueueId(m.id)))) continue;
+    if (!(await readSettlementProgress(m.id)).payoutsCompleted) worklist.set(m.id, Number(m.expiryMs));
+  }
+  persistWorklist();
+}
 
 async function expiryOf(marketId: string): Promise<number> {
   const cached = expiryCache.get(marketId);
@@ -93,6 +128,10 @@ function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
       const markets: Mkt[] = [];
       for (const id of await readActiveMarketIds()) markets.push({ id, expiryMs: await expiryOf(id) });
       return markets;
+    },
+    pendingMarkets: async () => [...worklist].map(([id, expiryMs]) => ({ id, expiryMs })),
+    retire: async (marketId) => {
+      if (worklist.delete(marketId)) persistWorklist();
     },
     settlementProgress: readSettlementProgress,
     trySettle: async (m) => {
@@ -241,6 +280,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
       if (!queued.has(m.id)) {
         await ensureMarketQueue(m.id);
         queued.add(m.id);
+        listMarket(m.id, m.expiryMs);
       }
       await executeAndWait(
         rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
@@ -267,6 +307,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
           throw new Error(`keeper cadence schedule drift c${c}: expected ${expectedExpiry}, created ${expiryMs}`);
         }
         queued.add(marketId); // createMarket creates the queue with the market
+        listMarket(marketId, Number(expiryMs));
         await executeAndWait(
           rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
           "rebalance",
@@ -291,6 +332,7 @@ async function main() {
   // Traders run the cleanout strategy's permissionless settled redeems, which need the allowlist.
   const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS, TRADER_ADDRESSES);
   await bootstrapPool(poolValuationCapId);
+  await rebuildWorklist();
   for (const addr of TRADER_ADDRESSES) {
     await executeAndWait(fundAddressUsdcTx(addr, TRADER_USDC), `fund-trader-${addr.slice(0, 8)}`);
   }

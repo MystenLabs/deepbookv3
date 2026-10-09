@@ -559,18 +559,29 @@ class ModelChain implements KeeperChain {
   // Advances the clock between the pre-flush settlement pass and the snapshot.
   clockAtSnapshot: number | null = null;
   readonly markets = new Map<string, ModelMarket>();
+  // The keeper's durable work list: markets with a queue whose settlement has not finished.
+  readonly pending = new Set<string>();
 
   add(id: string, expiryMs: number, waiting: number, openRecords: number): void {
     this.markets.set(id, {
       id, expiryMs, active: true, settled: false, waiting, nextId: waiting + openRecords, cursor: 0,
       completed: false, cleanedUpTo: 0,
     });
+    this.pending.add(id);
   }
 
-  // No settled market with unpaid records may leave the active set: nothing rediscovers it.
+  // Someone else settles and sweeps the market with the permissionless calls before the keeper
+  // sees it: it leaves the active set with its queue's walk unfinished.
+  sweptByOthers(id: string): void {
+    const m = this.markets.get(id)!;
+    m.settled = true;
+    m.active = false;
+  }
+
+  // No settled market with unpaid records may drop off the work list: nothing rediscovers it.
   private check(): void {
     for (const m of this.markets.values()) {
-      if (m.settled && !m.completed && !m.active) this.violations.push(m.id);
+      if (m.settled && !m.completed && !m.active && !this.pending.has(m.id)) this.violations.push(m.id);
     }
   }
 
@@ -578,6 +589,16 @@ class ModelChain implements KeeperChain {
 
   async activeMarkets(): Promise<LaneMarket[]> {
     return [...this.markets.values()].filter((m) => m.active).map((m) => ({ id: m.id, expiryMs: m.expiryMs }));
+  }
+
+  async pendingMarkets(): Promise<LaneMarket[]> {
+    return [...this.pending].map((id) => this.markets.get(id)!).map((m) => ({ id: m.id, expiryMs: m.expiryMs }));
+  }
+
+  async retire(marketId: string) {
+    this.calls.push(`retire ${marketId}`);
+    this.pending.delete(marketId);
+    this.check();
   }
 
   async settlementProgress(marketId: string) {
@@ -619,6 +640,8 @@ class ModelChain implements KeeperChain {
   async sweep(market: LaneMarket) {
     const m = this.markets.get(market.id)!;
     this.calls.push(`sweep ${m.id}`);
+    // `rebalance_expiry_cash` aborts for a market no longer in the pool's accounting.
+    if (!m.active) throw new Error(`EUnknownExpiry ${m.id}`);
     if (m.settled) m.active = false;
     this.check();
   }
@@ -652,9 +675,48 @@ test("a market settles in order: try_settle, settle_step until the walk complete
     ...Array(7).fill("settle_step a"),
     "cleanup a 5",
     "sweep a",
+    "retire a",
   ]);
   const a = chain.markets.get("a")!;
   assert.deepEqual([a.settled, a.completed, a.active, a.cleanedUpTo], [true, true, false, 5]);
+  assert.deepEqual(chain.violations, []);
+});
+
+test("a market swept by someone else before the keeper saw it is still paid and cleaned up", async () => {
+  const chain = new ModelChain();
+  // One waiting order and two Open records; the market expires, and someone settles and sweeps
+  // it out of the active set before any keeper pass.
+  chain.add("a", 1_000, 1, 2);
+  chain.add("b", 60_000, 0, 1);
+  chain.now = 2_000;
+  chain.sweptByOthers("a");
+  assert.deepEqual((await chain.activeMarkets()).map((m) => m.id), ["b"]);
+
+  const tick = await settleAndFlush(chain);
+  assert.deepEqual(tick.settled.map((r) => [r.market.id, settleFailed(r)]), [["a", false]]);
+  // One DRAIN call, then a PAY call per record (the payout walk visits all three), then the
+  // cleanup. No sweep: it would abort.
+  assert.deepEqual(chain.calls, [...Array(4).fill("settle_step a"), "cleanup a 3", "retire a"]);
+  assert.deepEqual(chain.unpaid(), []);
+  assert.equal(chain.markets.get("a")!.cleanedUpTo, 3);
+  assert.deepEqual([...chain.pending], ["b"]);
+  assert.deepEqual(chain.flushes, [["b"]]);
+  assert.deepEqual(chain.violations, []);
+
+  // A failed payout keeps it listed, so a later tick (or a restarted keeper reading the same
+  // list) finishes it.
+  chain.add("c", 30_000, 0, 2);
+  chain.now = 40_000;
+  chain.sweptByOthers("c");
+  let failures = 1;
+  chain.failStep = (m) => m.id === "c" && m.cursor === 1 && failures-- > 0;
+  const failed = await settleExpired(chain);
+  assert.deepEqual(failed.map((r) => [r.market.id, settleFailed(r)]), [["c", true]]);
+  assert.equal(chain.pending.has("c"), true);
+  assert.deepEqual(chain.violations, []);
+  await settleExpired(chain);
+  assert.equal(chain.pending.has("c"), false);
+  assert.deepEqual(chain.unpaid(), []);
   assert.deepEqual(chain.violations, []);
 });
 
