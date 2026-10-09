@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { ObjectError } from "@mysten/sui/client";
 
 import { forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
 import { transactionClockTimestampMs } from "./grpcClock.js";
+import { objectLookupExists } from "./grpcObjects.js";
 import {
   providerBatchFromJson,
   providerBatchMessageBytes,
@@ -251,4 +253,19 @@ test("a queue-commit Lazer update carries the cohort's fixed-rate channel and τ
     sourceTimestampMs: tauMs,
   });
   assert.equal(realTime[payloadOffset + 12], 1);
+});
+
+test("an object lookup exists only for a live object, not for an error naming its ID", () => {
+  const id = `0x${"ab".repeat(32)}`;
+  // A missing object comes back as an ObjectError that still carries the requested ID.
+  const missing = new ObjectError("notExists", "object not found", { reason: "notFound", objectId: id });
+  assert.equal(objectLookupExists(missing), false);
+  assert.equal(objectLookupExists(new ObjectError("deleted", "deleted", { reason: "deleted", objectId: id })), false);
+  assert.equal(objectLookupExists({ objectId: id, version: "3", digest: "d" }), true);
+  assert.equal(objectLookupExists(undefined), false);
+  // Any other lookup failure is not an answer either way.
+  assert.throws(
+    () => objectLookupExists(new ObjectError("INTERNAL", "boom", { reason: "unknown", objectId: id })),
+    /boom/,
+  );
 });

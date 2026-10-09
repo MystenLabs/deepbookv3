@@ -1,5 +1,9 @@
 // Pure readers for the delayed-execution queue events a harness transaction emits. Kept free
 // of runtime imports so the unit tests can exercise them without a localnet environment.
+//
+// The queue events are declared in `deepbook_predict_orders::queue_events`, and a fill also emits
+// Predict's `OrderMinted` or `LiveOrderRedeemed`. Events are matched by module and name, never
+// by the package a transaction called.
 
 export interface QueueEvent {
   type?: string;
@@ -7,7 +11,7 @@ export interface QueueEvent {
 }
 
 const named = (events: QueueEvent[] | undefined, name: string): QueueEvent[] =>
-  (events ?? []).filter((event) => event.type?.endsWith(`::order_events::${name}`));
+  (events ?? []).filter((event) => event.type?.endsWith(`::queue_events::${name}`));
 
 // The record a successful enqueue created, with the τ and fixed-rate channel its cohort waits
 // on. The fill price must be stamped exactly τ on that channel.
@@ -60,7 +64,7 @@ export function recordOutcome(events: QueueEvent[] | undefined, recordId: bigint
 // the only one that can hold it afterwards:
 // - a fill closing all of it leaves nothing to track;
 // - a partial fill leaves the remainder in the sell record, now Open;
-// - a refund (`refund_order`) reopens the sell record with the whole position;
+// - a refund reopens the sell record with the whole position;
 // - a sell still waiting holds the position until a later resolve fills or refunds it.
 // Tracking the closed source record instead would make the next sell abort `ERecordNotOpen`.
 export function heldAfterSell<Held extends { recordId: bigint; quantity: bigint }>(
@@ -90,29 +94,8 @@ function positionQuantity(position: any): bigint {
   return orderQuantity(BigInt(position?.order_id ?? 0));
 }
 
-// Whether one `try_settle` call moved the market's settlement forward: a refund-phase batch,
-// the settling transition, or a payout batch each emit at least one of these. A call that
-// emits none returned without progress (an observation still missing, or the walk already
-// complete), so a keeper loop stops instead of resubmitting it.
-const SETTLEMENT_PROGRESS_EVENTS = [
-  "::order_events::QueuedOrderRefunded",
-  "::config_events::MarketSettled",
-  "::order_events::QueueEscrowSwept",
-  "::order_events::OpenRecordSettled",
-  "::order_events::OpenRecordPayoutSkipped",
-  "::order_events::MarketPayoutsCompleted",
-];
-
-export function settlementMadeProgress(events: QueueEvent[] | undefined): boolean {
-  return (events ?? []).some((event) =>
-    SETTLEMENT_PROGRESS_EVENTS.some((suffix) => event.type?.endsWith(suffix)),
-  );
-}
-
-export function settlementComplete(progress: {
-  settled: boolean;
-  payoutCursor: bigint;
-  nextId: bigint;
-}): boolean {
-  return progress.settled && progress.payoutCursor >= progress.nextId;
+// Whether a `try_settle` transaction settled the market: Predict emits `MarketSettled` once,
+// from the call that records the price. A call without it found no observation at expiry yet.
+export function marketSettledIn(events: QueueEvent[] | undefined): boolean {
+  return (events ?? []).some((event) => event.type?.endsWith("::config_events::MarketSettled"));
 }

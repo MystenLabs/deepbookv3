@@ -313,6 +313,8 @@ def _capture_objects(name: str, changes: list[dict], objects: dict[str, str | No
     elif name == "predict_orders":
         # The desk's `init` shares the deployment's one OrderDesk at publish.
         objects["order_desk"] = _created(changes, "desk::OrderDesk")
+        # Shared next to the desk; each market's queue ID derives from it.
+        objects["queue_registry"] = _created(changes, "desk::QueueRegistry")
 
 
 def publish_closure(

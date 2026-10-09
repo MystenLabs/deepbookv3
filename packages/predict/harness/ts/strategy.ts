@@ -9,10 +9,11 @@
 // bookkeeping + trace), and low-level submitMint (build + submit only) for strategies that
 // need raw control (e.g. the adversarial probe sending a deliberately-over-cap order).
 //
-// Trading is queued (delayed execution): a mint or early sell is enqueued, then filled at its
-// τ by a commit of the Pyth price for τ plus a resolve. Both are permissionless, so the trader
-// fills its own order: it waits for τ, signs the updater's latest spot for τ with the local
-// Pyth signer, and commits and resolves in one PTB. A held position is an Open queue record.
+// Trading is queued (delayed execution) in the order-flow companion, `deepbook_predict_orders`:
+// a mint or early sell is enqueued in the market's queue, then filled at its τ by a commit of
+// the Pyth price for τ plus a resolve. Both are permissionless, so the trader fills its own
+// order: it waits for τ, signs the updater's latest spot for τ with the local Pyth signer, and
+// commits and resolves in one PTB. A held position is an Open queue record.
 import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
@@ -35,9 +36,10 @@ import {
 } from "../../devtools/ts/runtime.js";
 
 const SCALE = 1_000_000_000n;
-// `expiry_market::ERecordNotOpen` / `ENotRecordOwner`: the held record no longer holds a
-// sellable position (filled away, settled, or moved), so stale local state is terminal.
-const TERMINAL_REDEEM_ABORTS = new Set(["expiry_market:22", "expiry_market:23"]);
+// `queue::ERecordNotOpen` / `ENotRecordOwner`, and `order_queue::ERecordNotOpen` for a record the
+// book no longer holds Open: the held record no longer holds a sellable position (filled away,
+// settled, or moved), so stale local state is terminal.
+const TERMINAL_REDEEM_ABORTS = new Set(["queue:9", "queue:10", "order_queue:0"]);
 // Commit once the updater has had time to land the τ price, and resolve a bounded batch
 // (resolve visits at most this many records, finished ones included).
 const FILL_DELAY_MS = 150;
@@ -100,19 +102,19 @@ export interface StrategyCtx {
   // low-level: enqueue a mint with explicit params and fill it at τ (no bookkeeping/trace) —
   // for probes. A guard refusal aborts the enqueue; a limit that fails only at τ refunds.
   submitMint(market: Mkt, p: MintLeg): Promise<QueuedFill>;
-  // low-level: the pre-cutover BATCH mint (N mint_exact_quantity calls in ONE PTB) behind the
-  // capacity and cleanup measurements. Unavailable after the delayed-execution cutover, which a
-  // fresh localnet publish starts past: it throws instead of submitting, so those strategies fail
-  // with that reason until they are redesigned around queued orders.
+  // low-level: the retired BATCH mint (N mint_exact_quantity calls in ONE PTB) behind the
+  // capacity and cleanup measurements. `mint_exact_quantity` aborts at any watermark, so this
+  // throws instead of submitting, and those strategies fail with that reason until they are
+  // redesigned around queued orders.
   submitMintBatch(market: Mkt, legs: MintLeg[], meta?: Record<string, unknown>): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
 
   // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
   // position on THIS account, and return + trace the full gas breakdown (net < 0 ⇒ the cleaner
-  // is paid). Requires the market settled — gate on isSettled first. After the cutover an
-  // account holds no position (try_settle pays Open queue records), so only the cleanup
-  // strategy, which still needs a queued-flow redesign, calls it.
+  // is paid). Requires the market settled — gate on isSettled first. A queued fill never enters
+  // the account (the queue's settle_step pays Open records), so only the cleanup strategy, which
+  // still needs a queued-flow redesign, calls it.
   cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nSettled: number }>;
   isSettled(marketId: string): Promise<boolean>; // devInspect expiry_market::is_settled
 
@@ -253,7 +255,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
 
     async submitMintBatch() {
       throw new Error(
-        "submitMintBatch: the pre-cutover batch mint aborts after the delayed-execution cutover; this strategy needs a queued-flow redesign",
+        "submitMintBatch: the batch mint is retired by delayed execution; this strategy needs a queued-flow redesign",
       );
     },
 

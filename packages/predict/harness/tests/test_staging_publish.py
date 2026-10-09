@@ -424,6 +424,35 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--with-unpublished-dependencies", args)
             self.assertNotIn("--publish-unpublished-deps", args)
 
+    def test_failed_publish_reports_the_sui_error_line(self) -> None:
+        # sui prints an execution failure as a plain line whose payload is in braces, so the
+        # lenient JSON slice is not JSON. The error must name the failure, not a decode error.
+        error_line = (
+            "Error executing transaction 'GLV5PZvzKwbDAsrsppmNh9uFzVF4yTczHVi3vCDrzdbc': "
+            "MovePackageTooBig { object_size: 139004, max_object_size: 102400 } in command 0"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            package = workspace / "packages" / "predict"
+            package.mkdir(parents=True)
+            response = subprocess.CompletedProcess(
+                args=[], returncode=1, stdout=error_line, stderr=""
+            )
+
+            with (
+                mock.patch.object(publish.suicli, "run", return_value=response),
+                self.assertRaisesRegex(publish.suicli.SuiError, "MovePackageTooBig"),
+            ):
+                publish._test_publish(
+                    root / "client.yaml",
+                    workspace,
+                    package,
+                    root / "Pub.sim.toml",
+                    config.GAS_BUDGET,
+                )
+
+
 class LocalnetQueryTests(unittest.TestCase):
     def test_balance_unwraps_the_cli_coin_list(self) -> None:
         # `sui client balance --json` returns [coin_entries, has_more] — the coin list is the FIRST
@@ -580,6 +609,7 @@ class LifecycleTests(unittest.TestCase):
 
         metadata = {
             "strategies": {strategy: strategy_metadata},
+            "disabled": {},
             "cadences": [],
         }
         with contextlib.ExitStack() as patches:
@@ -708,6 +738,7 @@ class LifecycleTests(unittest.TestCase):
             name: f"0x-{name}"
             for name in (
                 "predict",
+                "predict_orders",
                 "account",
                 "fixed_math",
                 "block_scholes_oracle",
@@ -724,6 +755,8 @@ class LifecycleTests(unittest.TestCase):
                 "admin_cap",
                 "protocol_config",
                 "pool_vault",
+                "order_desk",
+                "queue_registry",
                 "account_registry",
                 "account_admin_cap",
                 "bs_signer_registry",
@@ -762,7 +795,11 @@ class LifecycleTests(unittest.TestCase):
             env_path = instance / ".env.localnet"
 
             self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
-            self.assertIn("LOCAL_BS_SIGNER_PRIVATE_KEY=bs-secret", env_path.read_text())
+            env_text = env_path.read_text()
+            self.assertIn("LOCAL_BS_SIGNER_PRIVATE_KEY=bs-secret", env_text)
+            self.assertIn("ORDERS_PACKAGE_ID=0x-predict_orders", env_text)
+            self.assertIn("ORDER_DESK_ID=0x-order_desk", env_text)
+            self.assertIn("QUEUE_REGISTRY_ID=0x-queue_registry", env_text)
             self.assertNotIn("local_pyth", deployment)
 
     def test_cleanup_instances_keeps_active_slot_and_removes_orphan(self) -> None:
@@ -929,6 +966,21 @@ class LifecycleTests(unittest.TestCase):
             )
         )
 
+    def test_campaign_refuses_a_disabled_strategy_with_its_reason(self) -> None:
+        # A disabled strategy is absent from the runnable metadata, but the campaign names the
+        # reason instead of calling it unknown.
+        error = live._campaign_validation_error(
+            ["mint-only", "capacity-single"],
+            timeout=10,
+            strat_meta={"mint-only": {"maxOps": 10}},
+            capacity=2,
+            disabled={"capacity-single": "disabled pending a queued-flow redesign"},
+        )
+
+        self.assertEqual(
+            error, "strategy capacity-single is disabled pending a queued-flow redesign"
+        )
+
     def test_campaign_rejects_unknown_and_duplicate_strategies(self) -> None:
         metadata = {"mint-only": {"maxOps": 10}}
 
@@ -961,18 +1013,21 @@ class LifecycleTests(unittest.TestCase):
 
         self.assertIn("above the configured capacity 1", error)
 
-    def test_strategy_metadata_is_environment_free_and_carries_capacity_budget(self) -> None:
+    def test_strategy_metadata_is_environment_free_and_lists_disabled_strategies(self) -> None:
         with mock.patch.dict(os.environ, {"INSTANCE_DIR": ""}, clear=False):
             metadata = live._read_meta()
 
+        # Only the queued-flow strategies run. The capacity and cleanup profiles build books
+        # with batched immediate mints, which delayed execution retired.
+        self.assertEqual(sorted(metadata["strategies"]), ["fuzz", "mint-only", "mixed-churn"])
         self.assertEqual(
-            metadata["strategies"]["capacity-single"]["gasBudget"],
-            50_000_000_000,
+            sorted(metadata["disabled"]),
+            ["capacity-pool", "capacity-single", "capacity-tree", "cleanup-survivor"],
         )
-        self.assertLess(
-            metadata["strategies"]["capacity-single"]["gasBudget"],
-            live.GAS_REFILL_FLOOR,
-        )
+        for reason in metadata["disabled"].values():
+            self.assertIn("queued-flow redesign", reason)
+        for strategy in metadata["strategies"].values():
+            self.assertLess(strategy["gasBudget"], live.GAS_REFILL_FLOOR)
         self.assertEqual(
             metadata["cadences"],
             [

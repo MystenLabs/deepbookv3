@@ -3,8 +3,9 @@
 // settles markets, flushes LP requests, and rolls the cadence. The "conditional cron" is off-chain: each tick reconciles
 // the active market set from CHAIN (plp::active_expiry_markets) and assembles the due PTBs.
 // Queued orders are filled by the traders that place them (commit and resolve are
-// permissionless); the keeper funds their cash need and drives settlement's refund and payout
-// phases to completion.
+// permissionless). The keeper creates each market's queue, funds the orders' cash need, and
+// drives settlement to completion: Predict's try_settle, then the queue's settle_step until its
+// refund and payout phases finish, then cleanup and the sweep.
 //
 // Reconciling from chain (not an in-memory list) is what makes the keeper crash/restart
 // safe: a lost create response or a restart can never desync the flush set from
@@ -13,28 +14,38 @@
 // keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint), so a BS
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
+import { readFileSync } from "node:fs";
+
 import { CADENCES } from "./predictConfig.js";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
-import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
+import { type Feeds, bootstrapPool, createMarket, ensureMarketQueue, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
 import { type KeeperChain, type SettleResult, settleAndFlush, settleFailed } from "./keeperLanes.js";
 import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { aggregateNetGasOf, appendTrace, errorTag, legComputationsOf, maxComputationOf } from "./trace.js";
 import {
+  CLEANUP_BATCH,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  cleanupQueueTx,
   clockTimestampMs,
   execute,
   executeAndWait,
   fundAddressUsdcTx,
   keeperFlushTxs,
-  keeperSettleTx,
+  keeperTrySettleTx,
+  objectExists,
   readActiveMarketIds,
+  readCreatedMarkets,
+  readOpenRecordIds,
+  payOpenTx,
   readMarketExpiry,
   readSettlementProgress,
   readValuationInProgress,
+  deriveMarketQueueId,
   rebalanceExpiryCashTx,
+  settleStepTx,
 } from "../../devtools/ts/runtime.js";
 
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
@@ -46,6 +57,7 @@ const CADENCE_IDS = Object.keys(CADENCES)
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
 const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
+const WORKLIST_PATH = `${requiredEnv("INSTANCE_DIR")}/keeper-worklist.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_USDC = BigInt(requiredEnv("TRADER_USDC"));
 
@@ -60,6 +72,38 @@ let consecutiveSettleDefers = 0; // ticks in a row with an unsettled expired mar
 // successful rebalance, removed when the market settles; any active market not in here is retried
 // each tick (a roll whose rebalance failed, or one picked up from chain after a restart).
 const funded = new Set<string>();
+// Markets whose queue is known to exist. A market picked up from chain after a restart is
+// checked, and its queue created, before it is funded and advertised.
+const queued = new Set<string>();
+// The durable settlement work list: every market with a queue whose settlement (payout walk,
+// cleanup, and sweep) has not finished, kept on disk and rebuilt from events at start. The active
+// set alone is not enough, because anyone can sweep a settled market out of it first.
+const worklist = new Map<string, number>();
+
+function persistWorklist(): void {
+  atomicWriteFile(WORKLIST_PATH, JSON.stringify([...worklist].map(([id, expiryMs]) => ({ id, expiryMs }))));
+}
+
+function listMarket(id: string, expiryMs: number): void {
+  if (worklist.get(id) === expiryMs) return;
+  worklist.set(id, expiryMs);
+  persistWorklist();
+}
+
+// Restore the list after a restart: the file, then every created market whose queue exists and
+// whose payout walk has not completed, which covers a market swept while the keeper was down.
+async function rebuildWorklist(): Promise<void> {
+  try {
+    for (const m of JSON.parse(readFileSync(WORKLIST_PATH, "utf8")) as Mkt[]) worklist.set(m.id, m.expiryMs);
+  } catch {
+    // First start, or a torn file: the events below rebuild it.
+  }
+  for (const m of await readCreatedMarkets()) {
+    if (worklist.has(m.id) || !(await objectExists(deriveMarketQueueId(m.id)))) continue;
+    if (!(await readSettlementProgress(m.id)).payoutsCompleted) worklist.set(m.id, Number(m.expiryMs));
+  }
+  persistWorklist();
+}
 
 async function expiryOf(marketId: string): Promise<number> {
   const cached = expiryCache.get(marketId);
@@ -87,22 +131,42 @@ function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
       for (const id of await readActiveMarketIds()) markets.push({ id, expiryMs: await expiryOf(id) });
       return markets;
     },
+    pendingMarkets: async () => [...worklist].map(([id, expiryMs]) => ({ id, expiryMs })),
+    retire: async (marketId) => {
+      if (worklist.delete(marketId)) persistWorklist();
+    },
     settlementProgress: readSettlementProgress,
-    settlePhase: async (m, sweep) => {
+    trySettle: async (m) => {
       let price = prices.get(m.id);
       if (price === undefined) {
         price = await fetchExactSpot1e9(m.expiryMs);
         prices.set(m.id, price);
       }
       const r = await executeAndWait(
-        keeperSettleTx({
+        keeperTrySettleTx({
           pythFeedId: feeds.pythFeedId, bsValueStoreId: feeds.bsValueStoreId, expiryMs: BigInt(m.expiryMs), price,
-          marketId: m.id, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, sweep,
+          marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID,
         }),
-        sweep ? "settle-sweep" : "settle",
+        "settle",
       );
       return r.events;
     },
+    settleStep: (m) => executeAndWait(settleStepTx({ marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID }), "settle-step"),
+    openRecords: (m, nextId) => readOpenRecordIds(m.id, nextId),
+    payOpen: (m, recordId) =>
+      executeAndWait(payOpenTx({ marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID, recordId }), "pay-open"),
+    cleanup: async (m, nextId) => {
+      for (let first = 0n; first < nextId; first += BigInt(CLEANUP_BATCH)) {
+        const recordIds: bigint[] = [];
+        for (let id = first; id < nextId && id < first + BigInt(CLEANUP_BATCH); id++) recordIds.push(id);
+        await executeAndWait(cleanupQueueTx({ marketId: m.id, recordIds }), "queue-cleanup");
+      }
+    },
+    sweep: (m) =>
+      executeAndWait(
+        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
+        "settle-sweep",
+      ),
     flush: (marketIds) =>
       execute(
         keeperFlushTxs({ feeds, marketIds, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
@@ -122,7 +186,7 @@ function traceSettlements(results: SettleResult[], straggler: boolean): string {
       const message = result.error instanceof Error ? result.error.message.slice(0, 100) : result.error;
       console.warn(`[keeper] settle deferred ${m.id.slice(0, 10)}: ${message}`);
     } else {
-      expiryCache.delete(m.id); funded.delete(m.id); // swept off-chain; forget
+      expiryCache.delete(m.id); funded.delete(m.id); queued.delete(m.id); // swept off-chain; forget
       appendTrace("keeper", {
         type: "settle", market: m.id, expiryMs: m.expiryMs, phases: result.phases,
         ...(straggler ? { straggler: true } : {}),
@@ -214,9 +278,15 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
 
   // 2. Fund: rebalance every live market each tick. The live target covers the queued orders'
   //    cash need, so this is what funds their fills, and it also retries a roll whose rebalance
-  //    failed or a market picked up from chain after a restart. Isolated per market.
+  //    failed or a market picked up from chain after a restart. A market is funded, and so
+  //    advertised, only once its queue exists. Isolated per market.
   for (const m of live) {
     try {
+      if (!queued.has(m.id)) {
+        await ensureMarketQueue(m.id);
+        queued.add(m.id);
+        listMarket(m.id, m.expiryMs);
+      }
       await executeAndWait(
         rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
         "rebalance",
@@ -241,6 +311,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
         if (Number(expiryMs) !== expectedExpiry) {
           throw new Error(`keeper cadence schedule drift c${c}: expected ${expectedExpiry}, created ${expiryMs}`);
         }
+        queued.add(marketId); // createMarket creates the queue with the market
+        listMarket(marketId, Number(expiryMs));
         await executeAndWait(
           rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
           "rebalance",
@@ -265,6 +337,7 @@ async function main() {
   // Traders run the cleanout strategy's permissionless settled redeems, which need the allowlist.
   const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS, TRADER_ADDRESSES);
   await bootstrapPool(poolValuationCapId);
+  await rebuildWorklist();
   for (const addr of TRADER_ADDRESSES) {
     await executeAndWait(fundAddressUsdcTx(addr, TRADER_USDC), `fund-trader-${addr.slice(0, 8)}`);
   }
