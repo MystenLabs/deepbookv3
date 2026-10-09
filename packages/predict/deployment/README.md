@@ -65,6 +65,67 @@ The `issue-caps` command transfers the original setup `MarketLifecycleCap` and `
 
 Each deployment has one recorded handoff recipient. Repeating the command verifies its original receipt, ownership and allowlists without submitting another transfer. Changing recipient after an in-flight or completed transfer fails closed, including when the transaction succeeded but the ownership read failed. Journals from the former duplicate-pair workflow are rejected rather than treated as single-pair deployments. Handoff does not regenerate the configuration snapshot.
 
+## Upgrade an existing deployment to version 4
+
+`upgrade_v4.ts` runs the on-chain steps of the first rollout on a deployment that is already live, with trading paused throughout:
+
+1. Publish `deepbook_predict_math`.
+2. Upgrade Predict with its UpgradeCap (Testnet package version 4 to 5, Mainnet 3 to 4), linked to the library. Its logical version is 4.
+3. Publish `deepbook_predict_orders`. The journal records its OrderDesk and its publish checkpoint.
+4. One admin transaction with Predict's AdminCap: `protocol_config::set_order_flow<OrderFlow>(true)`, then `desk::set_order_fee` with the launch fee read from the desk, then `protocol_config::add_flush_operator` for the market keeper's signer unless it already is one. Its receipt must carry the enabling `OrderFlowUpdated` and one `DelayedExecutionPolicyUpdated` naming the desk with the launch policy.
+5. `queue::create_and_share` for every unexpired market in `plp::active_expiry_markets`, up to 50 per transaction. A market whose derived queue already exists is recorded, not created again.
+6. Upgrade Sessions with its UpgradeCap, linked to Predict and the companion.
+7. With `--cutover`: create the queues of markets opened since step 5, then bump Predict's watermark to 4 and Sessions' to 3 in one transaction.
+8. With `--reopen`, after the cutover: unpause trading.
+
+The run stops after step 6 until `--cutover`, so the keepers, indexer, servers, and SDK move to the printed IDs first. The indexer's first checkpoint is the Predict upgrade's, which the run also prints. The Testnet gas measurement sits between `--cutover` and `--reopen`. The steps outside the chain, the monitoring and registry registrations and the service moves, are not part of this command.
+
+### Inputs
+
+- `--network localnet|testnet|mainnet` and `--sender <address>`, the address that holds the four capabilities.
+- `--flush-operator <address>`, the market keeper's signer. Version 4's `finish_flush` admits only flush operators, and Predict before version 4 has no such allowlist. The Testnet market keeper signs as `0xff241a369609060d3f34828b97a47a2d330644615ff57dfdd49f4f0dd299207f`.
+- Testnet and Mainnet read the integration manifest (`deployment.<network>.json`) for the Predict and Sessions original IDs, `ProtocolConfig`, `PoolVault`, and `SessionsConfig`, and each package's `Published.toml` for its current package, version, and UpgradeCap. The AdminCap and SessionsAdminCap are the sender's one object of each type, or `--admin-cap` and `--sessions-admin-cap`.
+- A localnet passes `--manifest` (the same fields), `--pubfile` (its ephemeral publication file), and `--workspace` (the staged packages the harness published, with the version 4 sources staged in place).
+- `SUI_BINARY` selects a release 1.80.1 CLI, `SUI_CLIENT_CONFIG` the client configuration, whose environment named after the network is used without changing the active one. `PACKAGE_GAS_BUDGET` (default 5 SUI) and `TRANSACTION_GAS_BUDGET` (default 1 SUI) cap each transaction and are journal bindings. Gas comes from the sender's coins when they cover the budget, and otherwise from its address balance.
+
+The preflight, which runs before every step and is the default, requires trading paused, Predict not frozen, Predict's watermark below 4 and Sessions' below 3, the UpgradeCaps owned by the sender and recording the expected package versions, both admin caps owned by the sender, and no existing publication record for the two new packages. Testnet and Mainnet also require a clean tree at the recorded source commit, apart from the four packages' `Published.toml` records, which the run writes after each publish or upgrade lands. Commits that only record publications may follow during a rollout.
+
+### Testnet
+
+Pause trading first. The preflight refuses an unpaused deployment.
+
+```sh
+cd packages/predict
+corepack npm exec -- tsx deployment/upgrade_v4.ts --network testnet --sender <address> --flush-operator <keeper-signer>
+corepack npm exec -- tsx deployment/upgrade_v4.ts --network testnet --sender <address> --flush-operator <keeper-signer> --execute
+corepack npm exec -- tsx deployment/upgrade_v4.ts --network testnet --sender <address> --flush-operator <keeper-signer> --execute --cutover
+corepack npm exec -- tsx deployment/upgrade_v4.ts --network testnet --sender <address> --flush-operator <keeper-signer> --execute --reopen
+```
+
+`--execute` signs with the active keystore address, which must be `--sender`. Each transaction is built, dry-run with checks, and journaled with its digest before it is signed. Package transactions come from `sui client publish|upgrade --build-env <network> --serialize-unsigned-transaction` on a staged copy of the committed sources, and the run checks that each one publishes to the sender or upgrades the recorded package through the recorded cap.
+
+### Mainnet
+
+Mainnet is never signed here. `--emit-unsigned` writes the next transaction for the multisig to `deployment.mainnet.upgrade-v4/<n>-<step>.json`, with its unsigned bytes, its gas-independent transaction kind, its digest, its commands, a normalized program, and the dry run, then stops:
+
+```sh
+corepack npm exec -- tsx deployment/upgrade_v4.ts --network mainnet --sender <multisig> --flush-operator <keeper-signer> --emit-unsigned
+```
+
+Execute it from the multisig and run the same command again. It records the transaction once it lands, writes the publication record, and emits the next step. If the multisig rebuilt the transaction, name what it executed with `--executed <step>=<digest>`: the run accepts it only from the sender and only when it runs the emitted program. `--cutover` and `--reopen` gate steps 7 and 8 the same way.
+
+### Localnet
+
+The harness stages and publishes the closure into an instance with its own publication file, so a localnet upgrade compiles in that workspace with `sui client test-publish|test-upgrade --build-env testnet --pubfile-path <pubfile>` and records each publication in the pubfile. Stage the version 4 `predict_math`, `predict`, `predict_orders`, and `sessions` sources over the workspace's packages with the harness's dependency rewrites first.
+
+```sh
+SUI_CLIENT_CONFIG=<instance>/localnet/client.yaml corepack npm exec -- tsx deployment/upgrade_v4.ts --network localnet --sender <address> --flush-operator <address> --manifest <instance>/deployment.localnet.json --pubfile <instance>/Pub.sim.toml --workspace <instance>/workspace --execute --cutover --reopen
+```
+
+### Journal and recovery
+
+`deployment.<network>.upgrade-v4.state.json` (beside the publication file on a localnet) is the mode-`0600`, gitignored journal. It binds the network, chain, sender, flush operator, signing mode, CLI binary, RPC, client configuration, and gas budgets, and records the preflight baseline, each step's digest, the new package IDs, the desk, both checkpoints, each market's queue, and the last read-back. A transaction whose submission returned no answer stays in flight under its digest. The next run reconciles it on chain and never rebuilds it. Every run re-reads that trading is still paused and the admin caps are still the sender's, and ends by reading back what the completed steps promise: each package's version, linkage, publication record, and UpgradeCap, the desk's launch policy and floor, the allowlisted witness and its policy event, the flush operator, a queue bound to the desk for every live market, the watermarks after the cutover, and trading open after the reopen. The S-9 rehearsal ran this sequence on a localnet started from the version 3 closure with a live market and an instant-trade position.
+
 ## Recovery and artifacts
 
 `deployment.<network>.state.json` is the mode-`0600`, gitignored schema-7 operator journal. Schema 7 adds the library and companion packages and each market's queue, so a journal from the earlier package plan is rejected rather than resumed. It contains execution/source bindings, transaction intents and receipts, package identities, bootstrap attribution, setup caps, and issuance records, but no keys. A repository-shared network lock prevents concurrent runs.
@@ -79,9 +140,9 @@ A new deployment writes integration schema 10 on Testnet and 11 on Mainnet. Both
 
 ```sh
 corepack npm run build
-node --import tsx --test deployment/deploy.test.ts
+node --import tsx --test deployment/deploy.test.ts deployment/upgrade_v4.test.ts
 python3 -m unittest discover -s deployment -p 'test_*.py'
 cargo test --locked --manifest-path deployment/bytecode/Cargo.toml
 ```
 
-Tests cover explicit targets, non-broadcasting defaults, source/package binding, identity validation, network publication history, recovery, both orchestration paths, interruption boundaries, native-USDC lock transaction and event validation, market resume, explicit recipient parsing, atomic cap handoff without minting, the package plan order, the desk record and its launch policy, the order-flow allowlist, per-market queue creation and resume, the flush-operator grants, the expected watermarks, single-pair allowlists, recipient binding across recovery, and manifest validation. These deterministic tests do not prove live dependency verification or the funded gas budget passes.
+Tests cover explicit targets, non-broadcasting defaults, source/package binding, identity validation, network publication history, recovery, both orchestration paths, interruption boundaries, native-USDC lock transaction and event validation, market resume, explicit recipient parsing, atomic cap handoff without minting, the package plan order, the desk record and its launch policy, the order-flow allowlist, per-market queue creation and resume, the flush-operator grants, the expected watermarks, single-pair allowlists, recipient binding across recovery, and manifest validation. The upgrade tests cover its explicit targets and signing modes, the pinned package versions, the step order and its gates, the preflight state, the journal bindings, the publication records of both kinds, the CLI's unsigned bytes and the package-program check, the admin, queue, watermark, and reopen transactions, the order-flow receipt, idempotent queue creation, resume without repetition, and the multisig program comparison. These deterministic tests do not prove live dependency verification or the funded gas budget passes.

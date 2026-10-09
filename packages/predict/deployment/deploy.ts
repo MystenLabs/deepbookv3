@@ -916,18 +916,18 @@ class DryRunFailure extends Error {
     }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-function requiredString(value: unknown, label: string): string {
+export function requiredString(value: unknown, label: string): string {
     if (typeof value !== "string" || value.length === 0) {
         throw new Error(`${label} is missing`);
     }
     return value;
 }
 
-function requiredObjectId(value: unknown, label: string): string {
+export function requiredObjectId(value: unknown, label: string): string {
     const raw = requiredString(value, label);
     const id = normalizeId(raw);
     if (!OBJECT_ID.test(raw) || raw !== id) {
@@ -948,7 +948,7 @@ function exactKeys(
     }
 }
 
-function decimalString(value: unknown, label: string): string {
+export function decimalString(value: unknown, label: string): string {
     const raw = requiredString(value, label);
     if (!/^(0|[1-9][0-9]*)$/.test(raw)) throw new Error(`${label} is not an unsigned integer`);
     return raw;
@@ -1573,7 +1573,7 @@ function command(executable: string, args: string[]): string {
     }).trim();
 }
 
-function sha256(value: string | Buffer): string {
+export function sha256(value: string | Buffer): string {
     return createHash("sha256").update(value).digest("hex");
 }
 
@@ -1780,7 +1780,7 @@ function storePublishedMetadata(path: string, generated: string): void {
     }
 }
 
-function normalizeId(id: string): string {
+export function normalizeId(id: string): string {
     const hex = id.toLowerCase().replace(/^0x/, "");
     return `0x${hex.padStart(64, "0")}`;
 }
@@ -1798,7 +1798,7 @@ function isShared(owner: unknown): boolean {
     return "Shared" in asRecord(owner);
 }
 
-function addressOwner(owner: unknown): string | null {
+export function addressOwner(owner: unknown): string | null {
     return normalizeOptionalId(asRecord(owner).AddressOwner);
 }
 
@@ -1810,7 +1810,7 @@ function partyOwnerLabel(owner: string): string {
     return `party:${normalizeId(owner)}`;
 }
 
-function ownerLabel(owner: unknown): string {
+export function ownerLabel(owner: unknown): string {
     if (isShared(owner)) return "shared";
     const partyOwner = consensusAddressOwner(owner);
     if (partyOwner) return partyOwnerLabel(partyOwner);
@@ -2109,7 +2109,7 @@ function releaseLock(lock: LockHandle): void {
     rmSync(lock.path);
 }
 
-function stripYamlScalar(value: string): string {
+export function stripYamlScalar(value: string): string {
     const trimmed = value.trim();
     if (
         (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
@@ -2684,7 +2684,7 @@ function assertCliTarget(snapshot: ClientSnapshot): void {
     assertDeploymentTarget(environment, chainId, address);
 }
 
-function effectsError(effects: unknown): string | null {
+export function effectsError(effects: unknown): string | null {
     const status = asRecord(asRecord(effects).status);
     const state = status.status;
     if (state === "success" || status.success === true) return null;
@@ -2696,7 +2696,7 @@ async function shortChainId(client: SuiGrpcClient): Promise<string> {
     return toHex(fromBase58(chainIdentifier).slice(0, 4));
 }
 
-function coreReceipt(response: unknown): Receipt {
+export function coreReceipt(response: unknown): Receipt {
     const envelope = asRecord(response);
     const transaction = asRecord(envelope.Transaction ?? envelope.FailedTransaction);
     const effects = asRecord(transaction.effects);
@@ -2741,7 +2741,7 @@ function coreReceipt(response: unknown): Receipt {
     };
 }
 
-async function settledReceipt(
+export async function settledReceipt(
     client: SuiGrpcClient,
     digest: string,
     attempts = 24,
@@ -3140,7 +3140,7 @@ async function devInspect(runtime: Runtime, label: string, tx: Transaction): Pro
     return response;
 }
 
-function returnBytes(response: unknown, resultIndex = 0, returnIndex = 0): number[] {
+export function returnBytes(response: unknown, resultIndex = 0, returnIndex = 0): number[] {
     const results = asRecord(response).commandResults;
     if (!Array.isArray(results)) throw new Error("simulation response has no command results");
     const result = asRecord(results[resultIndex]);
@@ -3156,11 +3156,11 @@ function returnBytes(response: unknown, resultIndex = 0, returnIndex = 0): numbe
     throw new Error("simulation return is not byte-encoded");
 }
 
-function parseBool(bytes: number[]): boolean {
+export function parseBool(bytes: number[]): boolean {
     return bytes[0] === 1;
 }
 
-function parseU64(bytes: number[]): bigint {
+export function parseU64(bytes: number[]): bigint {
     if (bytes.length < 8) throw new Error(`invalid u64 return (${bytes.length} bytes)`);
     let value = 0n;
     for (let index = 7; index >= 0; index--) value = (value << 8n) + BigInt(bytes[index]);
@@ -3221,7 +3221,7 @@ function readUleb(bytes: number[], start: number): { value: number; next: number
     throw new Error("truncated ULEB128");
 }
 
-function parseIdVector(bytes: number[]): string[] {
+export function parseIdVector(bytes: number[]): string[] {
     const length = readUleb(bytes, 0);
     const ids: string[] = [];
     let offset = length.next;
@@ -4115,7 +4115,7 @@ export function enableOrderFlowTransaction(
 
 // The desk policy as a record of decimal strings, from the desk's `policy` field or the
 // `policy` of a `DelayedExecutionPolicyUpdated` event.
-function delayedExecutionPolicyRecord(value: unknown): DelayedExecutionPolicyRecord {
+export function delayedExecutionPolicyRecord(value: unknown): DelayedExecutionPolicyRecord {
     const policy = asRecord(value);
     return Object.fromEntries(
         Object.keys(EXPECTED_ORDER_DESK.policy).map((name) => [
@@ -4790,7 +4790,7 @@ function queueLabel(result: DeploymentResult, market: MarketRecord): string {
     return label.replace(/^create_market_/, "create_queue_");
 }
 
-function isObjectNotFound(error: unknown): boolean {
+export function isObjectNotFound(error: unknown): boolean {
     const reason = asRecord(error).reason;
     return reason === "notFound" || reason === "deleted";
 }
