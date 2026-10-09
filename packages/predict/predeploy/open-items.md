@@ -1,8 +1,24 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-17. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-10-08. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
+
+### S-9: The v4 upgrade sequence is not yet rehearsed end to end
+
+**Severity:** Deploy gate.
+
+The package-version 4 rollout spans three packages and three version floors, and its order is owned by [architecture](../docs/design/architecture.md#version-gating). The localnet rehearsal so far ran the version 3 closure, then published `deepbook_predict_math`, upgraded Predict, published `deepbook_predict_orders`, and upgraded Sessions. It did not run the `set_order_flow` and launch-fee admin transaction, queue creation on a market created under version 3, the watermark bumps, or any placement, commit, fill, refund, or settled payout on the upgraded closure. A dependent that misses its relink, or a step run out of order, stalls a queue after the bump (RP-45).
+
+**Action:** Before Mainnet, rehearse the whole sequence on localnet with published packages, from the version 3 closure through reopening trading, including a placement, a commit, a fill, a refund, and a settled payout through the upgraded companion and Sessions. Measure the full-batch gas on Testnet as the rollout's step 10 requires (DBU-892).
+
+### S-8: `deepbook_predict_orders` and `deepbook_predict_math` have no audit coverage
+
+**Severity:** Deploy gate.
+
+The [Predict audit skill](../../../.claude/skills/predict-audit/SKILL.md) is scoped to `predict`, `propbook`, and `account`. Its primer module map, its ownership-walk units, and its rule-sweep scopes name only those packages. `deepbook_predict_orders` holds every queued order's USDC escrow in its own records and controls the exits of the positions it holds. `deepbook_predict_math` builds `LazerPrice`, the only price a queued fill trusts, and evaluates the pricing math Predict calls. Neither is reached by the skill as written, and Predict's v4 audit predates the split.
+
+**Action:** Extend the audit skill's scope, primer, and workflows to both packages, or audit them separately, and audit the order-flow boundary between them and Predict before Mainnet.
 
 ### S-7: Mainnet publication verification and gas plan
 

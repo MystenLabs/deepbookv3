@@ -2,7 +2,7 @@
 
 This workflow publishes, wires, capitalizes, and verifies a Predict contract suite on an explicit Sui network. It does not deploy keepers or indexers. It creates one operational capability pair for setup; handoff of that same pair is a separate command with an explicit recipient.
 
-From package version 4, Predict depends on `deepbook_predict_math`, and the delayed-execution order flow lives in `deepbook_predict_orders`, which depends on Predict and which Sessions links. Moving an existing deployment to version 4 is a package upgrade, not this workflow: its publish, allowlist, queue-creation, relink, and watermark order is in [architecture](../docs/design/architecture.md#version-gating).
+From package version 4, Predict depends on `deepbook_predict_math`, and the delayed-execution order flow lives in `deepbook_predict_orders`, which depends on Predict and which Sessions links. Moving an existing deployment to version 4 is a package upgrade, not this workflow. [Architecture](../docs/design/architecture.md#version-gating) owns its order: the publishes and upgrades, the monitoring and registry registrations, the indexer start, the allowlist and launch-fee transaction, queue creation, the Sessions upgrade, the service moves, the watermark bumps, the Testnet gas measurement, and reopening trading.
 
 ## Execution gates
 

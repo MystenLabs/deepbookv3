@@ -19,7 +19,7 @@ Sui caps a package at 102,400 bytes, counting its modules, their names, the type
 | `deepbook_predict_orders` | Fresh | The shared `OrderDesk` with the delayed-execution policy, one `MarketQueue` per market, each queued order's escrow, every order entry point, the queue reads, and the queue events ([README](../../../predict_orders/README.md)) |
 | `deepbook_predict_math` | Fresh | Pure functions only: SVI evaluation and roll-down, the pricing-safe input checks, the fee curve, the inventory-impact potential, premium sizing, the builder fee, the cash-need formulas, the order-ID decode, and `LazerPrice` ([README](../../../predict_math/README.md)) |
 
-Dependencies point one way: `deepbook_predict_orders` → `deepbook_predict` → `deepbook_predict_math` → `fixed_math`, and the companion also depends on the library. Predict never names a companion type. Sessions depends on the companion and on Predict. The companion is trusted the way an app is: Predict serves its primitives only to an allowlisted witness type, and every primitive checks its own gates and the order's receipt when it runs (see [delayed execution](../concepts/delayed-execution.md#the-order-flow-boundary)). To fit the limit, Predict's package and private function names are capped at 12 characters. Public functions, structs, fields, and events keep their names.
+Dependencies point one way: `deepbook_predict_orders` → `deepbook_predict` → `deepbook_predict_math` → `fixed_math`, and the companion also depends on the library. Predict never names a companion type. Sessions depends on the companion and on Predict. The companion is trusted the way an app is: Predict serves its primitives only to an allowlisted witness type, and every primitive checks its own gates and the order's receipt when it runs (see [delayed execution](../concepts/delayed-execution.md#the-order-flow-boundary)). To fit the limit, Predict's package and private function names are capped at 12 characters, except about 49 that keep a longer name because they share an identifier with a public function or field, or with a dependency. Public functions, structs, fields, and events keep their names.
 
 ## Object taxonomy
 
@@ -248,15 +248,21 @@ Floors compare logical versions (`current_version!()`), not publication numbers.
 
 **Relink rule.** Before any Predict watermark bump, publish an upgrade of `deepbook_predict_orders` and of Sessions relinked to the new Predict, whether or not anything they call changed. A companion still linked to the retired version aborts on every call into Predict, the drain included, so its escrow and receipts are held until its relink is published, and a Sessions package linked to it aborts its queued wrappers.
 
-**First rollout (package version 4).** Trading stays paused throughout.
+**First rollout (package version 4), per network.** Trading stays paused (`trading_paused`) from before step 1 until step 11.
 
-1. Publish `deepbook_predict_math`.
-2. Upgrade Predict, linked to the library. Leave the watermark alone. No witness is allowlisted and admission refuses before the cutover, so nothing can be queued.
-3. Publish `deepbook_predict_orders`, linked to the new Predict and the library. Its `init` creates and shares the `OrderDesk` with the launch policy, so the desk ID comes from the publish transaction.
-4. As admin, allowlist the companion with `protocol_config::set_order_flow<OrderFlow>(true)`.
-5. Create a queue for every live market with `queue::create_and_share`.
-6. Upgrade Sessions, linked to the new Predict and the companion.
-7. Move the keeper, SDK, and indexer to the new IDs, then bump Predict's watermark to 4 (the cutover) and Sessions' to 3. The desk floor stays at 1.
+1. Publish `deepbook_predict_math` and register it in MVR. It emits no events.
+2. Upgrade Predict (Mainnet version 3 to 4, Testnet version 4 to 5), linked to the library, and register the new Predict version with transaction monitoring (Blockaid) right away. Leave the watermark alone. No witness is allowlisted and admission refuses before the cutover, so nothing can be queued.
+3. Publish `deepbook_predict_orders`, linked to the new Predict and the library. The `desk` module's `init` creates and shares the one `OrderDesk` with the launch policy. Record the desk ID and the publish checkpoint from that transaction. Register the companion's version 1 in Blockaid and MVR, and move both new UpgradeCaps to the Predict multisig.
+4. Start the indexer with `--first-checkpoint` at or before the companion's publish checkpoint, so it records `OrderFlowUpdated` and the policy event.
+5. In one admin transaction, allowlist the companion with `protocol_config::set_order_flow<deepbook_predict_orders::order_flow::OrderFlow>(true)`, then re-state the launch order fee with `desk::set_order_fee` (20,000, which is 0.02 USDC), so `DelayedExecutionPolicyUpdated` records the launch policy and the desk ID. The desk's `init` emits no event. Nothing can be placed before this transaction, because every Predict primitive the queue calls checks the allowlist.
+6. Create a queue for every live market with `queue::create_and_share(desk, market)`. The market keeper also backfills a missing queue for any unexpired market when it starts, and creates one for each new market. The fill keeper never creates queues.
+7. Upgrade Sessions (`current_version!()` 3), linked to the new Predict and the companion, and register Sessions version 3 in Blockaid.
+8. Move the services to the new IDs: the fill keeper, the market keeper, the indexer and servers, the SDK configuration, and the operations configuration, which gains the companion's package ID and the desk ID.
+9. Bump the watermarks: Predict's to 4 (the cutover) and Sessions' to 3. The desk floor stays at 1.
+10. Measure full-batch gas on Testnet before activating Mainnet (DBU-892): `settle_step` at its 450 drain and 900 payout batches, `resolve` and `refund` at their 450 cap, and a full 100-mint cohort resolved at the keeper's `resolve_max_orders`.
+11. Reopen trading.
+
+Types the v4 upgrade introduces, such as `OrderReceipt`, `OrderFlowUpdated`, and `ExpiryPnlRealized`, carry the v4 upgrade's package ID as their type origin. Predict's original types keep the original ID, and the companion's types carry the companion's own original ID.
 
 **Later upgrades.**
 
@@ -267,7 +273,7 @@ Floors compare logical versions (`current_version!()`), not publication numbers.
 | Library fix | Upgrade the library, then follow the Predict row, including both relinks |
 | Pyth Lazer format change | Upgrade the library with a new `LazerPrice` constructor, then follow the companion row. Predict is untouched |
 
-Before every bump, rehearse the exact sequence on localnet with published packages: a placement, a commit, a fill, a refund, and a settled payout through the relinked companion and Sessions.
+Before every bump, rehearse the exact sequence on localnet with published packages, including a placement, a commit, a fill, a refund, and a settled payout through the relinked companion and Sessions. The first rollout's rehearsal so far covered only the publishes and upgrades ([S-9](../../predeploy/open-items.md#s-9-the-v4-upgrade-sequence-is-not-yet-rehearsed-end-to-end)).
 
 ## Where this leads
 
