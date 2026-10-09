@@ -86,6 +86,7 @@ const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
 #[allow(unused_const)]
 const EMintCostAboveMaxPayout: u64 = 11;
+#[allow(unused_const)]
 const ENotSettledRedeemKeeper: u64 = 12;
 const EDelayedExecutionRequired: u64 = 13;
 const EOrderFailsLimits: u64 = 14;
@@ -753,8 +754,7 @@ public fun mint_exact_cost(
 }
 
 /// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
-/// Early sells of queue-held positions go through the order-flow companion;
-/// account-held positions exit through `redeem_settled` after settlement.
+/// Early sells of queue-held positions go through the order-flow companion.
 public fun redeem_live(
     _market: &mut ExpiryMarket,
     _wrapper: &mut AccountWrapper,
@@ -772,61 +772,37 @@ public fun redeem_live(
     abort EDelayedExecutionRequired
 }
 
-/// Redeem a settled order you hold account authority over.
-///
-/// The market must be settled already; this flow does not run live pricing.
-/// Explicit owner auth remains available when Predict app automation is deauthorized;
-/// another authorized app may also supply valid account auth.
+/// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
+/// A queued fill never enters the account; the order-flow companion pays its
+/// Open record at settlement. Positions the immediate mints left in accounts
+/// must be redeemed through an older package before the watermark bump.
 public fun redeem_settled(
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    order_id: u256,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &mut ExpiryMarket,
+    _wrapper: &mut AccountWrapper,
+    _auth: Auth,
+    _config: &ProtocolConfig,
+    _order_id: u256,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    market.chk_settled(config);
-    market.rdm_settled(
-        wrapper,
-        auth,
-        order_id,
-        root,
-        clock,
-        ctx,
-    )
+    abort EDelayedExecutionRequired
 }
 
-/// Redeem a settled order without account-owner authority, as an allowlisted keeper.
-///
-/// Despite the name, only a sender admin has added through
-/// `protocol_config::add_settled_redeem_keeper` may call this; the allowlist
-/// starts empty. The payout still goes to the order's account. This keeper path
-/// uses Predict app-auth from the account registry, so
-/// `deauthorize_app<PredictApp>` also disables it. Owners can still use
-/// `redeem_settled` with owner auth to redeem their own settled positions.
+/// Retired with `redeem_settled`: always aborts `EDelayedExecutionRequired`.
+/// The settled-redeem keeper allowlist on `ProtocolConfig` no longer gates any
+/// call.
 public fun redeem_settled_permissionless(
-    market: &mut ExpiryMarket,
-    account_registry: &AccountRegistry,
-    wrapper: &mut AccountWrapper,
-    config: &ProtocolConfig,
-    order_id: u256,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &mut ExpiryMarket,
+    _account_registry: &AccountRegistry,
+    _wrapper: &mut AccountWrapper,
+    _config: &ProtocolConfig,
+    _order_id: u256,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    market.chk_settled(config);
-    assert!(config.is_keeper(ctx.sender()), ENotSettledRedeemKeeper);
-    let auth = predict_account::generate_auth_as_app(account_registry);
-    market.rdm_settled(
-        wrapper,
-        auth,
-        order_id,
-        root,
-        clock,
-        ctx,
-    )
+    abort EDelayedExecutionRequired
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -1698,7 +1674,7 @@ fun assert_live_flow_allowed(
     // fallback would price the trade on the lower-frequency Block Scholes forward
     // and let it land on either side of the source switch. A gap in Pyth updates
     // therefore delays a live close as well as a mint; the position still exits
-    // through settlement and `redeem_settled`. Valuation reads (`current_nav`,
+    // through settlement. Valuation reads (`current_nav`,
     // `live_order_value`, the flush snapshot) do not pass through here and keep the
     // fallback, so the flush does not stall on a stale or unavailable Pyth spot,
     // and a client previewing a close through `live_order_value` gets a value
@@ -1706,6 +1682,7 @@ fun assert_live_flow_allowed(
     pricer.assert_pyth_spot_fresh(config.pricing_cfg(), clock);
 }
 
+#[test_only]
 fun chk_settled(market: &ExpiryMarket, config: &ProtocolConfig) {
     config.chk_version();
     config.chk_no_snap();
@@ -2210,6 +2187,7 @@ fun redeem_live_with_auth(
     replacement_order_id
 }
 
+#[test_only]
 fun rdm_settled(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -3381,6 +3359,29 @@ public fun redeem_live_for_testing(
         close_quantity,
         min_probability,
         min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+#[test_only]
+public fun redeem_settled_for_testing(
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    config: &ProtocolConfig,
+    order_id: u256,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(config.version_watermark() < constants::current_version!(), EDelayedExecutionRequired);
+    market.chk_settled(config);
+    market.rdm_settled(
+        wrapper,
+        auth,
+        order_id,
         root,
         clock,
         ctx,
