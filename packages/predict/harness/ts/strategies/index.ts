@@ -7,22 +7,30 @@ import fuzz from "./fuzz.js";
 import mintOnly from "./mintOnly.js";
 import mixedChurn from "./mixedChurn.js";
 
-const capacity = [
-  createCapacityStrategy("single"),
-  createCapacityStrategy("pool"),
-  createCapacityStrategy("tree"),
-];
-const cleanup = [createCleanupStrategy("survivor")];
-
 export const STRATEGIES: Record<string, Strategy> = {
   [fuzz.name]: fuzz,
   [mintOnly.name]: mintOnly,
   [mixedChurn.name]: mixedChurn,
-  ...Object.fromEntries(capacity.map((strategy) => [strategy.name, strategy])),
-  ...Object.fromEntries(cleanup.map((strategy) => [strategy.name, strategy])),
 };
 
+// The capacity and cleanup profiles build their books with batched immediate mints
+// (`submitMintBatch`), which delayed execution retired, so they are not registered. Their
+// modules stay for the queued-flow redesign. Selecting one fails with this reason instead of
+// running a strategy that can only fail.
+const DISABLED_REASON =
+  "disabled pending a queued-flow redesign: it builds its book with batched immediate mints, which delayed execution retired";
+export const DISABLED_STRATEGIES: Record<string, string> = Object.fromEntries(
+  [
+    createCapacityStrategy("single"),
+    createCapacityStrategy("pool"),
+    createCapacityStrategy("tree"),
+    createCleanupStrategy("survivor"),
+  ].map((strategy) => [strategy.name, DISABLED_REASON]),
+);
+
 export function getStrategy(name: string): Strategy {
+  const disabled = DISABLED_STRATEGIES[name];
+  if (disabled) throw new Error(`strategy '${name}' is ${disabled}`);
   const s = STRATEGIES[name];
   if (!s) throw new Error(`unknown strategy '${name}' (have: ${Object.keys(STRATEGIES).join(", ")})`);
   return s;

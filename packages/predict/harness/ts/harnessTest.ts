@@ -40,6 +40,7 @@ import {
 import { gridExpiries } from "./runnerConfig.js";
 import { pricingEnvFromSnapshot, type Snap } from "./strategyPricing.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
+import { DISABLED_STRATEGIES, STRATEGIES, getStrategy } from "./strategies/index.js";
 import { abortInfo } from "./trace.js";
 
 test("cadence scheduling treats window size as a time horizon and reserves higher-rank boundaries", () => {
@@ -760,4 +761,14 @@ test("a payout failure keeps the market active and holds the flush until a later
   await settleAndFlush(chain);
   assert.deepEqual(chain.unpaid(), []);
   assert.deepEqual(chain.violations, []);
+});
+
+test("the batch-mint strategies are unregistered and refused by name with the reason", () => {
+  assert.deepEqual(Object.keys(STRATEGIES).sort(), ["fuzz", "mint-only", "mixed-churn"]);
+  for (const name of ["capacity-single", "capacity-pool", "capacity-tree", "cleanup-survivor"]) {
+    assert.ok(DISABLED_STRATEGIES[name]);
+    assert.throws(() => getStrategy(name), /disabled pending a queued-flow redesign/);
+  }
+  assert.equal(getStrategy("fuzz").name, "fuzz");
+  assert.throws(() => getStrategy("missing"), /unknown strategy 'missing'/);
 });

@@ -609,6 +609,7 @@ class LifecycleTests(unittest.TestCase):
 
         metadata = {
             "strategies": {strategy: strategy_metadata},
+            "disabled": {},
             "cadences": [],
         }
         with contextlib.ExitStack() as patches:
@@ -963,6 +964,21 @@ class LifecycleTests(unittest.TestCase):
             )
         )
 
+    def test_campaign_refuses_a_disabled_strategy_with_its_reason(self) -> None:
+        # A disabled strategy is absent from the runnable metadata, but the campaign names the
+        # reason instead of calling it unknown.
+        error = live._campaign_validation_error(
+            ["mint-only", "capacity-single"],
+            timeout=10,
+            strat_meta={"mint-only": {"maxOps": 10}},
+            capacity=2,
+            disabled={"capacity-single": "disabled pending a queued-flow redesign"},
+        )
+
+        self.assertEqual(
+            error, "strategy capacity-single is disabled pending a queued-flow redesign"
+        )
+
     def test_campaign_rejects_unknown_and_duplicate_strategies(self) -> None:
         metadata = {"mint-only": {"maxOps": 10}}
 
@@ -995,18 +1011,21 @@ class LifecycleTests(unittest.TestCase):
 
         self.assertIn("above the configured capacity 1", error)
 
-    def test_strategy_metadata_is_environment_free_and_carries_capacity_budget(self) -> None:
+    def test_strategy_metadata_is_environment_free_and_lists_disabled_strategies(self) -> None:
         with mock.patch.dict(os.environ, {"INSTANCE_DIR": ""}, clear=False):
             metadata = live._read_meta()
 
+        # Only the queued-flow strategies run. The capacity and cleanup profiles build books
+        # with batched immediate mints, which delayed execution retired.
+        self.assertEqual(sorted(metadata["strategies"]), ["fuzz", "mint-only", "mixed-churn"])
         self.assertEqual(
-            metadata["strategies"]["capacity-single"]["gasBudget"],
-            50_000_000_000,
+            sorted(metadata["disabled"]),
+            ["capacity-pool", "capacity-single", "capacity-tree", "cleanup-survivor"],
         )
-        self.assertLess(
-            metadata["strategies"]["capacity-single"]["gasBudget"],
-            live.GAS_REFILL_FLOOR,
-        )
+        for reason in metadata["disabled"].values():
+            self.assertIn("queued-flow redesign", reason)
+        for strategy in metadata["strategies"].values():
+            self.assertLess(strategy["gasBudget"], live.GAS_REFILL_FLOOR)
         self.assertEqual(
             metadata["cadences"],
             [
