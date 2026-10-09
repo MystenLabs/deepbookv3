@@ -11,20 +11,21 @@ The package exists because Sui caps a package at 102,400 bytes, and Predict, whi
 | Object | Module | Holds | Created |
 | --- | --- | --- | --- |
 | `OrderDesk` | `desk` | The `DelayedExecutionPolicy` every queue runs under, and the companion's version floor | Once, by the `desk` module's `init` at publish, with the launch policy and no event. Its ID comes from the publish transaction |
-| `MarketQueue` | `queue` | One market's `OrderBook`: its records, cohort spans, counters, and payout cursor | `queue::create_and_share(desk, market)`, once per market, at the ID `queue::queue_id(desk_id, market_id)` derives from the desk and the market. Anyone can call it, the caller pays its storage, and a second call for the same market aborts |
-| `QueuedOrder` | `order_queue` | One record: its status, request, timing, escrow terms, position, committed price, and result, Predict's `OrderReceipt` for the order, and the order's own escrow `Balance<USDC>` | Each placement, in the queue's table |
+| `QueueRegistry` | `desk` | The parent every market's queue ID derives from, bound to the desk | Once, by the same `init`, next to the desk |
+| `MarketQueue` | `queue` | One market's `OrderBook`: its records, cohort spans, counters, and payout cursor | `queue::create_and_share(registry, desk, market)`, once per market, at the ID `queue::queue_id(registry_id, market_id)` derives from the registry and the market. Anyone can call it, the caller pays its storage, a second call for the same market aborts, and another desk's registry aborts `EWrongDesk` |
+| `QueuedOrder` | `order_queue` | One record: its status, request, timing, escrow terms, position, committed price, and result, Predict's `OrderReceipt` for the order, and the order's own escrow `Balance<USDC>`. Once finished, only funds parked for a denied receive address | Each placement, in the queue's table |
 
-Only queue creation takes the desk mutably, so trading never serializes on the desk. Calls on one market serialize on that market's queue.
+Every trading call reads the desk, and only the admin's policy setters write it. Queue creation writes the registry, which no trading call reads, so creating a queue never contends with trading. Calls on one market serialize on that market's queue.
 
 ## Modules
 
 | Module | Owns |
 | --- | --- |
 | `order_flow` | The witness `OrderFlow`, which Predict's allowlist names. This module is the only place it is built, through package-only wrappers around `admit_mint`, `admit_sell`, `commit`, and `try_fill`. It is never returned |
-| `desk` | `OrderDesk`, the policy setters, and the desk's version floor |
+| `desk` | `OrderDesk`, `QueueRegistry`, the policy setters, and the desk's version floor |
 | `delayed_execution_config` | `DelayedExecutionPolicy`, its launch values, its bounds, and its getters |
 | `order_queue` | `OrderBook` and its records, τ and deadline planning, the stuck check, cohort spans and counters, the status, kind, and reason codes, and the copyable `OrderView` that reads return |
-| `queue` | `MarketQueue` and every entry point: placement, commit, resolve, refunds, settlement, cleanup, and the reads |
+| `queue` | `MarketQueue` and every entry point: placement, commit, resolve, refunds, settlement, the deny-list catch-up calls, cleanup, and the reads |
 | `queue_events` | The queue and policy events |
 
 ## Entry points
@@ -34,16 +35,20 @@ Only queue creation takes the desk mutably, so trading never serializes on the d
 | `queue::enqueue_exact_quantity`, `enqueue_exact_amount`, `enqueue_exact_cost` | The account, through its `Auth`, or an authorized app such as Sessions | Places a queued mint, escrows its budget and order fee, and returns the record ID |
 | `queue::enqueue_redeem_open` | The account that owns the Open record | Places an early sell of an Open record and escrows the order fee |
 | `queue::commit` | Anyone | Attaches verified Pyth Lazer prices to the waiting cohorts they match |
-| `queue::resolve` | Anyone | Fills or refunds committed orders, at most 450 records per call |
-| `queue::refund` | Anyone | Refunds waiting orders at or past their deadline, at most 450 records per call |
+| `queue::resolve` | Anyone | Fills or refunds committed orders. Visits at most 450 records per call, a cap on events, so callers size `max_orders` from measured costs |
+| `queue::refund` | Anyone | Refunds waiting orders at or past their deadline, with the same 450-record cap |
 | `queue::admin_refund` | Predict's `AdminCap` | Refunds listed waiting orders at once |
 | `queue::settle_step` | Anyone, after expiry | Runs one bounded settlement phase: drain the unfinished orders, then pay the Open records |
-| `queue::cleanup` | Anyone, after settlement | Deletes finished records and keeps their storage rebate |
+| `queue::pay_open` | Anyone, after settlement | Pays one Open record the payout walk skipped, because market cash was short or its receive address was denied |
+| `queue::claim_parked` | Anyone | Sends a finished record's parked funds to its own receive address once that address is no longer denied |
+| `queue::cleanup` | Anyone, after settlement | Deletes finished records with nothing parked and keeps their storage rebate |
 | `queue::create_and_share` | Anyone | Creates a market's queue |
 | `desk::set_timing`, `set_limits`, `set_order_fee` | Predict's `AdminCap` | Change the policy, while Predict is not frozen |
 | `desk::bump_version_watermark` | Predict's `AdminCap` | Advances the desk floor to this package's compiled version |
 
-Reads: `queue::order`, `queue_id`, `queue_heads`, `payout_progress`, `waiting_cohorts`, `queue_stuck`, `pending_counts`, `waiting_orders`, `oldest_unfinished_tau_ms`, and `quote_redeem_open`, plus `desk::policy` and `desk::version_watermark`. A record holds a receipt and a balance and cannot be copied, so `queue::order` returns an `OrderView`.
+Every call that can send USDC (`resolve`, `refund`, `admin_refund`, `settle_step`, `pay_open`, `claim_parked`) takes Sui's shared `DenyList`, because Mainnet USDC is a regulated coin and Sui aborts a transaction that credits a denied address. This package never makes such a send: it parks the funds in the record or leaves the record Open for later ([denied recipients](../predict/docs/concepts/delayed-execution.md#denied-recipients)).
+
+Reads: `queue::order`, `queue_id`, `queue_heads`, `payout_progress`, `waiting_cohorts`, `queue_stuck`, `pending_counts`, `waiting_orders`, `oldest_unfinished_tau_ms`, and `quote_redeem_open`, plus `desk::policy`, `desk::version_watermark`, and `desk::registry_id`. A record holds a receipt and a balance and cannot be copied, so `queue::order` returns an `OrderView`.
 
 ## Trust boundary
 
@@ -74,7 +79,7 @@ Refunds and the settlement walk reach only Predict's `release` and `try_pay_sett
 
 `desk::current_version!()` is 1, and `OrderDesk.version_watermark` is the floor every entry point checks. `desk::bump_version_watermark` advances it to the running package's version, retiring older code of this package. It is the lever for a fix that touches only this package.
 
-This package runs the Predict and library versions it linked at publish. Before any Predict watermark bump, publish an upgrade of this package relinked to the new Predict, and relink Sessions too, whether or not anything they call changed. Otherwise every call into Predict aborts after the bump, the drain included, and escrow and receipts wait for the relink. The first rollout keeps trading paused throughout. It publishes the library, upgrades Predict, and publishes this package, recording the desk ID and the publish checkpoint. It starts the indexer at or before that checkpoint, then in one admin transaction allowlists the witness and re-states the launch order fee, so the policy event records the launch policy. It creates a queue for each live market, upgrades Sessions, moves the services to the new IDs, bumps the Predict and Sessions watermarks, measures full-batch gas on Testnet, and reopens trading. [Architecture](../predict/docs/design/architecture.md#version-gating) owns every step, including the monitoring and registry registrations.
+This package runs the Predict and library versions it linked at publish. Before any Predict watermark bump, publish an upgrade of this package relinked to the new Predict, and relink Sessions too, whether or not anything they call changed. Otherwise every call into Predict aborts after the bump, the drain included, and escrow and receipts wait for the relink. The first rollout pauses trading first and keeps it paused until the end. It publishes the library, upgrades Predict, and publishes this package, recording the desk and registry IDs and the publish checkpoint. It starts the indexer from the Predict upgrade's checkpoint. In one admin transaction it allowlists the witness, re-states the launch order fee so the policy event records the launch policy, and adds the market keeper's signer as a flush operator. It then creates a queue for each live market, upgrades Sessions, moves the services to the new IDs, bumps the Predict and Sessions watermarks, and reopens trading, and Testnet measures full-batch gas before Mainnet activates. `packages/predict/deployment/upgrade_v4.ts` runs it. [Architecture](../predict/docs/design/architecture.md#version-gating) owns every step, including the monitoring and registry registrations.
 
 `Move.toml` copies Predict's `[dep-replacements.mainnet]` block, so both packages resolve one dependency graph on Mainnet. Struct layouts, public signatures, events, and the status, kind, and reason codes freeze at this package's first Mainnet publish.
 

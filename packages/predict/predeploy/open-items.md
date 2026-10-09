@@ -4,11 +4,21 @@ Updated 2026-10-08. This is the live work register governed by the [predeploy li
 
 ## Deploy Gates
 
+### S-10: A denied LP recipient aborts the flush
+
+**Severity:** Deploy gate. Pre-existing on Mainnet.
+
+Mainnet USDC is a regulated coin, and Sui aborts any transaction that credits USDC to an address on its deny list, or to anyone while USDC is globally paused. The queued-order flow never makes such a send (RP-46), but the LP flush still does: `plp::finish_flush` drains the LP queues through `lp_book::drain`, which sends a withdrawal's payout (`lp_book.move` near line 563) and a refunded supply's escrow (near line 600) straight to the request's recipient. A request whose recipient is denied therefore makes the whole flush abort, which stops every LP fill until the request leaves the queue or the denial lifts. A global USDC pause does so for every queued request.
+
+**Workaround:** the operator starts the flush with the blocked queue's budget at `Some(0)`, which holds that queue while the other drains, and the request's owner can still cancel it.
+
+**Action:** decide a fix, for example parking the funds for a later claim as the queued-order flow does, and record the response in the register.
+
 ### S-9: The v4 upgrade sequence is not yet rehearsed end to end
 
 **Severity:** Deploy gate.
 
-The package-version 4 rollout spans three packages and three version floors, and its order is owned by [architecture](../docs/design/architecture.md#version-gating). The localnet rehearsal so far ran the version 3 closure, then published `deepbook_predict_math`, upgraded Predict, published `deepbook_predict_orders`, and upgraded Sessions. It did not run the `set_order_flow` and launch-fee admin transaction, queue creation on a market created under version 3, the watermark bumps, or any placement, commit, fill, refund, or settled payout on the upgraded closure. A dependent that misses its relink, or a step run out of order, stalls a queue after the bump (RP-45).
+The package-version 4 rollout spans three packages and three version floors, and its order is owned by [architecture](../docs/design/architecture.md#version-gating). The localnet rehearsal so far ran the version 3 closure, then published `deepbook_predict_math`, upgraded Predict, published `deepbook_predict_orders`, and upgraded Sessions. That publish-and-upgrade rehearsal passed on the code at `af9f7c37` and reruns on `d8fa6aa8`, the head that adds the deny-list handling and the `QueueRegistry`. It does not yet run the admin transaction (`set_order_flow`, the launch-fee re-statement, and the market keeper's flush-operator grant), queue creation on a market created under version 3, the watermark bumps, or any placement, commit, fill, refund, or settled payout on the upgraded closure. A dependent that misses its relink, or a step run out of order, stalls a queue after the bump (RP-45).
 
 **Action:** Before Mainnet, rehearse the whole sequence on localnet with published packages, from the version 3 closure through reopening trading, including a placement, a commit, a fill, a refund, and a settled payout through the upgraded companion and Sessions. Measure the full-batch gas on Testnet as the rollout's step 10 requires (DBU-892).
 

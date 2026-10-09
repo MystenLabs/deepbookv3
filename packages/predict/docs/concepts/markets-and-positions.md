@@ -124,7 +124,7 @@ Settlement records an exact Propbook spot at the market expiry: Pyth first on ev
 
 ### Settlement payout
 
-After expiry, the companion's `settle_step` first refunds every order still waiting, in bounded batches. Once the market is settled, later calls pay every Open record in bounded batches. A winning record is paid its full `quantity` in cash to its receive address, a losing record closes at zero, and each emits **`OpenRecordSettled`** with its payout. A record the market cannot pay stays Open and emits `OpenRecordPayoutSkipped`. `MarketPayoutsCompleted` marks the end of the walk. Anyone may call `settle_step`, and the fill keeper runs it until the walk completes. Afterwards anyone may `cleanup` the market's finished records and keep their storage rebate.
+After expiry, the companion's `settle_step` first refunds every order still waiting, in bounded batches. Once the market is settled, later calls pay every Open record in bounded batches. A winning record is paid its full `quantity` in cash to its receive address, a losing record closes at zero, and each emits **`OpenRecordSettled`** with its payout. A record the market cannot pay, or whose receive address is on USDC's deny list, stays Open and emits `OpenRecordPayoutSkipped`, and anyone can pay it later with `pay_open`. `MarketPayoutsCompleted` marks the end of the walk. Anyone may call `settle_step`, and the fill keeper runs it until the walk completes. Afterwards anyone may `cleanup` the market's finished records and keep their storage rebate.
 
 ### Settled redeem (positions from immediate mints)
 

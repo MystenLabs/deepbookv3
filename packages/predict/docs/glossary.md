@@ -174,7 +174,10 @@ in the order-flow companion package. See
   published, holding the delayed-execution policy and the companion's version
   floor. Code `deepbook_predict_orders::desk`.
 - **`MarketQueue`** — one market's queue in the companion, at an ID derived from
-  the desk and the market. Code `deepbook_predict_orders::queue`.
+  the `QueueRegistry` and the market. Code `deepbook_predict_orders::queue`.
+- **`QueueRegistry`** — the companion's shared parent of every market's queue
+  ID, created with the desk at publish. Queue creation writes it, and no
+  trading call reads it. Code `deepbook_predict_orders::desk::QueueRegistry`.
 - **`LazerPrice`** — a Pyth Lazer price that only `deepbook_predict_math` builds,
   and only from a Pyth-verified update, so holding one proves Pyth signed it.
   `commit` takes one. Code `lazer_price::LazerPrice`.
@@ -198,20 +201,21 @@ in the order-flow companion package. See
 - **Open record** — a filled order that stays in the market's queue, owned by
   the placing account and holding a live position in its open receipt. A
   queued fill never enters the account. It is sold with `enqueue_redeem_open`
-  or paid by `settle_step`. Code `order_queue::status_open`.
+  or paid by `settle_step` or `pay_open`. Code `order_queue::status_open`.
 - **Commit** — attaching Pyth's verified price stamped exactly τ (or, when the
   backup tick is switched on, the next tick of the cohort's channel) to a
   waiting cohort. Permissionless. Code `queue::commit`, which calls Predict's
   `expiry_market::commit` for each order.
 - **Resolve** — filling or refunding committed orders at their τ price from the
-  market's own cash, at most 450 records per call. Permissionless. Code
+  market's own cash, at most 450 records per call, a cap on events that does
+  not bound the objects a call loads. Permissionless. Code
   `queue::resolve`, which calls Predict's `try_fill` for each order.
 - **Settlement walk** — the companion's `settle_step`, which drains a market's
   unfinished orders and then pays its Open records after Predict's
   `try_settle`, one bounded phase per call. Permissionless.
 - **Refund reason** — why an order was refunded: limits (1), admission (2),
-  missing node (4), deadline (5), admin (7), or no cash (8), with 3 and 6
-  reserved. The order fee is kept for reasons 1 and 2 and returned otherwise.
+  missing node (4), deadline (5), admin (7), no cash (8), or recipient denied
+  (9), with 3 and 6 reserved. The order fee is kept for reasons 1 and 2 and returned otherwise.
   Code `order_queue::reason_*`.
 - **Spare cash** — market cash minus required cash.
 - **Cash need** — the most an order's fill could take out of spare cash.
@@ -224,7 +228,14 @@ in the order-flow companion package. See
 - **Stuck gate** — the check that refuses new orders while commits have stalled.
   Code `EQueueStuck`, `queue_stuck`.
 - **Cutover** — the version-watermark bump to Predict package version 4. It
-  opens admission. Code `ECutoverNotReached`.
+  opens admission, and stays fixed at 4 for later upgrades. Code
+  `constants::cutover_version`, `ECutoverNotReached`.
+- **Denied recipient** — an address Sui refuses to credit with USDC: on USDC's
+  deny list for the current epoch, or any address while USDC is globally
+  paused. The order flow never sends to one. Code `sui::deny_list::DenyList`.
+- **Parked funds** — a refund or change a finished record could not send to
+  its denied receive address, kept in the record until `claim_parked` sends
+  it. Code `RecordFundsParked`, `RecordFundsClaimed`.
 - **Relink** — publishing an upgrade of a package that depends on Predict, so it
   links the new Predict version. The companion and Sessions are relinked before
   every Predict watermark bump.

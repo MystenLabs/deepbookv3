@@ -106,6 +106,15 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
   batches, one phase per call, and never aborts because of a queued order. A
   record the market cannot pay stays Open (`OpenRecordPayoutSkipped`). Each
   batch fits Sui's 1,000 dynamic-field loads per transaction.
+- **No USDC send aborts.** No fill, fee, refund, or settled payout sends USDC
+  to an address on its deny list, or to anyone while USDC is globally paused.
+  A fill is refused (reason 9), a fee stays in market cash, a refund is parked
+  in its record, and a payout is skipped, so one denied address never stops a
+  market's walks. Parked funds and skipped payouts are paid only to the
+  record's own receive address (`claim_parked`, `pay_open`).
+- **Queue creation never contends with trading.** It writes the
+  `QueueRegistry`, which no trading call reads, and each market has exactly
+  one queue at the ID derived from the registry and the market.
 - **Exits need no authority.** Refunds and settled payouts go through `release`
   and `try_pay_settled`, which need no witness and check only the version
   floor, so they keep working while frozen and after the witness is disabled.

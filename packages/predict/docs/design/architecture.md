@@ -11,7 +11,7 @@ Two design commitments shape everything below; both are stated once here and ass
 
 ## Packages
 
-Sui caps a package at 102,400 bytes, counting its modules, their names, the type-origin table, and the linkage table. Predict can only grow by compatible upgrade, so from package version 4 its delayed-execution order flow and its pure pricing math live in two packages beside it. Predict version 4 measures 97,876 bytes.
+Sui caps a package at 102,400 bytes, counting its modules, their names, the type-origin table, and the linkage table. Predict can only grow by compatible upgrade, so from package version 4 its delayed-execution order flow and its pure pricing math live in two packages beside it. Predict version 4 measures 98,380 bytes.
 
 | Package | Published | Holds |
 | --- | --- | --- |
@@ -27,9 +27,9 @@ Sui distinguishes three object dispositions. Predict uses all three deliberately
 
 - **Shared objects** are usable by any transaction and passed by reference. Predict's protocol-wide and per-market state are shared so that any trader, LP, or keeper can interact with them.
 - **Owned objects** belong to a single address and can only be used by that address's transactions. Predict's capabilities are owned objects, which is how delegated authority is granted and held.
-- **Derived objects** are created at a deterministic address from a parent's `UID` plus a typed key (`derived_object::claim`). Predict derives `BuilderCode` from the registry's `UID`; the account package derives `AccountWrapper` / `Account` identities from its own `AccountRegistry`. The order-flow companion derives each market's `MarketQueue` from its `OrderDesk`, keyed by the market's ID.
+- **Derived objects** are created at a deterministic address from a parent's `UID` plus a typed key (`derived_object::claim`). Predict derives `BuilderCode` from the registry's `UID`; the account package derives `AccountWrapper` / `Account` identities from its own `AccountRegistry`. The order-flow companion derives each market's `MarketQueue` from its `QueueRegistry`, keyed by the market's ID.
 
-The protocol is constructed at package publish: the `registry` module's `init` creates and shares the `Registry`, creates and shares the `ProtocolConfig`, and transfers a single `AdminCap` to the deployer. The `plp` module's `init` registers the PLP coin type and creates and shares the `PoolVault`. Per-expiry `ExpiryMarket` objects are created later through a registry entrypoint. Publishing `deepbook_predict_orders` creates and shares its one `OrderDesk` in the `desk` module's `init`, and each market's `MarketQueue` is created later by a permissionless call. The oracle objects (`PythFeed`, `BlockScholesValueStore`, `BlockScholesSVIStore`) are external objects owned by the `propbook` package, not by Predict — the Pyth feed is created permissionlessly, while the Block Scholes store pair is created admin-gated, once per underlying.
+The protocol is constructed at package publish: the `registry` module's `init` creates and shares the `Registry`, creates and shares the `ProtocolConfig`, and transfers a single `AdminCap` to the deployer. The `plp` module's `init` registers the PLP coin type and creates and shares the `PoolVault`. Per-expiry `ExpiryMarket` objects are created later through a registry entrypoint. Publishing `deepbook_predict_orders` creates and shares its one `OrderDesk` and its `QueueRegistry` in the `desk` module's `init`, and each market's `MarketQueue` is created later by a permissionless call. The oracle objects (`PythFeed`, `BlockScholesValueStore`, `BlockScholesSVIStore`) are external objects owned by the `propbook` package, not by Predict — the Pyth feed is created permissionlessly, while the Block Scholes store pair is created admin-gated, once per underlying.
 
 ## Shared objects
 
@@ -40,7 +40,8 @@ The protocol is constructed at package publish: the `registry` module's `init` c
 | `PoolVault` | `plp` | Idle LP-owned USDC, protocol-reserve USDC, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply USDC escrow, withdraw PLP escrow) | package init |
 | `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree), embedded `ExpiryCash` USDC custody, EWMA gas-price stats, Propbook underlying ID, tick size, and, in a dynamic field its first queued order creates, the `OrderFlowLedger` of payout-tree pins and waiting cash need | per underlying and expiry |
 | `OrderDesk` | `deepbook_predict_orders::desk` | The delayed-execution policy and the companion's version floor | companion package init |
-| `MarketQueue` | `deepbook_predict_orders::queue` | One market's queued orders, each with Predict's receipt and its own escrow, the cohort spans, and the settlement payout cursor | per market, derived from the desk |
+| `QueueRegistry` | `deepbook_predict_orders::desk` | The parent each market's queue ID derives from, bound to the desk. Queue creation writes it, and no trading call reads it | companion package init |
+| `MarketQueue` | `deepbook_predict_orders::queue` | One market's queued orders, each with Predict's receipt and its own escrow, the cohort spans, and the settlement payout cursor | per market, derived from the registry |
 
 The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Propbook underlying ID and one `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair (the version watermark lives on `ProtocolConfig`, not here). It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in Predict app data attached to accounts. It records which Propbook underlyings Predict will build markets on and the cadence deployment policies used to create them; source IDs and canonical oracle object IDs live in `propbook`.
 
@@ -58,6 +59,8 @@ USDC is the protocol's settlement currency and has 6 decimals. Custody is partit
 - **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned USDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). USDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting account under owner auth — until the next flush drains them.
 
 Money flows in one shape. `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing. Traders' budgets and order fees flow from account custody into a queue record's escrow at placement, and from escrow into `ExpiryCash` at the fill, with unused budget returned to the account's receive address. Payouts flow from `ExpiryCash` to the account's receive address. Surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees leave for the builder-code address, while mint referral shares leave protocol proceeds for the referring Account's receive address and return to ordinary Account custody when settled.
+
+Mainnet USDC is a regulated coin, and Sui aborts any transaction that credits USDC to an address on its deny list or to anyone while it is globally paused. The queued-order flow reads Sui's `DenyList` and never makes such a send: a fill for a denied receive address is refused, a denied builder or referral fee stays in market cash, a refund the address cannot take is parked in its queue record, and a denied winner's payout waits in its Open record. Permissionless calls pay both once the address clears (see [delayed execution](../concepts/delayed-execution.md#denied-recipients)). The LP flush does not yet do this: a denied LP recipient makes `finish_flush` abort ([S-10](../../predeploy/open-items.md#s-10-a-denied-lp-recipient-aborts-the-flush)).
 
 ## Accounts and app authorization
 
@@ -231,7 +234,7 @@ Package upgrades are gated by a single monotonic **version watermark** stored on
 
 Raising the floor is admin-only and footgun-free: `protocol_config::bump_version_watermark` takes no target — it sets the watermark to the running `current_version!()`. Because that value is whatever package binary is executing, the floor can only ever advance to a version a published binary actually embeds; admin can never set it above the running package and brick it, and retiring old versions requires executing the bump against the upgraded package. The watermark is monotonic (it cannot be lowered), so a disabled running version is recovered by upgrading, not by lowering the floor. The setter itself, the `PauseCap` mint, both revocations, and all reads are deliberately ungated; the lifecycle-cap and pool-valuation-cap **mints** are the exception — they are version-gated (`registry::mint_lifecycle_cap`, `registry::mint_pool_valuation_cap`), because granting privileged operator authority under a version freeze is risky. The external propbook feeds carry their *own* version and forward-only `migrate`; Predict does not gate them.
 
-The watermark also marks the delayed-execution cutover. Admission asserts `version_watermark >= current_version!()` (`ECutoverNotReached`), so no package version that knows nothing about the queue can run while an order waits. A second, weaker gate, `chk_floor`, checks the watermark but not the emergency freeze. Predict's `release` and `try_pay_settled` use it, so the companion's refunds, settlement drain, and settled payouts keep running while frozen.
+The watermark also marks the delayed-execution cutover. Admission asserts `version_watermark >= 4`, the fixed cutover version (`constants::cutover_version!()`, `ECutoverNotReached`), so no package version that knows nothing about the queue can run while an order waits. The cutover is fixed rather than `current_version!()`, so a later upgrade keeps placement open before its own floor bump. A second, weaker gate, `chk_floor`, checks the watermark but not the emergency freeze. Predict's `release` and `try_pay_settled` use it, so the companion's refunds, settlement drain, and settled payouts keep running while frozen.
 
 Reversible emergency stops are separate from the watermark: `trading_paused` (global), per-expiry `mint_paused`, and the protocol-wide `frozen` (which halts the whole version-gated surface, folded into `chk_version`) — all admin-settable and `PauseCap`-forceable one-way, and all liftable by `AdminCap` without an upgrade.
 
@@ -248,18 +251,24 @@ Floors compare logical versions (`current_version!()`), not publication numbers.
 
 **Relink rule.** Before any Predict watermark bump, publish an upgrade of `deepbook_predict_orders` and of Sessions relinked to the new Predict, whether or not anything they call changed. A companion still linked to the retired version aborts on every call into Predict, the drain included, so its escrow and receipts are held until its relink is published, and a Sessions package linked to it aborts its queued wrappers.
 
-**First rollout (package version 4), per network.** Trading stays paused (`trading_paused`) from before step 1 until step 11.
+**First rollout (package version 4), per network.** Trading stays paused (`trading_paused`) from step 0 until step 11. `packages/predict/deployment/upgrade_v4.ts` runs it: steps 1 to 7 by default, step 9 with `--cutover`, and step 11 with `--reopen`, and on Mainnet it emits unsigned transactions for the multisig (`--emit-unsigned`).
 
+0. Pause trading with `protocol_config::set_trading_paused(true)` if it is open. Both networks' Predict and Sessions watermarks are still at 1, so the step 9 bump retires every older version at once.
 1. Publish `deepbook_predict_math` and register it in MVR. It emits no events.
 2. Upgrade Predict (Mainnet version 3 to 4, Testnet version 4 to 5), linked to the library, and register the new Predict version with transaction monitoring (Blockaid) right away. Leave the watermark alone. No witness is allowlisted and admission refuses before the cutover, so nothing can be queued.
-3. Publish `deepbook_predict_orders`, linked to the new Predict and the library. The `desk` module's `init` creates and shares the one `OrderDesk` with the launch policy. Record the desk ID and the publish checkpoint from that transaction. Register the companion's version 1 in Blockaid and MVR, and move both new UpgradeCaps to the Predict multisig.
-4. Start the indexer with `--first-checkpoint` at or before the companion's publish checkpoint, so it records `OrderFlowUpdated` and the policy event.
-5. In one admin transaction, allowlist the companion with `protocol_config::set_order_flow<deepbook_predict_orders::order_flow::OrderFlow>(true)`, then re-state the launch order fee with `desk::set_order_fee` (20,000, which is 0.02 USDC), so `DelayedExecutionPolicyUpdated` records the launch policy and the desk ID. The desk's `init` emits no event. Nothing can be placed before this transaction, because every Predict primitive the queue calls checks the allowlist.
-6. Create a queue for every live market with `queue::create_and_share(desk, market)`. The market keeper also backfills a missing queue for any unexpired market when it starts, and creates one for each new market. The fill keeper never creates queues.
+3. Publish `deepbook_predict_orders`, linked to the new Predict and the library. The `desk` module's `init` creates and shares the one `OrderDesk` with the launch policy, and its `QueueRegistry`. Record the desk and registry IDs and the publish checkpoint from that transaction. Register the companion's version 1 in Blockaid and MVR, and move both new UpgradeCaps to the Predict multisig.
+4. Start the indexer with `--first-checkpoint` at the step 2 upgrade checkpoint, and no later than the step 3 publish, so it records `FlushOperatorUpdated`, `OrderFlowUpdated`, and the policy event. The v4 indexer needs the companion's package ID and the v4 type origins, so it cannot be deployed on a network before step 3, and the servers follow once the indexer has applied its migrations.
+5. In one admin transaction:
+   - allowlist the companion with `protocol_config::set_order_flow<deepbook_predict_orders::order_flow::OrderFlow>(true)`,
+   - re-state the launch order fee with `desk::set_order_fee` (20,000, which is 0.02 USDC), so `DelayedExecutionPolicyUpdated` records the launch policy and the desk ID, because the desk's `init` emits no event,
+   - add the market keeper's signer as a flush operator with `protocol_config::add_flush_operator`, unless it already is one. The v4 `finish_flush` admits only flush operators, and an empty allowlist rejects everyone.
+
+   Nothing can be placed before this transaction, because every Predict primitive the queue calls checks the allowlist.
+6. Create a queue for every live market with `queue::create_and_share(registry, desk, market)`. The market keeper also backfills a missing queue for any unexpired market when it starts, and creates one for each new market. The fill keeper never creates queues.
 7. Upgrade Sessions (`current_version!()` 3), linked to the new Predict and the companion, and register Sessions version 3 in Blockaid.
-8. Move the services to the new IDs: the fill keeper, the market keeper, the indexer and servers, the SDK configuration, and the operations configuration, which gains the companion's package ID and the desk ID.
+8. Move the services to the new IDs: the fill keeper, the market keeper, the indexer and servers, the SDK configuration, and the operations configuration, which gains the companion's package ID and the desk ID. The alert rules (balances, heartbeats, keeper liveness, gas aborts, payout skips, and queue creation failures) go live before the fill keeper starts writing.
 9. Bump the watermarks: Predict's to 4 (the cutover) and Sessions' to 3. The desk floor stays at 1.
-10. Measure full-batch gas on Testnet before activating Mainnet (DBU-892): `settle_step` at its 450 drain and 900 payout batches, `resolve` and `refund` at their 450 cap, and a full 100-mint cohort resolved at the keeper's `resolve_max_orders`.
+10. Measure full-batch gas (DBU-892): `settle_step` at its 450 drain and 900 payout batches, `resolve` and `refund` at their 450 cap, and a full 100-mint cohort resolved at the keeper's `resolve_max_orders`. Queued admission checks the trading pause, so Testnet measures right after step 11 reopens trading, and Mainnet waits for the Testnet numbers.
 11. Reopen trading.
 
 Types the v4 upgrade introduces, such as `OrderReceipt`, `OrderFlowUpdated`, and `ExpiryPnlRealized`, carry the v4 upgrade's package ID as their type origin. Predict's original types keep the original ID, and the companion's types carry the companion's own original ID.
@@ -273,7 +282,7 @@ Types the v4 upgrade introduces, such as `OrderReceipt`, `OrderFlowUpdated`, and
 | Library fix | Upgrade the library, then follow the Predict row, including both relinks |
 | Pyth Lazer format change | Upgrade the library with a new `LazerPrice` constructor, then follow the companion row. Predict is untouched |
 
-Before every bump, rehearse the exact sequence on localnet with published packages, including a placement, a commit, a fill, a refund, and a settled payout through the relinked companion and Sessions. The first rollout's rehearsal so far covered only the publishes and upgrades ([S-9](../../predeploy/open-items.md#s-9-the-v4-upgrade-sequence-is-not-yet-rehearsed-end-to-end)).
+Before every bump, rehearse the exact sequence on localnet with published packages, including a placement, a commit, a fill, a refund, and a settled payout through the relinked companion and Sessions. The first rollout's rehearsal status is tracked in [S-9](../../predeploy/open-items.md#s-9-the-v4-upgrade-sequence-is-not-yet-rehearsed-end-to-end).
 
 ## Where this leads
 
