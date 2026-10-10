@@ -10,17 +10,25 @@
 /// positive `u64`-representable values so an unusable observation cannot claim a permanent key.
 /// Value and SVI observations use separate stores because the verifier exposes distinct batch and
 /// value types. The registry creates and binds both stores atomically from one base-asset input.
+/// An SVI store also derives its series ids from an admin-set provider model, so the admin chooses
+/// which of the provider's SVI surfaces the store accepts and serves.
 module propbook::block_scholes_store;
 
 use bs_oracle::verify::{ValueBatch, SviBatch};
 use propbook::{block_scholes_sid, constants};
 use std::string::String;
-use sui::{clock::Clock, event, table::{Self, Table}};
+use sui::{clock::Clock, dynamic_field as df, event, table::{Self, Table}};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists as UID.exists_;
 
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
 const EUnexpectedBatchLength: u64 = 2;
 const ESeriesIdMismatch: u64 = 3;
+const EInvalidSviModel: u64 = 4;
 
 macro fun series_kind_spot(): u8 { 0 }
 
@@ -33,6 +41,10 @@ macro fun exact_spot_period_ms(): u64 { 60_000 }
 macro fun spot_batch_length(): u64 { 1 }
 
 macro fun spot_history_capacity(): u64 { 10 }
+
+/// Longest accepted SVI model spelling. Like the base asset, the model is BCS-encoded and hashed
+/// on every SVI read and write, so the ceiling bounds that per-call cost.
+macro fun max_svi_model_len(): u64 { 32 }
 
 /// One accepted observation paired with its signed source time and on-chain recording time.
 public struct BsRead<Value: copy + drop + store> has copy, drop, store {
@@ -88,6 +100,14 @@ public struct BlockScholesSVIStore has key {
     svis: Table<u256, BsRead<SVIParams>>,
 }
 
+/// Dynamic-field key on `BlockScholesSVIStore` for its admin-set `String` provider model. The model
+/// became admin-set after deploy, so it lives off the struct layout; an absent field reads as
+/// `block_scholes_sid::default_svi_model`, the model earlier package versions hardcoded, so stores
+/// need no data migration. Reads are ungated and every package version stays callable, so this key,
+/// its `String` value, and the default's spelling are permanent: changing the default would
+/// silently re-key every store whose model was never set.
+public struct SviModelKey() has copy, drop, store;
+
 /// Emitted only for observations that were stored, so its presence means the series advanced.
 public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy, drop {
     propbook_underlying_id: u32,
@@ -104,6 +124,13 @@ public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy
 public struct BlockScholesObservationInserted<Observation: copy + drop> has copy, drop {
     propbook_oracle_id: ID,
     observation: Observation,
+}
+
+/// Emitted when the admin sets the provider model an SVI store derives its series ids from.
+public struct BlockScholesSVIModelSet has copy, drop {
+    propbook_underlying_id: u32,
+    propbook_oracle_id: ID,
+    svi_model: String,
 }
 
 /// Emitted once per latest-path batch, whether or not anything was stored.
@@ -151,6 +178,16 @@ public fun svi_store_version(store: &BlockScholesSVIStore): u64 {
     store.version
 }
 
+/// Returns the provider model this store's SVI series ids derive from, for relayer subscription
+/// construction through devInspect.
+public fun svi_model(store: &BlockScholesSVIStore): String {
+    if (store.id.exists_(SviModelKey())) {
+        *store.id.borrow<_, String>(SviModelKey())
+    } else {
+        block_scholes_sid::default_svi_model!()
+    }
+}
+
 /// Returns the canonical spot series id for external subscription construction.
 public fun spot_sid(store: &BlockScholesValueStore): u256 {
     block_scholes_sid::spot(&store.block_scholes_base_asset)
@@ -161,9 +198,10 @@ public fun forward_sid(store: &BlockScholesValueStore, expiry_ms: u64): u256 {
     block_scholes_sid::forward(&store.block_scholes_base_asset, expiry_ms)
 }
 
-/// Returns one canonical SVI series id for external subscription construction.
+/// Returns one canonical SVI series id, under the store's current model, for external
+/// subscription construction.
 public fun svi_sid(store: &BlockScholesSVIStore, expiry_ms: u64): u256 {
-    block_scholes_sid::svi(&store.block_scholes_base_asset, expiry_ms)
+    block_scholes_sid::svi(&store.block_scholes_base_asset, &store.svi_model(), expiry_ms)
 }
 
 /// Returns the latest canonical spot observation, or `none` if none has landed.
@@ -337,10 +375,13 @@ public fun apply_svi_batch(
     clock: &Clock,
     ctx: &TxContext,
 ) {
+    let svi_model = store.svi_model();
     let mut expected_sids = vector[];
     let mut i = 0;
     while (i < expiries_ms.length()) {
-        expected_sids.push_back(store.svi_sid(expiries_ms[i]));
+        expected_sids.push_back(
+            block_scholes_sid::svi(&store.block_scholes_base_asset, &svi_model, expiries_ms[i]),
+        );
         i = i + 1;
     };
     store.apply_checked_svi_batch(batch, expected_sids, expiries_ms, clock, ctx)
@@ -379,6 +420,25 @@ public(package) fun create_and_share_value_store(
     let id = store.value_store_id();
     transfer::share_object(store);
     id
+}
+
+/// Set the provider model this store derives its SVI series ids from; writes and reads switch
+/// together. Rows stored under other models stay keyed by their own series ids. The public contract
+/// lives on `registry::set_block_scholes_svi_model`.
+public(package) fun set_svi_model(store: &mut BlockScholesSVIStore, svi_model: String) {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    assert!(!svi_model.is_empty(), EInvalidSviModel);
+    assert!(svi_model.as_bytes().length() <= max_svi_model_len!(), EInvalidSviModel);
+    if (store.id.exists_(SviModelKey())) {
+        *store.id.borrow_mut(SviModelKey()) = copy svi_model;
+    } else {
+        store.id.add(SviModelKey(), copy svi_model);
+    };
+    event::emit(BlockScholesSVIModelSet {
+        propbook_underlying_id: store.propbook_underlying_id,
+        propbook_oracle_id: store.svi_store_id(),
+        svi_model,
+    });
 }
 
 /// Create and share an SVI store for one immutable Block Scholes base asset.
@@ -667,6 +727,11 @@ public fun observation_recorded_fields<Observation: copy + drop>(
         event.expiry_ms,
         event.observation,
     )
+}
+
+#[test_only]
+public fun svi_model_set_fields(event: &BlockScholesSVIModelSet): (u32, ID, String) {
+    (event.propbook_underlying_id, event.propbook_oracle_id, event.svi_model)
 }
 
 #[test_only]

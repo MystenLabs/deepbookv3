@@ -5,6 +5,7 @@
 module propbook::registry_tests;
 
 use propbook::{
+    block_scholes_store::BlockScholesSVIStore,
     pyth_feed::{Self as pyth_feed, PythFeed},
     registry::{Self, OracleMetadata, OracleRegistry, RegistryAdminCap}
 };
@@ -405,6 +406,37 @@ fun creating_store_pair_with_an_over_length_base_asset_aborts() {
     );
 
     abort 999
+}
+
+/// The admin path is the only public way to set a store's model; the store tests own what a
+/// model switch does to accepted and served series.
+#[test]
+fun set_block_scholes_svi_model_sets_the_store_model() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let pair = registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        btc(),
+        scenario.ctx(),
+    );
+    scenario.next_tx(ADMIN);
+    let mut svi_store = scenario.take_shared_by_id<
+        BlockScholesSVIStore,
+    >(pair.block_scholes_svi_store_id());
+
+    registry::set_block_scholes_svi_model(&mut svi_store, &admin_cap, b"SVI_REGIME".to_string());
+
+    assert_eq!(svi_store.svi_model(), b"SVI_REGIME".to_string());
+    return_shared(svi_store);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
 }
 
 fun btc(): String {
