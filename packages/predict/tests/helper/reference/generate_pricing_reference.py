@@ -3,9 +3,12 @@
 from REAL on-chain Block Scholes SVI observations.
 
 Emits the committed Move module `pricing_reference_data.move`, which the exact
-pricing tests (`pricing_exact_tests.move`) assert against. Run:
+pricing tests (`pricing_exact_tests.move`) assert against, and
+`tick_pricing_reference_data.move` for the tick-time Pricer that delayed execution
+rebuilds (`tick_pricing_tests.move`). Run:
 
-    python3 generate_pricing_reference.py        # no third-party deps (stdlib only)
+    python3 generate_pricing_reference.py              # no third-party deps (stdlib only)
+    python3 generate_pricing_reference.py --tick-only  # tick module only, no scenario CSV
 
 Set `PREDICT_SCENARIO_DATASET=/path/to/scenario_dataset.csv` when regenerating
 from a worktree that does not have the ignored scenario CSV locally.
@@ -70,10 +73,10 @@ composition is, with F=1e9 and all quantities in real (un-scaled) units:
     k     = ln(strike) - ln(forward)                                (difference of logs)
       d_k = 1e-7*(|ln strike| + |ln forward|) + 2/F                 (ln rel, twice; two ULPs)
     km    = k - m                                                   (m exact)
-    km2   = km^2          ; e_km2 = 2|km|*d_k + 1/F                 (square floor)
-    sig2  = sigma^2       ; e_sig2 = 1/F                            (sigma exact; mul floor)
+    km2   = km^2          ; e_km2 = 2|km|*d_k                       (exact u128 square at 1e18)
+    sig2  = sigma^2       ; e_sig2 = 0                              (sigma exact; exact u128 square)
     si    = km2 + sig2    ; e_si  = e_km2 + e_sig2
-    sq    = sqrt(si)      ; e_sq  = e_si/(2*sqrt(si)) + 1/F         (sqrt floor)
+    sq    = sqrt(si)      ; e_sq  = e_si/(2*sqrt(si)) + 1/F         (sqrt_u128_down floor)
     rk    = rho*km        ; e_rk  = |rho|*d_k + 1/F                 (rho exact; mul floor)
     inner = rk + sq       ; e_in  = e_rk + e_sq
     w     = a + b*inner   ; e_w   = b*e_in                          (a exact; product exact, see below)
@@ -116,6 +119,7 @@ representation cushion), exercising the clamp path.
 import csv
 import math
 import os
+import sys
 from decimal import Decimal, getcontext
 
 getcontext().prec = 60
@@ -130,9 +134,9 @@ NORMAL_PDF_ABS = 50.0 / F
 ULP = 1.0 / F
 ULP18 = 1.0 / (F * F)              # the pricing variance path's 1e18 granularity
 
-# SVI production bounds (constants.move) the chosen rows must satisfy so the
-# fixture can seed them through the production cap path (assert_valid_svi).
-SVI_SIGMA_MIN, SVI_SIGMA_MAX = 1_000_000, 100_000_000_000
+# SVI sigma bounds from pricing.move's pricing-safe envelope (`min_svi_sigma`,
+# `max_svi_input`) the chosen rows must satisfy so the fixture can load them.
+SVI_SIGMA_MIN, SVI_SIGMA_MAX = 10_000, 100_000_000_000
 
 # Four diverse-variance rows from the single real market, selected by stable
 # svi_event_digest (large / medium / small total variance => different time to
@@ -141,7 +145,8 @@ SVI_SIGMA_MIN, SVI_SIGMA_MAX = 1_000_000, 100_000_000_000
 # regime where 1/sqrt(w) conditioning is tightest, ~200x below the next smallest.
 # It is the demonstration case, not full coverage of the deployed variance range:
 # the corpus bottoms out near w ~ 4e-7 while deployed 1m/5m cadences reach ~1e-8
-# (predeploy open item P-16).
+# and SSVI one-minute slices ~2e-9 (predeploy open item P-16). The SSVI slices are
+# pinned at their forward by generate_ssvi_reference.py.
 SELECTED_DIGESTS = [
     "5KbNiu2S7ULJcS1ryDtJ3DC2omTojjJoMFjmu7nYgTAF9",   # 2026-05-27 08:00:18  sqrt_w_atm ~0.0171
     "H4DNoM3eRw83KdZjASFabLJSgu7YNZYRNfCWErcKgnE59",   # 2026-05-27 20:04:03  sqrt_w_atm ~0.0109
@@ -174,6 +179,59 @@ def phi(x):  # standard normal CDF via stdlib erf (independent of Cody approx)
 
 def phi_pdf(x):  # standard normal density 1/sqrt(2pi) * exp(-x^2/2)
     return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def up_error_budget(a, b, rho, m, sigma, k, d_k):
+    """Analytic absolute error budget for the contract's UP(K) at log-moneyness
+    `k`, whose own error is `d_k`, on the surface `(a, b, rho, m, sigma)` in
+    real units, with `a` and `b` as priced (already scaled by any roll-down
+    ratio). See the module header for the derivation; every term is evaluated at
+    the TRUE values."""
+    km = k - m
+    si = km * km + sigma * sigma
+    w = a + b * (rho * km + math.sqrt(si))
+    S = math.sqrt(w)
+    N = k + w / 2.0
+    d2 = -N / S
+    # error in the total-variance VALUE w (before the /2 and sqrt). The smile
+    # root's input is formed at 1e18 from exact u128 squares, so it carries only
+    # k's error; the root itself floors once.
+    e_si = 2.0 * abs(km) * d_k + d_k * d_k
+    e_sq = e_si / (2.0 * math.sqrt(si)) + 1.0 / F
+    e_rk = abs(rho) * d_k + 1.0 / F
+    e_in = e_rk + e_sq
+    # b * inner is formed in u128 and kept at 1e18, so the product itself
+    # contributes no floor: e_w is only the propagated error of `inner`. (A
+    # roll-down floors `a` and `b * inner` once each at 1e18, at most 2e-18 in w,
+    # which every other term dwarfs.)
+    e_w = b * e_in
+    # d2 sensitivity: dk through numerator; e_w correlated through num+den;
+    # independent half_var and sqrt_var floors; div floor.
+    dd2_dw = 0.5 * w ** (-1.5) * (k - w / 2.0)
+    d_d2 = (
+        d_k / S
+        + abs(dd2_dw) * e_w
+        + (0.5 * ULP18) / S
+        + abs(N / w) * (1.0 / F)
+        + 1.0 / F
+    )
+    pdf = phi_pdf(d2)
+    w_prime = b * (rho + km / math.sqrt(si))
+    # Skew-correction sensitivity:
+    #   correction = pdf(d2) * w_prime / (2*sqrt(w)).
+    # The reference keeps true-math w_prime; the contract floors both slope_ratio
+    # and mul_scaled(b, slope), so the tolerance absorbs that quantization.
+    e_slope = (sigma * sigma / (si ** 1.5)) * d_k + abs(km) / si * e_sq + ULP
+    e_w_prime = b * e_slope + ULP
+    e_pdf = NORMAL_PDF_ABS + abs(d2) * pdf * d_d2
+    e_s_total = e_w / (2.0 * S) + ULP
+    e_correction = (
+        abs(w_prime) / (2.0 * S) * e_pdf
+        + pdf / (2.0 * S) * e_w_prime
+        + pdf * abs(w_prime) / (2.0 * w) * e_s_total
+        + ULP
+    )
+    return NORMAL_CDF_ABS + pdf * d_d2 + e_correction
 
 
 class Scenario:
@@ -238,58 +296,19 @@ class Scenario:
 
     # --- analytic absolute error budget for UP(strike)=Phi(d2) at one strike ---
     def delta_up(self, strike):
-        k, w, d2 = self.d2_of_strike(strike)
-        ratio = strike / self.forward_live
-        S = math.sqrt(w)
-        N = k + w / 2.0
+        k = self.d2_of_strike(strike)[0]
         # error in k. The contract takes a DIFFERENCE OF LOGS (`ln(strike) -
         # ln(forward)`), so there is no ratio floor to propagate; the cost is one
         # `ln` relative error per operand plus one result ULP each. NOTE: the
         # committed `pricing_reference_data.move` predates this and was generated
-        # under the old ratio model, which understates this by ~6x near the money.
-        # Its tolerances still hold (worst-case budget usage is unchanged at 61%),
-        # so they are conservative rather than wrong — but they are no longer
-        # derived, and must be regenerated when the scenario dataset is available.
+        # under the old ratio model, which understates this term by far more than
+        # the smile root's move from 1e9 floors to exact u128 squares tightened it.
+        # Its tolerances are therefore TIGHTER than this model gives: they still
+        # pass only because the contract's `ln` is far more accurate than its
+        # documented bound, so they are not derived, and must be regenerated when
+        # the scenario dataset is available (predeploy open item P-28).
         d_k = 1e-7 * (abs(math.log(strike / F)) + abs(math.log(self.forward_live / F))) + 2.0 / F
-        km = k - self.mf
-        # error in the total-variance VALUE w (before the /2 and sqrt)
-        e_km2 = 2.0 * abs(km) * d_k + 1.0 / F
-        e_sig2 = 1.0 / F
-        e_si = e_km2 + e_sig2
-        si = km * km + self.sf * self.sf
-        e_sq = e_si / (2.0 * math.sqrt(si)) + 1.0 / F
-        e_rk = abs(self.rf) * d_k + 1.0 / F
-        e_in = e_rk + e_sq
-        # b * inner is formed in u128 and kept at 1e18, so the product itself
-        # contributes no floor: e_w is only the propagated error of `inner`.
-        e_w = self.bf * e_in
-        # d2 sensitivity: dk through numerator; e_w correlated through num+den;
-        # independent half_var and sqrt_var floors; div floor.
-        dd2_dw = 0.5 * w ** (-1.5) * (k - w / 2.0)
-        d_d2 = (
-            d_k / S
-            + abs(dd2_dw) * e_w
-            + (0.5 * ULP18) / S
-            + abs(N / w) * (1.0 / F)
-            + 1.0 / F
-        )
-        pdf = phi_pdf(d2)
-        w_prime = self.w_prime_of_k(k)
-        # Skew-correction sensitivity:
-        #   correction = pdf(d2) * w_prime / (2*sqrt(w)).
-        # The reference keeps true-math w_prime; the contract floors both slope_ratio
-        # and mul_scaled(b, slope), so the tolerance absorbs that quantization.
-        e_slope = (self.sf * self.sf / (si ** 1.5)) * d_k + abs(km) / si * e_sq + ULP
-        e_w_prime = self.bf * e_slope + ULP
-        e_pdf = NORMAL_PDF_ABS + abs(d2) * pdf * d_d2
-        e_s_total = e_w / (2.0 * S) + ULP
-        e_correction = (
-            abs(w_prime) / (2.0 * S) * e_pdf
-            + pdf / (2.0 * S) * e_w_prime
-            + pdf * abs(w_prime) / (2.0 * w) * e_s_total
-            + ULP
-        )
-        return NORMAL_CDF_ABS + pdf * d_d2 + e_correction
+        return up_error_budget(self.af, self.bf, self.rf, self.mf, self.sf, k, d_k)
 
     def snap(self, strike):
         rel = strike - self.min_strike
@@ -404,20 +423,6 @@ def roll_down_ratio(expiry_ms):
     """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`, anchored
     at the seed tuple's source timestamp."""
     return (expiry_ms - NOW_MS) / (expiry_ms - SEED_SOURCE_TIMESTAMP_MS)
-# A surface in the region the 1e18 variance path newly admits: its per-strike
-# total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
-# aborted `ENonPositiveVariance` here while the analytical minimum still passed the
-# load gate (min_increment 3 against a = -2). Mirrors the fixture in
-# `pricing_guard_tests::low_variance_surface_prices_where_the_1e9_path_aborted`.
-ADMITTED_LOW_VARIANCE = {
-    "a": -2 / F,
-    "b": 1_000 / F,
-    "rho": 800_000_000 / F,
-    "m": 6_666_634 / F,
-    "sigma": 5_000_000 / F,
-}
-
-
 # A surface that separates the two ways of forming `w'` in the skew correction.
 # `b` is carried at 1e18, so `w' = b * slope / 1e18`; narrowing `b` back to 1e9
 # first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
@@ -442,20 +447,6 @@ def w_prime_precision_surface_up():
     a = W_PRIME_PRECISION_SURFACE["a"] * ratio
     b = W_PRIME_PRECISION_SURFACE["b"] * ratio
     rho, m, sigma = (W_PRIME_PRECISION_SURFACE[key] for key in ("rho", "m", "sigma"))
-    k = 0.0
-    x = k - m
-    sq = math.sqrt(x * x + sigma * sigma)
-    w = a + b * (rho * x + sq)
-    w_prime = b * (rho + x / sq)
-    S = math.sqrt(w)
-    d2 = -(k + w / 2.0) / S
-    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
-
-
-def admitted_low_variance_up():
-    """True UP digital on the newly admitted low-variance surface, at the forward."""
-    a, b = ADMITTED_LOW_VARIANCE["a"], ADMITTED_LOW_VARIANCE["b"]
-    rho, m, sigma = (ADMITTED_LOW_VARIANCE[key] for key in ("rho", "m", "sigma"))
     k = 0.0
     x = k - m
     sq = math.sqrt(x * x + sigma * sigma)
@@ -695,15 +686,179 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// budget below; narrowing it to 1e9 first misses by ~890 units.")
     w("public fun w_prime_precision_surface_up(): u64 { "
       f"{fmt_u64(w_prime_precision_surface_up())} }}")
-    w("")
-    w("/// True UP digital on the surface whose per-strike total variance is positive")
-    w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")
-    w("/// admits, where the previous pricer aborted `ENonPositiveVariance`.")
-    w(f"public fun admitted_low_variance_up(): u64 {{ {fmt_u64(admitted_low_variance_up())} }}")
     return "\n".join(lines) + "\n"
 
 
+# ----------------------------------------------------------------------------
+# Tick-time pricing reference (`pricing::pricer_at`)
+# ----------------------------------------------------------------------------
+# A queued order stores the raw Block Scholes basis and SVI it read at enqueue,
+# and resolve rebuilds the Pricer at the committed Pyth tick: the basis is
+# re-anchored on the committed spot and `a`, `b` are rolled down by
+# `(expiry - tick) / (expiry - svi_source)`. The points below price the UP digital
+# AT the re-anchored forward on a short-dated surface with a live skew term, at
+# ticks whose roll-down ratios are 1, 1/2, 1/10 and 1/120. Neighbouring ticks
+# differ by hundreds of thousands of units against budgets in the hundreds, so a
+# Pricer that skips the roll-down, rolls to the wrong time, or re-anchors on the
+# wrong spot misses every point.
+#
+# Strike == forward makes the contract's `k = ln(strike) - ln(forward)` exactly
+# zero (both logs read the same input), so the budget is `up_error_budget` with
+# `k = 0` and `d_k = 0`: the normal-CDF/PDF documented bounds plus the variance
+# and skew-slope floors. No `ln` error enters.
+#
+# Surface fields are raw 1e9 integers, seeded into the oracle fixture exactly.
+TICK_SURFACE = {
+    "a": 400, "a_neg": False,
+    "b": 20_000,
+    "rho": 300_000_000, "rho_neg": True,
+    "m": 1_000_000, "m_neg": False,
+    "sigma": 20_000_000,
+}
+# Two minutes after the fixture clock (`test_constants::now_ms`), the clock the
+# fixture stamps as the SVI source when it seeds the tuple.
+TICK_EXPIRY_MS = 240_000
+TICK_SVI_SOURCE_MS = 120_000
+TICK_BS_SPOT = 100_000_000_000
+TICK_BS_FORWARD = 100_500_000_000
+TICK_COMMITTED_SPOT = 102_000_000_000
+TICK_PRICED_AT_MS = [120_000, 180_000, 228_000, 239_000]
+TICK_REFERENCE_OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "tick_pricing_reference_data.move")
+
+
+def tick_forward():
+    """`committed_spot * bs_forward / bs_spot`, exact in integers for these inputs."""
+    product = TICK_COMMITTED_SPOT * TICK_BS_FORWARD
+    assert product % TICK_BS_SPOT == 0, "tick fixture forward must be exact"
+    return product // TICK_BS_SPOT
+
+
+def tick_points():
+    """(priced_at_ms, reference, tolerance) for the at-the-forward UP digital at each tick."""
+    s = TICK_SURFACE
+    a = (-s["a"] if s["a_neg"] else s["a"]) / F
+    b = s["b"] / F
+    rho = (-s["rho"] if s["rho_neg"] else s["rho"]) / F
+    m = (-s["m"] if s["m_neg"] else s["m"]) / F
+    sigma = s["sigma"] / F
+    points = []
+    for tick in TICK_PRICED_AT_MS:
+        ratio = (TICK_EXPIRY_MS - tick) / (TICK_EXPIRY_MS - TICK_SVI_SOURCE_MS)
+        a_r, b_r = a * ratio, b * ratio
+        k = 0.0
+        x = k - m
+        sq = math.sqrt(x * x + sigma * sigma)
+        w = a_r + b_r * (rho * x + sq)
+        w_prime = b_r * (rho + x / sq)
+        S = math.sqrt(w)
+        d2 = -(k + w / 2.0) / S
+        up = max(0.0, min(1.0, phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)))
+        budget = up_error_budget(a_r, b_r, rho, m, sigma, k, 0.0)
+        points.append((tick, round(up * F), math.ceil(budget * F) + CUSHION_UNITS))
+    return points
+
+
+def emit_tick_move():
+    s = TICK_SURFACE
+    lines = []
+    w = lines.append
+    w("// Copyright (c) Mysten Labs, Inc.")
+    w("// SPDX-License-Identifier: Apache-2.0")
+    w("//")
+    w("// @generated by packages/predict/tests/helper/reference/generate_pricing_reference.py")
+    w("// DO NOT EDIT BY HAND — regenerate with")
+    w("//   python3 generate_pricing_reference.py --tick-only")
+    w("// (needs no scenario CSV; a full run regenerates this file too).")
+    w("//")
+    w("// Independent true-math reference (Python stdlib math.sqrt/erf, NOT the contract)")
+    w("// for a Pricer rebuilt at a committed tick: the Block Scholes basis re-anchored on")
+    w("// the committed spot and SVI `a`, `b` rolled down to the tick. Each point prices")
+    w("// the skew-adjusted UP digital at the re-anchored forward, where log-moneyness is")
+    w("// exactly zero; its `tolerance` is the analytic fixed-point budget at k = 0, see")
+    w("// the generator's tick section.")
+    w("#[test_only]")
+    w("module deepbook_predict::tick_pricing_reference_data;")
+    w("")
+    w("/// One reference point: the UP digital at `forward()` priced at `priced_at_ms`")
+    w("/// must be within `tolerance` units of the true-math `reference`.")
+    w("public struct TickPoint has copy, drop {")
+    w("    priced_at_ms: u64,")
+    w("    reference: u64,")
+    w("    tolerance: u64,")
+    w("}")
+    w("")
+    w("public fun priced_at_ms(p: &TickPoint): u64 { p.priced_at_ms }")
+    w("")
+    w("public fun reference(p: &TickPoint): u64 { p.reference }")
+    w("")
+    w("public fun tolerance(p: &TickPoint): u64 { p.tolerance }")
+    w("")
+    w("fun pt(priced_at_ms: u64, reference: u64, tolerance: u64): TickPoint {")
+    w("    TickPoint { priced_at_ms, reference, tolerance }")
+    w("}")
+    w("")
+    w("/// Market expiry the surface is priced against.")
+    w(f"public fun expiry_ms(): u64 {{ {fmt_u64(TICK_EXPIRY_MS)} }}")
+    w("")
+    w("/// SVI source timestamp, the roll-down anchor (the fixture clock at seeding).")
+    w(f"public fun svi_source_timestamp_ms(): u64 {{ {fmt_u64(TICK_SVI_SOURCE_MS)} }}")
+    w("")
+    w("/// Block Scholes spot and forward seeded at enqueue (basis 1.005).")
+    w(f"public fun bs_spot(): u64 {{ {fmt_u64(TICK_BS_SPOT)} }}")
+    w("")
+    w(f"public fun bs_forward(): u64 {{ {fmt_u64(TICK_BS_FORWARD)} }}")
+    w("")
+    w("/// Pyth spot committed for the tick.")
+    w(f"public fun committed_spot(): u64 {{ {fmt_u64(TICK_COMMITTED_SPOT)} }}")
+    w("")
+    w("/// `committed_spot * bs_forward / bs_spot`, exact in integers.")
+    w(f"public fun forward(): u64 {{ {fmt_u64(tick_forward())} }}")
+    w("")
+    w("/// Raw SVI parameters (1e9) seeded through the Block Scholes surface update.")
+    w(f"public fun svi_a(): u64 {{ {fmt_u64(s['a'])} }}")
+    w("")
+    w(f"public fun svi_a_is_negative(): bool {{ {str(s['a_neg']).lower()} }}")
+    w("")
+    w(f"public fun svi_b(): u64 {{ {fmt_u64(s['b'])} }}")
+    w("")
+    w(f"public fun svi_rho_magnitude(): u64 {{ {fmt_u64(s['rho'])} }}")
+    w("")
+    w(f"public fun svi_rho_is_negative(): bool {{ {str(s['rho_neg']).lower()} }}")
+    w("")
+    w(f"public fun svi_m_magnitude(): u64 {{ {fmt_u64(s['m'])} }}")
+    w("")
+    w(f"public fun svi_m_is_negative(): bool {{ {str(s['m_neg']).lower()} }}")
+    w("")
+    w(f"public fun svi_sigma(): u64 {{ {fmt_u64(s['sigma'])} }}")
+    w("")
+    w("/// Reference points, one per tick (priced_at_ms, true-math reference, tolerance).")
+    w("public fun points(): vector<TickPoint> {")
+    w("    vector[")
+    for tick, ref, tol in tick_points():
+        ratio = (TICK_EXPIRY_MS - tick) / (TICK_EXPIRY_MS - TICK_SVI_SOURCE_MS)
+        w(f"        // roll-down ratio {ratio:.6f}")
+        w(f"        pt({fmt_u64(tick)}, {fmt_u64(ref)}, {fmt_u64(tol)}),")
+    w("    ]")
+    w("}")
+    return "\n".join(lines) + "\n"
+
+
+def write_tick_reference():
+    move_src = emit_tick_move()
+    with open(TICK_REFERENCE_OUT_PATH, "w") as f:
+        f.write(move_src)
+    print("=== tick-time reference (pricer_at) ===")
+    print(f"    forward={tick_forward()}")
+    for tick, ref, tol in tick_points():
+        print(f"      tick={tick} ref={ref:>11} tol={tol:>6}")
+    print(f"wrote {os.path.normpath(TICK_REFERENCE_OUT_PATH)} ({move_src.count(chr(10))} lines)")
+
+
 def main():
+    write_tick_reference()
+    if "--tick-only" in sys.argv[1:]:
+        return
+
     by_digest = {}
     with open(CSV_PATH) as f:
         for row in csv.DictReader(f):

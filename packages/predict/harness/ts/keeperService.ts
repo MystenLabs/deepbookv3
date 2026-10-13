@@ -2,6 +2,10 @@
 // tick loop that SETTLES expired markets (own PTBs), FLUSHES the active pool (own PTB),
 // settles markets, flushes LP requests, and rolls the cadence. The "conditional cron" is off-chain: each tick reconciles
 // the active market set from CHAIN (plp::active_expiry_markets) and assembles the due PTBs.
+// Queued orders are filled by the traders that place them (commit and resolve are
+// permissionless). The keeper creates each market's queue, funds the orders' cash need, and
+// drives settlement to completion: Predict's try_settle, then the queue's settle_step until its
+// refund and payout phases finish, then cleanup and the sweep.
 //
 // Reconciling from chain (not an in-memory list) is what makes the keeper crash/restart
 // safe: a lost create response or a restart can never desync the flush set from
@@ -10,26 +14,38 @@
 // keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint), so a BS
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
+import { readFileSync } from "node:fs";
+
 import { CADENCES } from "./predictConfig.js";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
-import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
+import { type Feeds, bootstrapPool, createMarket, ensureMarketQueue, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
+import { type KeeperChain, type SettleResult, settleAndFlush, settleFailed } from "./keeperLanes.js";
 import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { aggregateNetGasOf, appendTrace, errorTag, legComputationsOf, maxComputationOf } from "./trace.js";
 import {
+  CLEANUP_BATCH,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  cleanupQueueTx,
   clockTimestampMs,
   execute,
   executeAndWait,
   fundAddressUsdcTx,
   keeperFlushTxs,
-  keeperSettleTx,
+  keeperTrySettleTx,
+  objectExists,
   readActiveMarketIds,
+  readCreatedMarkets,
+  readOpenRecordIds,
+  payOpenTx,
   readMarketExpiry,
+  readSettlementProgress,
   readValuationInProgress,
+  deriveMarketQueueId,
   rebalanceExpiryCashTx,
+  settleStepTx,
 } from "../../devtools/ts/runtime.js";
 
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
@@ -41,6 +57,7 @@ const CADENCE_IDS = Object.keys(CADENCES)
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
 const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
+const WORKLIST_PATH = `${requiredEnv("INSTANCE_DIR")}/keeper-worklist.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_USDC = BigInt(requiredEnv("TRADER_USDC"));
 
@@ -55,6 +72,38 @@ let consecutiveSettleDefers = 0; // ticks in a row with an unsettled expired mar
 // successful rebalance, removed when the market settles; any active market not in here is retried
 // each tick (a roll whose rebalance failed, or one picked up from chain after a restart).
 const funded = new Set<string>();
+// Markets whose queue is known to exist. A market picked up from chain after a restart is
+// checked, and its queue created, before it is funded and advertised.
+const queued = new Set<string>();
+// The durable settlement work list: every market with a queue whose settlement (payout walk,
+// cleanup, and sweep) has not finished, kept on disk and rebuilt from events at start. The active
+// set alone is not enough, because anyone can sweep a settled market out of it first.
+const worklist = new Map<string, number>();
+
+function persistWorklist(): void {
+  atomicWriteFile(WORKLIST_PATH, JSON.stringify([...worklist].map(([id, expiryMs]) => ({ id, expiryMs }))));
+}
+
+function listMarket(id: string, expiryMs: number): void {
+  if (worklist.get(id) === expiryMs) return;
+  worklist.set(id, expiryMs);
+  persistWorklist();
+}
+
+// Restore the list after a restart: the file, then every created market whose queue exists and
+// whose payout walk has not completed, which covers a market swept while the keeper was down.
+async function rebuildWorklist(): Promise<void> {
+  try {
+    for (const m of JSON.parse(readFileSync(WORKLIST_PATH, "utf8")) as Mkt[]) worklist.set(m.id, m.expiryMs);
+  } catch {
+    // First start, or a torn file: the events below rebuild it.
+  }
+  for (const m of await readCreatedMarkets()) {
+    if (worklist.has(m.id) || !(await objectExists(deriveMarketQueueId(m.id)))) continue;
+    if (!(await readSettlementProgress(m.id)).payoutsCompleted) worklist.set(m.id, Number(m.expiryMs));
+  }
+  persistWorklist();
+}
 
 async function expiryOf(marketId: string): Promise<number> {
   const cached = expiryCache.get(marketId);
@@ -69,36 +118,82 @@ interface Mkt {
   expiryMs: number;
 }
 
-// The durable settlement lane: settle every currently-past-expiry active market, each in its own PTB
-// (insert exact spot -> try_settle -> rebalance_expiry_cash sweep). Needs only the exact Pyth
-// spot, NOT live BS pricing, so a BS outage that defers the flush can never back settlement up (no
-// beyond-retention brick). Reads a fresh clock + chain active set. Returns ok / last error / count.
-async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: string; count: number }> {
-  const clock = Number(await clockTimestampMs());
-  const expired: Mkt[] = [];
-  for (const id of await readActiveMarketIds()) {
-    const e = await expiryOf(id);
-    if (e <= clock) expired.push({ id, expiryMs: e });
-  }
-  let ok = true;
-  let lastErr = "";
-  for (const m of expired) {
-    try {
-      const price = await fetchExactSpot1e9(m.expiryMs);
-      await executeAndWait(
-        keeperSettleTx({ pythFeedId: feeds.pythFeedId, bsValueStoreId: feeds.bsValueStoreId, expiryMs: BigInt(m.expiryMs), price, marketId: m.id, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID }),
+// The chain the settlement and flush lanes run against (keeperLanes.ts owns their ordering).
+// Settlement needs only the exact Pyth spot, NOT live BS pricing, so a BS outage that defers the
+// flush can never back settlement up (no beyond-retention brick). Each expiry's spot is fetched
+// once from the Pyth history endpoint and reused across that market's phases.
+function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
+  const prices = new Map<string, bigint>();
+  return {
+    clockMs: async () => Number(await clockTimestampMs()),
+    activeMarkets: async () => {
+      const markets: Mkt[] = [];
+      for (const id of await readActiveMarketIds()) markets.push({ id, expiryMs: await expiryOf(id) });
+      return markets;
+    },
+    pendingMarkets: async () => [...worklist].map(([id, expiryMs]) => ({ id, expiryMs })),
+    retire: async (marketId) => {
+      if (worklist.delete(marketId)) persistWorklist();
+    },
+    settlementProgress: readSettlementProgress,
+    trySettle: async (m) => {
+      let price = prices.get(m.id);
+      if (price === undefined) {
+        price = await fetchExactSpot1e9(m.expiryMs);
+        prices.set(m.id, price);
+      }
+      const r = await executeAndWait(
+        keeperTrySettleTx({
+          pythFeedId: feeds.pythFeedId, bsValueStoreId: feeds.bsValueStoreId, expiryMs: BigInt(m.expiryMs), price,
+          marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID,
+        }),
         "settle",
       );
-      expiryCache.delete(m.id); funded.delete(m.id); // swept off-chain; forget
-      appendTrace("keeper", { type: "settle", market: m.id, expiryMs: m.expiryMs });
-    } catch (e) {
-      ok = false;
-      lastErr = errorTag(e);
+      return r.events;
+    },
+    settleStep: (m) => executeAndWait(settleStepTx({ marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID }), "settle-step"),
+    openRecords: (m, nextId) => readOpenRecordIds(m.id, nextId),
+    payOpen: (m, recordId) =>
+      executeAndWait(payOpenTx({ marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID, recordId }), "pay-open"),
+    cleanup: async (m, nextId) => {
+      for (let first = 0n; first < nextId; first += BigInt(CLEANUP_BATCH)) {
+        const recordIds: bigint[] = [];
+        for (let id = first; id < nextId && id < first + BigInt(CLEANUP_BATCH); id++) recordIds.push(id);
+        await executeAndWait(cleanupQueueTx({ marketId: m.id, recordIds }), "queue-cleanup");
+      }
+    },
+    sweep: (m) =>
+      executeAndWait(
+        rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
+        "settle-sweep",
+      ),
+    flush: (marketIds) =>
+      execute(
+        keeperFlushTxs({ feeds, marketIds, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
+        "flush",
+      ),
+  };
+}
+
+// Trace each settlement result; a settled market is swept, so forget its cached state.
+function traceSettlements(results: SettleResult[], straggler: boolean): string {
+  let lastErr = "";
+  for (const result of results) {
+    const m = result.market;
+    if (settleFailed(result)) {
+      lastErr = errorTag(result.error);
       appendTrace("keeper", { type: "fail", lane: "settle", tag: lastErr });
-      console.warn(`[keeper] settle deferred ${m.id.slice(0, 10)}: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      const message = result.error instanceof Error ? result.error.message.slice(0, 100) : result.error;
+      console.warn(`[keeper] settle deferred ${m.id.slice(0, 10)}: ${message}`);
+    } else {
+      expiryCache.delete(m.id); funded.delete(m.id); queued.delete(m.id); // swept off-chain; forget
+      appendTrace("keeper", {
+        type: "settle", market: m.id, expiryMs: m.expiryMs, phases: result.phases,
+        ...(straggler ? { straggler: true } : {}),
+      });
     }
   }
-  return { ok, lastErr, count: expired.length };
+  return lastErr;
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: string) {
@@ -120,11 +215,27 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
   const active: Mkt[] = [];
   for (const id of await readActiveMarketIds()) active.push({ id, expiryMs: await expiryOf(id) });
 
-  // 1a. Durable settlement lane (single pass): settle + sweep every market past-expiry now. Decoupled
-  //     from the flush so a BS outage can never back it up (brick fix). One bad settle fails alone.
-  const s1 = await settleExpired(feeds);
+  // 1. Settlement, then the pool flush (keeperLanes.settleAndFlush).
+  //  a. Durable settlement lane (single pass): settle, pay, and only then sweep every market
+  //     past-expiry now. Decoupled from the flush so a BS outage can never back it up (brick fix).
+  //     One bad settle fails alone, and a market left unfinished stays active for the next pass.
+  //  b. Pool flush, only when something settled and nothing failed: value every active market.
+  //     The snapshot sweeps every settled market it snapshots, so it must never meet one whose
+  //     payout walk is unfinished: the lane first settles and pays what expired since (a) (the
+  //     boundary-race stragglers, traced as such) and flushes only if all of them finished; the
+  //     snapshot itself settles nothing. A market that expires between that pass and the
+  //     snapshot aborts the snapshot (expired, unsettled) and the flush defers to the next tick,
+  //     where (a) settles it. A failure part-way through the staged flush leaves the valuation
+  //     lock held until the next flush's `start_pool_valuation` discards it; nothing settled is
+  //     lost, because every swept market finished its walk. A flush OOG here is a capacity
+  //     BREAKPOINT (analyze.py excludes it), NOT a stall — logged as a plain flush fail.
+  const chain = keeperChain(feeds, poolValuationCapId);
+  const settlement = await settleAndFlush(chain);
+  const s1 = {
+    ok: !settlement.settled.some(settleFailed),
+    lastErr: traceSettlements(settlement.settled, false),
+  };
   const settledOk = s1.ok;
-  const didSettle = s1.count > 0;
   if (settledOk) consecutiveSettleDefers = 0;
   else if (++consecutiveSettleDefers >= 8) {
     // A real settlement stall (NOT a flush OOG): expired markets are not settling. Report the ACTUAL
@@ -133,32 +244,20 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
     console.error(`[keeper] *** settlement STALLED ${consecutiveSettleDefers} ticks (lastError=${s1.lastErr}) — expired markets not settling; roll paused ***`);
   }
 
-  // 1b. Pool flush (own PTB): value every active market. The 1a lane swept the markets past-expiry when
-  //     it ran; a market that expired SINCE (a boundary-race straggler) is still active + unsettled, so
-  //     the flush inserts its exact-expiry observation and calls try_settle before value_expiry,
-  //     instead of tripping dynamic_field on a missing obs. These commands are the
-  //     race-avoidance ONLY; the durable settlement is 1a (a BS outage reverts the flush's inserts but
-  //     can't block 1a, so no brick). A flush OOG here is a capacity BREAKPOINT (analyze.py
-  //     excludes it), NOT a stall — logged as a plain flush fail.
-  if (didSettle && settledOk) {
-    try {
-      const nowClock = Number(await clockTimestampMs());
-      const flush: Mkt[] = [];
-      for (const id of await readActiveMarketIds()) flush.push({ id, expiryMs: await expiryOf(id) });
-      const settlements: { marketId: string; expiryMs: bigint; price: bigint }[] = [];
-      for (const m of flush) {
-        if (m.expiryMs <= nowClock) settlements.push({ marketId: m.id, expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
-      }
-      // The flush is a sequence now: settle+snapshot (atomic), one value_expiry per
-      // market, then finish. A failure part-way leaves the valuation lock held, so the
-      // catch below discards it rather than letting the whole protocol sit frozen.
-      const fr = await execute(
-        keeperFlushTxs({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
-        "flush",
-      );
+  const lane = settlement.flush;
+  if (lane) {
+    traceSettlements(lane.preFlush, true);
+    if (lane.skipped) {
+      console.warn("[keeper] flush deferred: a market that expired since the settlement lane is unfinished");
+    } else if (lane.error !== undefined) {
+      appendTrace("keeper", { type: "fail", lane: "flush", tag: errorTag(lane.error) });
+      const message = lane.error instanceof Error ? lane.error.message.slice(0, 100) : lane.error;
+      console.warn(`[keeper] flush deferred: ${message}`);
+    } else {
+      const fr = lane.flushed as Awaited<ReturnType<typeof execute>>;
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
-        type: "flush", marketCount: fe ? Number(fe.market_count) : flush.length, stragglers: settlements.length,
+        type: "flush", marketCount: fe ? Number(fe.market_count) : lane.marketIds.length, stragglers: lane.preFlush.length,
         poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
         activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0,
         // compGas is the heaviest SINGLE transaction (the largest value_expiry leg) — the number the
@@ -168,15 +267,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
         gas: aggregateNetGasOf(fr), compGas: maxComputationOf(fr),
         compGasTotal: Number(fr.gas?.computationCost ?? 0), legCompGas: legComputationsOf(fr),
       });
-      console.log(`[keeper] flushed ${flush.length} active market(s)`);
-    } catch (e) {
-      appendTrace("keeper", { type: "fail", lane: "flush", tag: errorTag(e) });
-      console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
-      // A flush that fails after the snapshot sealed leaves the outer valuation lock
-      // engaged. There is no separate discard step: the next tick's
-      // `start_pool_valuation` discards the stranded valuation and starts a fresh flush
-      // (the snapshot PTB is atomic, so a pre-seal failure reverts the lock cleanly).
-      // The lock only gates cancels and config setters until then.
+      console.log(`[keeper] flushed ${lane.marketIds.length} active market(s)`);
     }
   }
 
@@ -185,11 +276,17 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
   const liveClock = Number(await clockTimestampMs());
   const live = active.filter((m) => m.expiryMs > liveClock);
 
-  // 2. Fund: rebalance every active market not yet confirmed funded (retries a roll whose
-  //    rebalance failed, or a market picked up from chain after a restart). Isolated per market.
+  // 2. Fund: rebalance every live market each tick. The live target covers the queued orders'
+  //    cash need, so this is what funds their fills, and it also retries a roll whose rebalance
+  //    failed or a market picked up from chain after a restart. A market is funded, and so
+  //    advertised, only once its queue exists. Isolated per market.
   for (const m of live) {
-    if (funded.has(m.id)) continue;
     try {
+      if (!queued.has(m.id)) {
+        await ensureMarketQueue(m.id);
+        queued.add(m.id);
+        listMarket(m.id, m.expiryMs);
+      }
       await executeAndWait(
         rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
         "rebalance",
@@ -214,6 +311,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
         if (Number(expiryMs) !== expectedExpiry) {
           throw new Error(`keeper cadence schedule drift c${c}: expected ${expectedExpiry}, created ${expiryMs}`);
         }
+        queued.add(marketId); // createMarket creates the queue with the market
+        listMarket(marketId, Number(expiryMs));
         await executeAndWait(
           rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
           "rebalance",
@@ -235,8 +334,10 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
 
 async function main() {
   console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
-  const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS);
+  // Traders run the cleanout strategy's permissionless settled redeems, which need the allowlist.
+  const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS, TRADER_ADDRESSES);
   await bootstrapPool(poolValuationCapId);
+  await rebuildWorklist();
   for (const addr of TRADER_ADDRESSES) {
     await executeAndWait(fundAddressUsdcTx(addr, TRADER_USDC), `fund-trader-${addr.slice(0, 8)}`);
   }

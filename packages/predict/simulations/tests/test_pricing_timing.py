@@ -19,7 +19,7 @@ class PricingTimingTests(unittest.TestCase):
             trace.write_text(
                 json.dumps(
                     {
-                        "schema_version": "predict_local_trace_v5",
+                        "schema_version": "predict_local_trace_v6",
                         "steps": [
                             {
                                 "step": 1,
@@ -70,7 +70,7 @@ class PricingTimingTests(unittest.TestCase):
         invalid_traces = (
             {"steps": []},
             {
-                "schema_version": "predict_local_trace_v5",
+                "schema_version": "predict_local_trace_v6",
                 "steps": [
                     {
                         "step": "1",
@@ -81,7 +81,7 @@ class PricingTimingTests(unittest.TestCase):
                 ],
             },
             {
-                "schema_version": "predict_local_trace_v5",
+                "schema_version": "predict_local_trace_v6",
                 "steps": [
                     {
                         "step": 1,

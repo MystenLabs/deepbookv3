@@ -492,6 +492,33 @@ class VerdictTests(unittest.TestCase):
             )
             self.assertTrue(analyze.has_strategy_progress(instance, "fuzz"))
 
+    def test_order_flow_companion_refusals_are_expected_guards(self) -> None:
+        # A full queue, a record that is no longer Open, the desk floor, and a Lazer update
+        # without the order's feed are preconditions, not contract bugs. An unknown module's
+        # abort stays flagged.
+        expected, transient, flagged = verdict.classify_failures(
+            [
+                {"tag": "queue:3"},
+                {"tag": "order_queue:0"},
+                {"tag": "desk:0"},
+                {"tag": "delayed_execution_config:13"},
+                {"tag": "lazer_price:2"},
+                {"tag": "order_events:1"},
+            ]
+        )
+        self.assertEqual(
+            sorted(expected),
+            [
+                "delayed_execution_config:13",
+                "desk:0",
+                "lazer_price:2",
+                "order_queue:0",
+                "queue:3",
+            ],
+        )
+        self.assertEqual(transient, {})
+        self.assertEqual(flagged, ["order_events:1"])
+
 
 if __name__ == "__main__":
     unittest.main()

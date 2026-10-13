@@ -59,7 +59,7 @@ Axis split: lenses = perspective × whole codebase; ownership walk = per-module 
 python3 .claude/skills/predict-audit/preflight.py               # drift lint FIRST: fatal on primer module-map drift, warns on dangling D-ids
 python3 packages/predict/predeploy/check.py                     # dev-system linter: register pinning tests, ID cross-refs, MEASURED links, dead paths
 sui move build --path packages/<pkg> --warnings-are-errors   # pkg ∈ predict propbook account
-sui move test  --path packages/<pkg> --gas-limit 100000000000   # each of the three (predict is the big suite)
+sui move test  --path packages/<pkg> --gas-limit 100000000000 --package-size 64   # each of the three (predict is the big suite)
 (cd packages/predict && npm run build && npm test)
 (cd packages/predict && python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v)
 (cd packages/predict && python3 -m harness parity --source /path/to/scenario_dataset.csv --max-rows 20) # localnet parity, MAIN LOOP only

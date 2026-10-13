@@ -14,49 +14,67 @@ export { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson };
 
 export type ScenarioActionName =
     | "mint"
-    | "redeem_live"
+    | "redeem_open"
     | "request_supply"
     | "request_withdraw"
     | "flush"
     | "rebalance_expiry_cash"
     | "settle"
-    | "redeem_settled";
+    | "settle_payout";
 
 export const REQUIRED_ACTIONS: ScenarioActionName[] = [
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "request_withdraw",
     "flush",
     "rebalance_expiry_cash",
     "settle",
-    "redeem_settled",
+    "settle_payout",
 ];
 
+// Every trade is queued (delayed execution) in the order-flow companion. A mint or `redeem_open`
+// row enqueues in the market's queue, then commits a locally signed Lazer price for the order's τ
+// and resolves. `settle` is Predict's `try_settle`, which settles from the oracle alone.
+// `settle_payout` is the queue's settlement walk, one `settle_step` per transaction: it refunds
+// the waiting orders, pays the Open records, and then `cleanup` deletes the finished records. The
+// following `rebalance_expiry_cash` sweeps the settled market.
 export const EXPECTED_ACTION_SEQUENCE: ScenarioActionName[] = [
     "mint",
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "flush",
     "request_withdraw",
     "flush",
     "mint",
-    "redeem_live",
+    "redeem_open",
     "rebalance_expiry_cash",
     "mint",
     "mint",
+    "mint",
+    "mint",
     "settle",
-    "redeem_settled",
-    "redeem_settled",
-    "redeem_settled",
-    "redeem_settled",
+    "settle_payout",
+    "rebalance_expiry_cash",
     "flush",
     "request_supply",
     "flush",
 ];
 
-export const EXPECTED_SETTLED_REDEMPTION_MODES = [false, true, false, true];
+// What each mint row exercises, in scenario order: a fill at τ, a refund at τ on the order's own
+// `max_probability` (the order fee is kept), or an order never committed, which settlement refunds
+// at its deadline (the order fee is returned).
+export type MintRole = "fill" | "limit_refund" | "deadline_refund";
+export const EXPECTED_MINT_ROLES: MintRole[] = [
+    "fill",
+    "fill",
+    "fill",
+    "fill",
+    "fill",
+    "limit_refund",
+    "deadline_refund",
+];
 
 export interface OracleRefreshData {
     spot: bigint;
@@ -85,14 +103,19 @@ export type ScenarioRow =
               isUp: boolean;
               higherStrike?: bigint;
               quantity: bigint;
+              // Entry-probability cap at τ, uncapped when absent.
+              maxProbability?: bigint;
               orderRef: string;
+              // The spot signed for the order's τ, or null for an order left uncommitted.
+              commitSpot: bigint | null;
           })
     | (ScenarioRowBase & {
-          action: "redeem_live";
+          action: "redeem_open";
           oracleRefresh: OracleRefreshData;
           orderRef: string;
           closeQuantity: bigint;
           replacementOrderRef: string | null;
+          commitSpot: bigint;
       })
     | (ScenarioRowBase & {
           action: "request_supply";
@@ -112,16 +135,12 @@ export type ScenarioRow =
       })
     | (ScenarioRowBase & { action: "rebalance_expiry_cash" })
     | (ScenarioRowBase & { action: "settle"; settlementPrice: bigint })
-    | (ScenarioRowBase & {
-          action: "redeem_settled";
-          orderRef: string;
-          permissionless: boolean;
-      });
+    | (ScenarioRowBase & { action: "settle_payout" });
 
 export type MintRow = Extract<ScenarioRow, { action: "mint" }>;
 export type OracleRefreshRow = Extract<
     ScenarioRow,
-    { action: "mint" | "redeem_live" | "flush" }
+    { action: "mint" | "redeem_open" | "flush" }
 >;
 
 export interface LocalTraceStep {
@@ -167,6 +186,8 @@ export interface SimState extends OracleFeedIds {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
+    // The market's queue, at the ID derived from the desk and the market.
+    marketQueueId: string;
     expiryMs: string;
     accountWrapperId: string;
     lifecycleCapId: string;
@@ -195,15 +216,16 @@ export const SCENARIO_COLUMNS = [
     "is_up",
     "higher_strike",
     "quantity",
+    "max_probability",
     "order_ref",
     "close_quantity",
     "replacement_order_ref",
+    "commit_spot",
     "amount",
     "shares",
     "min_output",
     "lp_ref",
     "settlement_price",
-    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -249,6 +271,14 @@ function parseBoolean(row: RawScenarioRow, field: string, lineNumber: number): b
         );
     }
     return value === "true";
+}
+
+function parseOptionalUnsignedInteger(
+    row: RawScenarioRow,
+    field: string,
+    lineNumber: number,
+): bigint | null {
+    return (row[field] ?? "") === "" ? null : parseUnsignedInteger(row, field, lineNumber);
 }
 
 function parseOptionalString(row: RawScenarioRow, field: string): string | null {
@@ -324,10 +354,12 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             isUp: parseBoolean(row, "is_up", lineNumber),
             higherStrike: row.higher_strike ? parseUnsignedInteger(row, "higher_strike", lineNumber) : undefined,
             quantity: parseQuantity(row, "quantity", lineNumber),
+            maxProbability: parseOptionalUnsignedInteger(row, "max_probability", lineNumber) ?? undefined,
             orderRef: parseRef(row, "order_ref", lineNumber),
+            commitSpot: parseOptionalUnsignedInteger(row, "commit_spot", lineNumber),
         };
     }
-    if (action === "redeem_live") {
+    if (action === "redeem_open") {
         return {
             action,
             lineNumber,
@@ -336,6 +368,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             orderRef: parseRef(row, "order_ref", lineNumber),
             closeQuantity: parseQuantity(row, "close_quantity", lineNumber),
             replacementOrderRef: parseOptionalString(row, "replacement_order_ref"),
+            commitSpot: parseUnsignedInteger(row, "commit_spot", lineNumber),
         };
     }
     if (action === "request_supply") {
@@ -375,20 +408,12 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             settlementPrice: parseUnsignedInteger(row, "settlement_price", lineNumber),
         };
     }
-    if (action === "redeem_settled") {
-        return {
-            action,
-            lineNumber,
-            step,
-            orderRef: parseRef(row, "order_ref", lineNumber),
-            permissionless: parseBoolean(row, "permissionless", lineNumber),
-        };
-    }
+    if (action === "settle_payout") return { action, lineNumber, step };
     throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
 }
 
-export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v5";
-export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5";
+export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v6";
+export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v6";
 export const STATE_PATH = path.join(INSTANCE_DIR, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(INSTANCE_DIR, "artifacts", "local_trace.json");
 export const LOCAL_DATA_PATH = path.join(INSTANCE_DIR, "artifacts", "local_data.json");
@@ -465,22 +490,20 @@ export function validateCompleteScenario(rows: readonly ScenarioRow[]): void {
             );
         }
     });
-    const settledRedemptionModes = rows
-        .filter((row): row is Extract<ScenarioRow, { action: "redeem_settled" }> =>
-            row.action === "redeem_settled",
-        )
-        .map((row) => row.permissionless);
+    const mintRoles = rows.filter((row): row is MintRow => row.action === "mint").map(mintRole);
     if (
-        settledRedemptionModes.length !== EXPECTED_SETTLED_REDEMPTION_MODES.length ||
-        settledRedemptionModes.some(
-            (permissionless, index) =>
-                permissionless !== EXPECTED_SETTLED_REDEMPTION_MODES[index],
-        )
+        mintRoles.length !== EXPECTED_MINT_ROLES.length ||
+        mintRoles.some((role, index) => role !== EXPECTED_MINT_ROLES[index])
     ) {
-        throw new Error(
-            "scenario settled redemptions must be owner/permissionless/owner/permissionless",
-        );
+        throw new Error(`scenario mint roles must be ${EXPECTED_MINT_ROLES.join("/")}`);
     }
+}
+
+// A mint without a committed spot waits for its deadline refund. A committed mint with a
+// `max_probability` cap is the probe the generator prices to miss that cap at τ.
+export function mintRole(row: MintRow): MintRole {
+    if (row.commitSpot === null) return "deadline_refund";
+    return row.maxProbability === undefined ? "fill" : "limit_refund";
 }
 
 export function readJson<T>(filePath: string): T {

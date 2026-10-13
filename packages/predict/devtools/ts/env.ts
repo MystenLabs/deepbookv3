@@ -45,6 +45,12 @@ export const ACCOUNT_PACKAGE_ID = requireEnv("ACCOUNT_PACKAGE_ID");
 export const ACCOUNT_REGISTRY_ID = requireEnv("ACCOUNT_REGISTRY_ID");
 export const PROTOCOL_CONFIG_ID = requireEnv("PROTOCOL_CONFIG_ID");
 export const POOL_VAULT_ID = requireEnv("POOL_VAULT_ID");
+// `deepbook_predict_orders`, the order-flow companion: every order entry point, each
+// market's `MarketQueue`, and the one `OrderDesk` its publish shares.
+export const ORDERS_PACKAGE_ID = requireEnv("ORDERS_PACKAGE_ID");
+export const ORDER_DESK_ID = requireEnv("ORDER_DESK_ID");
+// The desk's `QueueRegistry`, shared next to it at publish: each market's queue ID derives from it.
+export const QUEUE_REGISTRY_ID = requireEnv("QUEUE_REGISTRY_ID");
 // `predict_math` was renamed to `fixed_math` (package + named address).
 export const FIXED_MATH_PACKAGE_ID = requireEnv("FIXED_MATH_PACKAGE_ID");
 // propbook owns the extracted Pyth + Block Scholes feeds; its `OracleRegistry` is

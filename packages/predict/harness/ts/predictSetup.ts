@@ -1,6 +1,6 @@
 // Shared Predict-layer bring-up on an oracle-ready localnet: oracle feeds + trusted
-// signer + cadence config + the lifecycle and pool-valuation caps, then create markets
-// and bootstrap the pool.
+// signer + cadence config + the lifecycle and pool-valuation caps + the order-flow allowlist
+// and flush-operator grant, then create markets (each with its queue) and bootstrap the pool.
 
 import { existsSync, readFileSync } from "node:fs";
 
@@ -10,18 +10,25 @@ import { requiredEnv } from "./runnerConfig.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  addFlushOperatorTx,
+  addSettledRedeemKeeperTx,
   address,
   bareFlushTx,
   bindFeedsToUnderlyingTx,
   createAccountTx,
   createExpiryMarketTx,
+  createMarketQueueTx,
   deriveAccountWrapperId,
+  deriveMarketQueueId,
+  enableOrderFlowTx,
   executeAndWait,
   lockCapitalTx,
   mintLifecycleCapTx,
   mintPoolValuationCapTx,
   objectExists,
   type OracleFeedIds,
+  readIsFlushOperator,
+  readOrderFlowEnabled,
   readPlpTotalSupply,
   readSupplyRequestsPending,
   registerUnderlyingAndCreateFeedsTx,
@@ -50,6 +57,7 @@ export type Feeds = OracleFeedIds;
 // pool-valuation cap that starts flushes.
 export async function setupFeedsAndConfig(
   cadenceIds: number[],
+  settledRedeemKeepers: string[],
 ): Promise<{ feeds: Feeds; lifecycleCapId: string; poolValuationCapId: string }> {
   const instanceDir = requiredEnv("INSTANCE_DIR");
   const feedsPath = `${instanceDir}/feeds.json`;
@@ -67,6 +75,10 @@ export async function setupFeedsAndConfig(
     const bsValueStoreId = found(feedsR, "block_scholes_store::BlockScholesValueStore");
     const bsSviStoreId = found(feedsR, "block_scholes_store::BlockScholesSVIStore");
     await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind-spot");
+    // Re-adding a listed keeper aborts, so this runs only on first setup, not on re-attach.
+    for (const keeper of settledRedeemKeepers) {
+      await executeAndWait(addSettledRedeemKeeperTx(keeper), `settled-redeem-keeper-${keeper.slice(0, 8)}`);
+    }
     feeds = { pythFeedId, bsValueStoreId, bsSviStoreId };
     // Publish the feed ids so the updater (a separate process) can stream onto them.
     atomicWriteFile(feedsPath, JSON.stringify(feeds));
@@ -80,11 +92,27 @@ export async function setupFeedsAndConfig(
   for (const cadenceId of cadenceIds) {
     await executeAndWait(setCadenceConfigTx({ cadenceId, ...CADENCES[cadenceId] }), `cadence-${cadenceId}`);
   }
+  await ensureDelayedExecution();
   return { feeds, lifecycleCapId, poolValuationCapId };
 }
 
-// Create one cadence market. Reads NO oracle (absolute ticks need no grid centering),
-// so a keeper with a live updater needs no per-market seed — the updater warms the feed.
+// Traders can only enqueue, through the order-flow companion, and Predict refuses its
+// admissions, commits, and fills until the admin allowlists its witness. The companion's publish
+// already shared the desk with the launch policy. `finish_flush` admits only allowlisted flush
+// operators, and this signer sends every flush (bootstrap included). Each is read first, so setup
+// stays idempotent across a re-attach.
+export async function ensureDelayedExecution(): Promise<void> {
+  if (!(await readOrderFlowEnabled())) {
+    await executeAndWait(enableOrderFlowTx(), "enable-order-flow");
+  }
+  if (!(await readIsFlushOperator(address))) {
+    await executeAndWait(addFlushOperatorTx(address), "flush-operator");
+  }
+}
+
+// Create one cadence market and its queue. Reads NO oracle (absolute ticks need no grid
+// centering), so a keeper with a live updater needs no per-market seed — the updater warms the
+// feed.
 export async function createMarket(
   lifecycleCapId: string,
   cadenceId: number,
@@ -93,7 +121,20 @@ export async function createMarket(
     createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId }),
     "create-market",
   );
-  return { marketId: found(mkR, "ExpiryMarket"), expiryMs: BigInt(eventField(mkR, "MarketCreated", "expiry")) };
+  const marketId = found(mkR, "ExpiryMarket");
+  await ensureMarketQueue(marketId);
+  return { marketId, expiryMs: BigInt(eventField(mkR, "MarketCreated", "expiry")) };
+}
+
+// Every market needs its queue before anyone can place on it. Creation is permissionless and
+// once per market at a derived ID, so this reads first: a keeper restarted between creating a
+// market and its queue creates the queue on its next pass.
+export async function ensureMarketQueue(marketId: string): Promise<void> {
+  if (await objectExists(deriveMarketQueueId(marketId))) return;
+  const r = await executeAndWait(createMarketQueueTx(marketId), "create-queue");
+  if (found(r, "queue::MarketQueue") !== deriveMarketQueueId(marketId)) {
+    throw new Error(`queue for ${marketId.slice(0, 10)} was not created at its derived ID`);
+  }
 }
 
 // Genesis: operator account + lock min-bootstrap + supply 10M + a bare flush that mints

@@ -1,3 +1,5 @@
+use bigdecimal::BigDecimal;
+
 use crate::models::deepbook::balance_manager::BalanceEvent;
 use deepbook_schema::models::Balances;
 
@@ -16,7 +18,7 @@ define_handler! {
         package: meta.package(),
         balance_manager_id: event.balance_manager_id.to_string(),
         asset: event.asset.to_string(),
-        amount: event.amount as i64,
+        amount: BigDecimal::from(event.amount),
         deposit: event.deposit,
     }
 }

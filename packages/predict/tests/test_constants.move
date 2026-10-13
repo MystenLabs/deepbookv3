@@ -128,13 +128,12 @@ public fun default_svi_rho_magnitude(): u64 { math::float_scaling!() }
 /// wing contribution rounded to zero for default-grid strikes.
 public fun default_svi_m(): u64 { 10 * math::float_scaling!() }
 
-/// Default SVI `sigma` for live oracle test fixtures: 1e-3 in 1e9 fixed point, the
-/// lower edge of propbook's accepted vol-of-vol band.
+/// Default SVI `sigma` for live oracle test fixtures: 1e-3 in 1e9 fixed point.
 public fun default_svi_sigma(): u64 { 1_000_000 }
 
-/// Mirrors `pricing.move`'s private SVI sigma floor for tests that intentionally
-/// seed envelope-edge surfaces.
-public fun pricing_min_svi_sigma(): u64 { default_svi_sigma() }
+/// Mirrors `pricing.move`'s private SVI sigma floor (1e-5) for tests that
+/// intentionally seed envelope-edge surfaces.
+public fun pricing_min_svi_sigma(): u64 { 10_000 }
 
 /// Mirrors `pricing.move`'s private SVI input ceiling for tests that intentionally
 /// seed envelope-edge surfaces.

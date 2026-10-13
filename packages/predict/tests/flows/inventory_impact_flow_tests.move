@@ -140,7 +140,7 @@ fun live_order_value_does_not_require_book_membership() {
     let mut market = fx.take_market_bundle(expiry_id);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
 
-    let hypothetical = order::new_from_ticks(
+    let hypothetical = order::from_ticks(
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),

@@ -17,7 +17,7 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
-use diesel::sql_types::{Array, BigInt, Double, Integer, Nullable, SmallInt, Text};
+use diesel::sql_types::{Array, BigInt, Double, Integer, Nullable, Numeric, SmallInt, Text};
 use diesel::{
     BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
     TextExpressionMethods,
@@ -1484,7 +1484,9 @@ impl Reader {
         &self,
         asset_ids: &[String],
         timestamp_ms: i64,
-    ) -> Result<std::collections::HashMap<String, i64>, DeepBookError> {
+    ) -> Result<std::collections::HashMap<String, String>, DeepBookError> {
+        use bigdecimal::BigDecimal;
+
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
@@ -1501,8 +1503,8 @@ impl Reader {
         struct NetDepositRow {
             #[diesel(sql_type = diesel::sql_types::Text)]
             asset: String,
-            #[diesel(sql_type = diesel::sql_types::BigInt)]
-            net_amount: i64,
+            #[diesel(sql_type = Numeric)]
+            net_amount: BigDecimal,
         }
 
         // Query: use refreshed MV buckets before each asset's latest MV bucket, then scan raw
@@ -1544,7 +1546,7 @@ impl Reader {
             )
             SELECT
                 COALESCE(h.asset, p.asset) AS asset,
-                (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0))::bigint AS net_amount
+                (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0)) AS net_amount
             FROM hourly_totals h
             FULL OUTER JOIN raw_totals p ON h.asset = p.asset
             "#,
@@ -1568,7 +1570,7 @@ impl Reader {
                     if !asset.starts_with("0x") {
                         asset.insert_str(0, "0x");
                     }
-                    (asset, row.net_amount)
+                    (asset, row.net_amount.to_plain_string())
                 })
                 .collect()
         })

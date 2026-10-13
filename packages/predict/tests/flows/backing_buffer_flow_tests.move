@@ -102,7 +102,7 @@ fun lambda_one_is_summed_backing_identity() {
 /// brings in is only `p * quantity` — about half of that for an at-the-money
 /// range. A market therefore cannot back its own first order out of what that
 /// order pays: the pool allocation has to already be there. This pins the mint
-/// side of `expiry_market::assert_cash_backing`, which no flow test reached
+/// side of `expiry_market::chk_backed`, which no flow test reached
 /// after the leveraged fixtures that used to cover it were removed.
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun mint_without_pool_backing_aborts() {

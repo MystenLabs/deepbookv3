@@ -29,15 +29,16 @@ SCENARIO_COLUMNS = [
     "is_up",
     "higher_strike",
     "quantity",
+    "max_probability",
     "order_ref",
     "close_quantity",
     "replacement_order_ref",
+    "commit_spot",
     "amount",
     "shares",
     "min_output",
     "lp_ref",
     "settlement_price",
-    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -47,6 +48,20 @@ DATA_DIR = Path(__file__).with_name("data")
 SCENARIO_CONFIG = DATA_DIR / "scenario_config.json"
 GENERATED_DIR = DATA_DIR / "generated"
 DEFAULT_RISK_FREE_RATE = 35_000_000
+# The limit-refund probe: an UP order quoted near the money at placement, capped this far above
+# its placement probability, and committed at a spot that lifts its probability at τ at least
+# this far above the cap, but not past `LIMIT_REFUND_MAX_TICK_PROBABILITY`, so it misses its own
+# cap (reason 1) rather than the entry band. The margins absorb the SVI roll-down between
+# generation, placement, and τ.
+LIMIT_REFUND_PLACEMENT_BAND = (300_000_000, 600_000_000)
+# A sampled strike's probability stays this far inside the entry band. A queued order is priced
+# at its τ, after the SVI rolls down from its source time, which moves a tail probability by
+# several percent of itself, so a strike sampled at the band's edge can be refunded on
+# admission instead of filling.
+SAMPLED_PROBABILITY_MARGIN = 40_000_000
+STRIKE_SAMPLE_ATTEMPTS = 128
+LIMIT_REFUND_CAP_MARGIN = 100_000_000
+LIMIT_REFUND_MAX_TICK_PROBABILITY = 850_000_000
 REQUIRED_SOURCE_COLUMNS = [
     "spot",
     "forward",
@@ -113,6 +128,14 @@ def svi_for_replay(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def sampled_probability_admissible(probability: int) -> bool:
+    return (
+        replay.MIN_ENTRY_PROBABILITY + SAMPLED_PROBABILITY_MARGIN
+        <= probability
+        <= replay.MAX_ENTRY_PROBABILITY - SAMPLED_PROBABILITY_MARGIN
+    )
+
+
 class Generator:
     def __init__(
         self,
@@ -125,10 +148,18 @@ class Generator:
         self.rng = random.Random(seed)
         self.order_quantities: dict[str, int] = {}
 
-    def snapshot(self, step: int) -> dict[str, Any]:
+    def snapshot_index(self, step: int) -> int:
         last_step = self.config["generation"]["rows"] - 1
-        index = round((step - 1) * (len(self.snapshots) - 1) / last_step)
-        return self.snapshots[index]
+        return round((step - 1) * (len(self.snapshots) - 1) / last_step)
+
+    def snapshot(self, step: int) -> dict[str, Any]:
+        return self.snapshots[self.snapshot_index(step)]
+
+    def commit_spot(self, step: int) -> int:
+        # A queued order fills at the price for its τ, about a second after placement: the
+        # source's next observation, or the same one at the end of the source.
+        index = min(self.snapshot_index(step) + 1, len(self.snapshots) - 1)
+        return self.snapshots[index]["spot"]
 
     def mint_row(
         self,
@@ -138,11 +169,14 @@ class Generator:
         *,
         strike: int | None = None,
         higher_strike: int | None = None,
+        commit: bool = True,
+        max_probability: int | None = None,
+        commit_spot: int | None = None,
     ) -> dict[str, str]:
         snapshot = self.snapshot(step)
         forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
         if strike is None:
-            for _ in range(32):
+            for _ in range(STRIKE_SAMPLE_ATTEMPTS):
                 offset_bps = self.rng.randint(-1_500, 1_500)
                 candidate = replay.align_strike_to_tick(
                     forward * (10_000 + offset_bps) // 10_000
@@ -151,7 +185,7 @@ class Generator:
                 probability = replay.compute_range_price(
                     svi_for_replay(snapshot), forward, lower, higher
                 )
-                if replay.MIN_ENTRY_PROBABILITY <= probability <= replay.MAX_ENTRY_PROBABILITY:
+                if sampled_probability_admissible(probability):
                     strike = candidate
                     break
             else:
@@ -191,6 +225,8 @@ class Generator:
                 * replay.POSITION_LOT_SIZE
             )
         self.order_quantities[order_ref] = quantity
+        if commit and commit_spot is None:
+            commit_spot = self.commit_spot(step)
         return scenario_row(
             step,
             "mint",
@@ -199,8 +235,47 @@ class Generator:
             is_up=is_up,
             higher_strike=higher_strike,
             quantity=quantity,
+            max_probability=max_probability,
             order_ref=order_ref,
+            commit_spot=commit_spot if commit else None,
         )
+
+    def limit_refund_mint_row(self, step: int, order_ref: str) -> dict[str, str]:
+        """An UP mint that passes its `max_probability` at placement and misses it at τ.
+
+        The cap sits `LIMIT_REFUND_CAP_MARGIN` above the placement probability, and the
+        committed spot is the smallest upward move that lifts the probability at least that far
+        again above the cap while keeping it inside the entry band.
+        """
+        snapshot = self.snapshot(step)
+        forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
+        svi = svi_for_replay(snapshot)
+        low, high = LIMIT_REFUND_PLACEMENT_BAND
+        for offset_bps in range(0, 1_001):
+            strike = replay.align_strike_to_tick(forward * (10_000 + offset_bps) // 10_000)
+            lower, higher = replay.binary_range_bounds(strike, True)
+            placement = replay.compute_range_price(svi, forward, lower, higher)
+            if low <= placement <= high:
+                break
+        else:
+            raise GenerationError(f"could not place a near-the-money limit probe at step {step}")
+        max_probability = placement + LIMIT_REFUND_CAP_MARGIN
+        for move_bps in range(1, 2_001):
+            commit_spot = snapshot["spot"] * (10_000 + move_bps) // 10_000
+            tick_forward = replay.mul_div_round_down(commit_spot, snapshot["forward"], snapshot["spot"])
+            at_tick = replay.compute_range_price(svi, tick_forward, lower, higher)
+            if at_tick >= max_probability + LIMIT_REFUND_CAP_MARGIN:
+                if at_tick > LIMIT_REFUND_MAX_TICK_PROBABILITY:
+                    break
+                return self.mint_row(
+                    step,
+                    order_ref,
+                    True,
+                    strike=strike,
+                    max_probability=max_probability,
+                    commit_spot=commit_spot,
+                )
+        raise GenerationError(f"could not price a limit refund at τ for step {step}")
 
     def finite_range_mint_row(self, step: int, order_ref: str) -> dict[str, str]:
         snapshot = self.snapshot(step)
@@ -232,7 +307,7 @@ class Generator:
     ) -> dict[str, str]:
         snapshot = self.snapshot(step)
         forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
-        for _ in range(32):
+        for _ in range(STRIKE_SAMPLE_ATTEMPTS):
             offset_bps = self.rng.randint(-1_500, 1_500)
             strike = replay.align_strike_to_tick(
                 forward * (10_000 + offset_bps) // 10_000
@@ -243,7 +318,7 @@ class Generator:
             probability = replay.compute_range_price(
                 svi_for_replay(snapshot), forward, lower, higher
             )
-            if replay.MIN_ENTRY_PROBABILITY <= probability <= replay.MAX_ENTRY_PROBABILITY:
+            if sampled_probability_admissible(probability):
                 return self.mint_row(
                     step,
                     order_ref,
@@ -276,10 +351,11 @@ class Generator:
             [
                 scenario_row(
                     3,
-                    "redeem_live",
+                    "redeem_open",
                     **oracle_fields(self.snapshot(3)),
                     order_ref="o_up_partial",
                     close_quantity=partial_quantity,
+                    commit_spot=self.commit_spot(3),
                 ),
                 scenario_row(
                     4,
@@ -300,10 +376,11 @@ class Generator:
                 self.finite_range_mint_row(8, "o_round_trip"),
                 scenario_row(
                     9,
-                    "redeem_live",
+                    "redeem_open",
                     **oracle_fields(self.snapshot(9)),
                     order_ref="o_round_trip",
                     close_quantity=self.order_quantities["o_round_trip"],
+                    commit_spot=self.commit_spot(9),
                 ),
                 scenario_row(10, "rebalance_expiry_cash"),
                 self.settlement_mint_row(
@@ -318,31 +395,12 @@ class Generator:
                     winner=False,
                     settlement_price=settlement_price,
                 ),
-                scenario_row(13, "settle", settlement_price=settlement_price),
-                scenario_row(
-                    14,
-                    "redeem_settled",
-                    order_ref="o_up_partial",
-                    permissionless=False,
-                ),
-                scenario_row(
-                    15,
-                    "redeem_settled",
-                    order_ref="o_down",
-                    permissionless=True,
-                ),
-                scenario_row(
-                    16,
-                    "redeem_settled",
-                    order_ref="o_settle_winner",
-                    permissionless=False,
-                ),
-                scenario_row(
-                    17,
-                    "redeem_settled",
-                    order_ref="o_settle_loser",
-                    permissionless=True,
-                ),
+                self.limit_refund_mint_row(13, "o_limit_refund"),
+                # Never committed: it waits until settlement refunds it at its deadline.
+                self.mint_row(14, "o_deadline_refund", False, commit=False),
+                scenario_row(15, "settle", settlement_price=settlement_price),
+                scenario_row(16, "settle_payout"),
+                scenario_row(17, "rebalance_expiry_cash"),
                 scenario_row(18, "flush"),
                 scenario_row(
                     19,

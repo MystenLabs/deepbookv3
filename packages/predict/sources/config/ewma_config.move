@@ -23,18 +23,22 @@ public struct EwmaConfig has store {
 
 // === Public-Package Functions ===
 
+#[test_only]
 public(package) fun alpha(config: &EwmaConfig): u64 {
     config.alpha
 }
 
+#[test_only]
 public(package) fun z_score_threshold(config: &EwmaConfig): u64 {
     config.z_score_threshold
 }
 
+#[test_only]
 public(package) fun penalty_rate(config: &EwmaConfig): u64 {
     config.penalty_rate
 }
 
+#[test_only]
 public(package) fun enabled(config: &EwmaConfig): bool {
     config.enabled
 }
@@ -48,6 +52,7 @@ public(package) fun new(): EwmaConfig {
     }
 }
 
+#[test_only]
 public(package) fun set_params(
     config: &mut EwmaConfig,
     alpha: u64,
@@ -62,6 +67,7 @@ public(package) fun set_params(
     config.penalty_rate = penalty_rate;
 }
 
+#[test_only]
 public(package) fun set_enabled(config: &mut EwmaConfig, enabled: bool) {
     config.enabled = enabled;
 }

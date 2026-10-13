@@ -54,7 +54,7 @@ public fun claim_all_builder_fees(
     if (amount == 0) return balance::zero<USDC>().into_coin(ctx);
     let withdrawal = balance::withdraw_funds_from_object<USDC>(&mut code.id, amount);
     let coin = balance::redeem_funds(withdrawal).into_coin(ctx);
-    builder_code_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
+    builder_code_events::fees_claimed(code.id(), code.owner, amount);
     coin
 }
 
@@ -70,7 +70,7 @@ public(package) fun create_and_share(registry_uid: &mut UID, index: u64, ctx: &T
     };
     let id = code.id();
     transfer::share_object(code);
-    builder_code_events::emit_builder_code_created(id, owner, index);
+    builder_code_events::code_created(id, owner, index);
     id
 }
 

@@ -633,6 +633,62 @@ fun test_repay_liquidation_with_default() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
+// Ten years of accrual at 80% utilization with no fee withdrawals leaves more protocol
+// fees owed than the vault holds, so `total_borrow` exceeds `total_supply`. Liquidating
+// the whole borrow for 1 USDC then defaults on more than suppliers are owed: supply is
+// written down to zero, while the returned default is still the full shortfall rather
+// than the capped write-off.
+#[test]
+fun repay_liquidation_default_exceeding_supply_writes_supply_to_zero() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supplied = 100 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supplied,
+        &clock,
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(test_constants::user2());
+    let borrowed = 80 * test_constants::usdc_multiplier();
+    let (borrowed_coin, shares) = pool.borrow(borrowed, &clock, scenario.ctx());
+    destroy(borrowed_coin);
+
+    // A zero-share `repay_liquidation` runs only the pool's interest update.
+    10u64.do!(|_| {
+        advance_time(&mut clock, margin_constants::year_ms());
+        pool.repay_liquidation(0, mint_coin<USDC>(0, scenario.ctx()), &clock);
+    });
+    let supply_before = pool.total_supply();
+    let borrow_before = pool.total_borrow();
+    assert!(borrow_before > supply_before);
+
+    let coin_value = test_constants::usdc_multiplier();
+    let (amount, reward, default) = pool.repay_liquidation(
+        shares,
+        mint_coin<USDC>(coin_value, scenario.ctx()),
+        &clock,
+    );
+
+    assert_eq!(pool.borrow_shares(), 0);
+    assert_eq!(amount, borrow_before - pool.total_borrow());
+    assert_eq!(reward, 0);
+    assert_eq!(default, amount - coin_value);
+    assert!(default > supply_before);
+    assert_eq!(pool.total_supply(), 0);
+    assert_eq!(pool.supply_shares(), supplied);
+    assert_eq!(pool.vault_balance(), supplied - borrowed + coin_value);
+
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
 #[test]
 fun test_multiple_deepbook_pools() {
     let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();

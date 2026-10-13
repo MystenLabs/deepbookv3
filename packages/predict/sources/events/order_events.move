@@ -5,7 +5,9 @@
 ///
 /// Events carry transition identities and deltas rather than account or market
 /// balances. Partial closes link an old order ID to its replacement; the position
-/// root remains constant across that chain.
+/// root remains constant across that chain. Queued fills emit `OrderMinted` and
+/// `LiveOrderRedeemed` from inside Predict's order-flow fills; the queue's own
+/// events belong to the order-flow companion package.
 module deepbook_predict::order_events;
 
 use deepbook_predict::{order::Order, pricing::Pricer};
@@ -106,7 +108,7 @@ public struct SettledOrderRedeemed has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun emit_order_minted(
+public(package) fun minted(
     expiry_market_id: ID,
     account_id: ID,
     owner: address,
@@ -144,14 +146,14 @@ public(package) fun emit_order_minted(
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         referrer_account_id,
         onchain_timestamp_ms,
-        pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
-        block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
-        block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
-        block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
+        pyth_spot_source_timestamp_ms: pricer.pyth_ts(),
+        block_scholes_spot_source_timestamp_ms: pricer.bs_spot_ts(),
+        block_scholes_forward_source_timestamp_ms: pricer.bs_fwd_ts(),
+        block_scholes_svi_source_timestamp_ms: pricer.bs_svi_ts(),
     });
 }
 
-public(package) fun emit_live_order_redeemed(
+public(package) fun redeemed(
     expiry_market_id: ID,
     account_id: ID,
     owner: address,
@@ -184,14 +186,14 @@ public(package) fun emit_live_order_redeemed(
         inventory_impact_rebate,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         onchain_timestamp_ms,
-        pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
-        block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
-        block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
-        block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
+        pyth_spot_source_timestamp_ms: pricer.pyth_ts(),
+        block_scholes_spot_source_timestamp_ms: pricer.bs_spot_ts(),
+        block_scholes_forward_source_timestamp_ms: pricer.bs_fwd_ts(),
+        block_scholes_svi_source_timestamp_ms: pricer.bs_svi_ts(),
     });
 }
 
-public(package) fun emit_settled_order_redeemed(
+public(package) fun settled_rdm(
     expiry_market_id: ID,
     account_id: ID,
     owner: address,

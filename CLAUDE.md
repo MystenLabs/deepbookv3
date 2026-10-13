@@ -28,7 +28,7 @@ Authority pointers flow from entrypoints, directives, workflows, and consumers t
 - `crates/` contains the DeepBook indexer, server, and schema crates.
 - `scripts/` contains protocol package-upgrade transactions and SDK examples.
 - `.claude/rules/` contains scoped contributor guidance.
-- `.claude/skills/` contains explicitly invoked specialist workflows.
+- `.claude/skills/` contains specialist workflows; the stacked pull-request workflow applies to every pull request, and the others run only when their trigger matches or the user invokes them.
 
 ## Context routing
 
@@ -41,7 +41,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | Files or surface | Required guidance |
 | --- | --- |
 | `packages/**/*.move`, `packages/**/Move.toml`, `packages/**/Published.toml` | [Sui Move instructions](.claude/rules/move.md) |
-| `packages/{predict,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
+| `packages/{predict,predict_orders,predict_math,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
 | `packages/**/tests/**` | [Unit-test rules](.claude/rules/unit-tests.md) |
 | `packages/predict/{harness,devtools,simulations}/**` | [Predict harness rules](.claude/rules/predict-harness.md) |
 | `packages/predict/deployment/**` | [Predict deployment rules](.claude/rules/predict-deployment.md) |
@@ -56,6 +56,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | Add or build a Predict harness strategy | [Harness-strategy workflow](.claude/rules/harness-strategy.md) and [Predict harness rules](.claude/rules/predict-harness.md) |
 | Create, change, run, publish, deploy, migrate, resume, audit, or verify a Predict deployment | [Predict deployment rules](.claude/rules/predict-deployment.md), plus [Sui Move instructions](.claude/rules/move.md) when package manifests are involved |
 | Wrap up a session | [Wrap-up workflow](.claude/rules/wrap-up.md) |
+| Open, split, or restack a pull request | [Stacked pull-request workflow](.claude/skills/stacked-prs/SKILL.md) |
 | Request Codex-gated pull-request approval | [Auto-approval contract](.github/AUTO_APPROVE.md) |
 
 ## Predict context
@@ -71,9 +72,10 @@ Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as 
 ### Move
 
 - Build a package: `sui move build --path packages/<package>`.
-- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000`; the high gas limit is required because Sui 1.66+ lowered the default test gas budget.
+- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000 --package-size 64`. The high gas limit is required because Sui 1.66+ lowered the default test gas budget. `--package-size 64` raises the test VM's package arena from its 10 MB default, which the Predict test package exceeds, and needs Sui 1.79.1 or later.
 - Build Predict with warnings denied: `sui move build --path packages/predict --warnings-are-errors`.
-- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000`.
+- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000 --package-size 64`.
+- After changing Predict's order-flow primitives, the pricing math, or anything the companion calls, also run `packages/predict_math`, `packages/predict_orders`, and `packages/sessions` with the same flags. CI additionally builds and tests the Mainnet dependency graph, `predict_math` through `sessions`, with `--build-env mainnet` (`.github/workflows/move_test.yml`).
 - Format Move before opening a pull request: `pnpm install --frozen-lockfile && pnpm format:move`; do not use `bunx` or `npx` because CI uses the repository-pinned formatter dependency.
 
 Run every `sui move build` and `sui move test` in the main session, not in a subagent. Preserve the command's real exit code with `${PIPESTATUS[0]}` when a pipeline is unavoidable, or inspect the output for `error` and `Test result:`; never pipe a build or test through `tail`, which reports `tail`'s status.
@@ -95,7 +97,7 @@ Run every `sui move build` and `sui move test` in the main session, not in a sub
 - Keep edits surgical, preserve established local style, and remove only imports, variables, functions, or files made obsolete by the requested change.
 - Define verifiable acceptance before coding and run the smallest relevant check first, expanding to the required package or integration suite as the affected behavior demands.
 - Protocol behavior changes require tests in the owning package; complex tests use short scenario comments and explain non-obvious expected-value arithmetic.
-- Update nearby comments and the owning public documentation when behavior changes; tests and documentation land with the code rather than as deferred follow-up work.
+- Update nearby comments and the owning public documentation when behavior changes; tests and documentation land with the code (tests in the same pull request, documentation in the same pull request or the docs pull request stacked directly on it) rather than as deferred follow-up work.
 - Expected values and generated fixtures must be independent of the implementation under test; follow the [unit-test rules](.claude/rules/unit-tests.md) for the full contract.
 - Predict source is organized by domain subsystem and Predict tests mirror those source folders except for shared helpers and broad flow tests; the [Predict contract rules](.claude/rules/predict-contracts.md) own the detailed layout.
 
@@ -122,4 +124,4 @@ Context prose uses one physical line per paragraph, list item, and blockquote. Y
 
 ## Pull requests
 
-Before creating a branch for a pull request, ask the user for the branch name. Use the repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md). Write the summary, motivation, decisions, scope, tests, and risk in plain engineering language that a contributor can understand without access to private repositories or internal context. Include a DBU identifier in the branch name or pull-request title when the work has a Linear ticket; mechanical documentation and configuration chores may be unticketed.
+Open every pull request as a two-layer stack, code first and then docs and setup, following the [stacked pull-request workflow](.claude/skills/stacked-prs/SKILL.md), unless the change touches only one layer or the user asks for a single pull request. Before creating a branch for a pull request or stack, ask the user for the branch name once; a stack's docs layer appends `-docs` to it. Use the repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md). Write the summary, motivation, decisions, scope, tests, and risk in plain engineering language that a contributor can understand without access to private repositories or internal context. Include a DBU identifier in the branch name or pull-request title when the work has a Linear ticket; mechanical documentation and configuration chores may be unticketed.

@@ -23,6 +23,9 @@ import {
     LOCAL_PYTH_SIGNER_PUBLIC_KEY,
     ORACLE_REGISTRY_ADMIN_CAP_ID,
     ORACLE_REGISTRY_ID,
+    ORDER_DESK_ID,
+    ORDERS_PACKAGE_ID,
+    QUEUE_REGISTRY_ID,
     PACKAGE_ID,
     POOL_VAULT_ID,
     PROPBOOK_PACKAGE_ID,
@@ -60,6 +63,7 @@ import {
 import { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson } from "./artifacts.js";
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
 import { transactionClockTimestampMs } from "./grpcClock.js";
+import { objectLookupExists } from "./grpcObjects.js";
 
 export interface GasUsage {
     computationCost: number;
@@ -91,6 +95,10 @@ const COIN_REGISTRY_ID = "0xc";
 // fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
+// Sui's shared `DenyList` at the reserved address 0x403. The queue calls that send USDC (resolve,
+// refund, settle_step, pay_open, claim_parked) read it, so a denied receive address is parked
+// instead of aborting the whole call.
+const DENY_LIST_ID = "0x403";
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -545,7 +553,7 @@ function aggregateGas(usages: GasUsage[]): GasUsage {
 // Preserve the observable contents of the former single-PTB operation after splitting
 // refresh from pricing: gas, events, and object changes cover every leg in submission
 // order, while the final priced operation remains the scalar digest/effects/Clock authority.
-function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceipt {
+export function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceipt {
     const last = receipts[receipts.length - 1]!;
     return {
         ...last,
@@ -607,6 +615,22 @@ async function getTransactionWithRetry(digest: string): Promise<any> {
 
 export function target(module: string, fn: string): `${string}::${string}::${string}` {
     return `${PACKAGE_ID}::${module}::${fn}`;
+}
+
+// `deepbook_predict_orders` owns the queue and every order entry point. Its calls take the
+// market's `MarketQueue` and the deployment's one `OrderDesk` next to Predict's objects.
+function ordersTarget(module: string, fn: string): `${string}::${string}::${string}` {
+    return `${ORDERS_PACKAGE_ID}::${module}::${fn}`;
+}
+
+// The witness Predict's order-flow allowlist names (`protocol_config::set_order_flow<W>`).
+export const ORDER_FLOW_WITNESS_TYPE = `${ORDERS_PACKAGE_ID}::order_flow::OrderFlow`;
+
+// `queue::queue_id(registry_id, expiry_market_id)`: each market's queue is a derived object of
+// the desk's `QueueRegistry` keyed by the market's ID, so its address is known before
+// `queue::create_and_share` shares it. The key is an `ID`, whose BCS is the 32-byte address.
+export function deriveMarketQueueId(expiryMarketId: string): string {
+    return deriveObjectID(QUEUE_REGISTRY_ID, "0x2::object::ID", bcs.Address.serialize(expiryMarketId).toBytes());
 }
 
 // The `account` package owns the deterministic account wrapper that replaced the
@@ -700,9 +724,9 @@ function parseU64LE(bytes: number[]): bigint {
     return v;
 }
 
-function commandReturnBytes(result: any, cmdIndex: number): number[] {
-    const value = result.commandResults?.[cmdIndex]?.returnValues?.[0]?.bcs;
-    if (!value) throw new Error(`devInspect: no return value at command ${cmdIndex}`);
+function commandReturnBytes(result: any, cmdIndex: number, valueIndex = 0): number[] {
+    const value = result.commandResults?.[cmdIndex]?.returnValues?.[valueIndex]?.bcs;
+    if (!value) throw new Error(`devInspect: no return value ${valueIndex} at command ${cmdIndex}`);
     return Array.from(value as Uint8Array);
 }
 
@@ -773,8 +797,7 @@ export async function readSupplyRequestsPending(): Promise<bigint> {
 
 // Whether a shared/owned object still exists on chain (used to make genesis steps idempotent).
 export async function objectExists(id: string): Promise<boolean> {
-    const result = (await client.getObjects({ objectIds: [id] })).objects[0] as any;
-    return result !== undefined && typeof result?.objectId === "string";
+    return objectLookupExists((await client.getObjects({ objectIds: [id] })).objects[0]);
 }
 
 // A market's expiry (ms) read from chain — recovers expiries for markets the keeper did
@@ -818,6 +841,14 @@ export interface PredictEconomicState {
     withdrawRequestsPending: bigint;
     isSettled: boolean;
     activeMarketCount: bigint;
+    // The market's delayed-execution queue: Predict's summed cash need of the waiting orders,
+    // the queue's counts of unfinished orders, and its settlement payout walk's
+    // `(payout_cursor, next_id)`.
+    waitingCashNeed: bigint;
+    pendingMints: bigint;
+    pendingSells: bigint;
+    payoutCursor: bigint;
+    queueNextId: bigint;
 }
 
 // Read every material parity field from one devInspect snapshot. The simulation
@@ -860,6 +891,11 @@ export async function readPredictEconomicState(params: {
         typeArguments: [`${PACKAGE_ID}::plp::PLP`],
         arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
     });
+    // `order_flow_state` -> (waiting_cash_need, payout-tree node count, minimum entry probability).
+    tx.moveCall({ target: target("expiry_market", "order_flow_state"), arguments: [market] });
+    const queue = tx.object(deriveMarketQueueId(params.expiryMarketId));
+    tx.moveCall({ target: ordersTarget("queue", "pending_counts"), arguments: [queue] });
+    tx.moveCall({ target: ordersTarget("queue", "payout_progress"), arguments: [queue] });
     tx.setSenderIfNotSet(address);
     const result = await simulateGrpc(tx);
     if (!isSuccessStatus(result.effects?.status)) {
@@ -886,6 +922,11 @@ export async function readPredictEconomicState(params: {
         activeMarketCount: BigInt(parseVectorId(commandReturnBytes(result, 14)).length),
         accountUsdcBalance: u64(16),
         accountPlpBalance: u64(17),
+        waitingCashNeed: u64(18),
+        pendingMints: u64(19),
+        pendingSells: parseU64LE(commandReturnBytes(result, 19, 1)),
+        payoutCursor: u64(20),
+        queueNextId: parseU64LE(commandReturnBytes(result, 20, 1)),
     };
 }
 
@@ -1449,7 +1490,8 @@ function valueExpiryTx(params: {
 
 // The closing transaction: `finish_flush` proves every snapshotted market was valued,
 // drains both LP queues at the frozen mark, and releases the valuation lock. Its two
-// budgets are `None` (unbounded). Only the flush starter's address may run it.
+// budgets are `None` (unbounded). The sender must be an allowlisted flush operator
+// (`addFlushOperatorTx`); setup adds the publisher, which sends every flush.
 function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -1463,6 +1505,10 @@ function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }
     return tx;
 }
 
+// Retired live mint: `mint_exact_quantity` aborts `EDelayedExecutionRequired`
+// (expiry_market:13) at any watermark. Queued trading uses `enqueueMintTx` +
+// `commitAndResolveTx`. The mint builders below remain only for the capacity and cleanup
+// measurement strategies, which still need a queued-flow redesign.
 function addMint(tx: Transaction, params: MintParams): void {
     const { lowerTick, higherTick } = mintRangeTicks(
         params.strike,
@@ -1495,10 +1541,11 @@ function addMint(tx: Transaction, params: MintParams): void {
     });
 }
 
+// Retired live close, which aborts like `addMint`. The queued early sell is `enqueueRedeemOpenTx`,
+// which sells an Open queue record rather than an account position.
 function addRedeem(tx: Transaction, params: RedeemParams): void {
-    // The sim always acts as the account owner, so it uses the owner-authorized
-    // `redeem_live` (auth consumed). The benchmark harness does not drive the
-    // permissionless settled redeem path.
+    // The caller acts as the account owner, so this uses the owner-authorized
+    // `redeem_live` (auth consumed).
     const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);
     tx.moveCall({
@@ -1525,12 +1572,16 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
 }
 
 // === Account cleanout (settled-redeem gas measurement, E1) ===
+// Queued positions live in Open queue records, which the queue's `settle_step` pays. An
+// account holds no position for these settled redeems to close, and the cleanup economics
+// move to `queue::cleanup` of finished records.
 // One PTB that redeems every settled position on `wrapper` (permissionless full-close). This is
 // the maximally-incentivized keeper/MEV cleanout: it deletes the N position dynamic-field
 // entries, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
-// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoint derives
+// the cleaner is paid). Requires the market SETTLED. The keeper entrypoint derives
 // PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
-// account's wrapper — the actual on-chain keeper surface, priced as-is.
+// account's wrapper — the actual on-chain keeper surface, priced as-is. The sender must be
+// on the settled-redeem keeper allowlist (`addSettledRedeemKeeperTx`).
 export interface CleanoutPosition {
     orderId: string;
 }
@@ -1560,34 +1611,6 @@ function addRedeemSettledPermissionless(
             tx.object(CLOCK_ID),
         ],
     });
-}
-
-export function redeemSettledTx(params: {
-    expiryMarketId: string;
-    protocolConfigId: string;
-    wrapperId: string;
-    orderId: string;
-    permissionless: boolean;
-}): Transaction {
-    const tx = new Transaction();
-    if (params.permissionless) {
-        addRedeemSettledPermissionless(tx, params);
-    } else {
-        const auth = generateAuth(tx);
-        tx.moveCall({
-            target: target("expiry_market", "redeem_settled"),
-            arguments: [
-                tx.object(params.expiryMarketId),
-                tx.object(params.wrapperId),
-                auth,
-                tx.object(params.protocolConfigId),
-                tx.pure.u256(BigInt(params.orderId)),
-                tx.object(ACCUMULATOR_ROOT_ID),
-                tx.object(CLOCK_ID),
-            ],
-        });
-    }
-    return tx;
 }
 
 export function cleanoutAccountTx(params: CleanoutParams): Transaction {
@@ -1636,6 +1659,19 @@ export function mintPoolValuationCapTx(recipient: string): Transaction {
         arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.object(PROTOCOL_CONFIG_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
+// Admin adds `keeper` to the ProtocolConfig allowlist that gates
+// `expiry_market::redeem_settled_permissionless`. `add_settled_redeem_keeper(config,
+// admin_cap, keeper)` is version-gated and aborts if `keeper` is already listed, so
+// run it once per fresh deployment, not on every restart.
+export function addSettledRedeemKeeperTx(keeper: string): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "add_settled_redeem_keeper"),
+        arguments: [tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID), tx.pure.address(keeper)],
+    });
     return tx;
 }
 
@@ -2019,7 +2055,7 @@ export async function refreshOracleAndFlushTxs(
 // finish, which bootstrap-mints PLP 1:1 against the queued supply. Run once before any
 // market exists, so the bootstrap never races a fast cadence's first expiry. Stays a
 // single PTB: with no market to value there is no payout tree to walk, so nothing here
-// needs the resumable split.
+// needs the resumable split. The sender must already be a flush operator.
 export function bareFlushTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
@@ -2057,40 +2093,26 @@ export function bareFlushTx(params: {
 }
 
 // The keeper's pool-flush SEQUENCE: snapshot every active market atomically, then value
-// each one in its own transaction, then finish. The durable settlement lane
-// (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
-// are only the boundary-race STRAGGLERS that expired since. Their exact-expiry
-// observations are inserted and explicitly settled before the snapshot in the SAME
-// transaction — settling first sweeps the member inside the snapshot stage
-// (`frozen.is_none()`), keeping it off the frozen walk, rather than stamping it live
-// and settling later. Both now work (settlement is no longer flush-gated), but
-// settle-first is preferred, so the settle commands run earlier in this PTB.
-// These commands are race-avoidance, not the durable path: a BS outage aborts the
-// snapshot PTB (reverting them), but the settlement lane already settled durably, so no
-// brick. Live-market valuation reads the updater-maintained fresh BS feed via the
-// snapshot; a market that expires mid-flush is still valued off its frozen pricer and
-// settles on the next settlement pass.
+// each one in its own transaction, then finish. The snapshot sweeps every settled market it
+// snapshots (`frozen.is_none()`), which drops it from `active_expiry_markets`, so it settles
+// nothing itself: a market settled here would leave the active set before its queue's
+// `settle_step` paid its Open records, and the keeper, which rebuilds its work from that set,
+// would never pay them. The settlement lane (keeperTrySettleTx, settleStepTx, cleanupQueueTx)
+// settles, pays, cleans up, and sweeps every expired market first. A market that expires after that pass aborts the snapshot (expired and
+// unsettled) and the flush retries on the next tick. Live-market valuation reads the
+// updater-maintained fresh BS feed via the snapshot; a market that expires mid-flush is still
+// valued off its frozen pricer and settles on the next settlement pass.
 export function keeperFlushTxs(params: {
     feeds: OracleFeedIds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
     poolValuationCapId: string;
-    settlements: { marketId: string; expiryMs: bigint; price: bigint }[];
 }): Transaction[] {
-    // 1. Stragglers settle, then the atomic snapshot stage. Everything from
-    //    `start_pool_valuation` to `seal_valuation_snapshot` is one transaction because
-    //    the `SnapshotStage` potato cannot leave it.
+    // 1. The atomic snapshot stage. Everything from `start_pool_valuation` to
+    //    `seal_valuation_snapshot` is one transaction because the `SnapshotStage` potato
+    //    cannot leave it.
     const snapshotTx = new Transaction();
-    for (const s of params.settlements) {
-        addPythFeedInsert(snapshotTx, params.feeds.pythFeedId, s.price, s.expiryMs);
-        addTrySettle(snapshotTx, {
-            marketId: s.marketId,
-            protocolConfigId: params.protocolConfigId,
-            pythFeedId: params.feeds.pythFeedId,
-            bsValueStoreId: params.feeds.bsValueStoreId,
-        });
-    }
     const proof = snapshotTx.moveCall({
         target: target("registry", "generate_pool_valuation_proof"),
         arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.poolValuationCapId)],
@@ -2150,19 +2172,24 @@ export function keeperFlushTxs(params: {
 }
 
 
-// Settle ONE expired market in its own PTB (decoupled from the flush): insert its exact-expiry Pyth
-// observation, call try_settle, then rebalance_expiry_cash to sweep the settled market from
-// active_expiry_markets. Needs only the exact Pyth spot, NOT
-// live BS pricing, so it proceeds even while the flush defers on a BS outage — no settlement backlog,
-// no beyond-retention brick. Mirrors the production keeper's settlement lane (deepbook-services
-// decision 0010). Per-market so one bad market's settle fails alone.
-export function keeperSettleTx(params: {
+// Settle ONE expired market's price in its own PTB (decoupled from the flush): insert its
+// exact-expiry Pyth observation (`insert_at` skips an existing one), then call Predict's
+// try_settle. Needs only the exact Pyth spot, NOT live BS pricing, so it proceeds even while
+// the flush defers on a BS outage — no settlement backlog, no beyond-retention brick. Mirrors
+// the production keeper's settlement lane (deepbook-services decision 0010). Per-market so one
+// bad market's settle fails alone.
+//
+// `try_settle` settles from the oracle only. The market's queue then settles in its own calls:
+// `settleStepTx` until the payout walk completes, `cleanupQueueTx`, and only then
+// `rebalanceExpiryCashTx`, which moves a settled market's free cash back to the pool and drops it
+// from active_expiry_markets. So a market whose Open records are still unpaid stays in the
+// chain-reconciled active set.
+export function keeperTrySettleTx(params: {
     pythFeedId: string;
     bsValueStoreId: string;
     expiryMs: bigint;
     price: bigint;
     marketId: string;
-    poolVaultId: string;
     protocolConfigId: string;
 }): Transaction {
     const tx = new Transaction();
@@ -2173,16 +2200,177 @@ export function keeperSettleTx(params: {
         pythFeedId: params.pythFeedId,
         bsValueStoreId: params.bsValueStoreId,
     });
+    return tx;
+}
+
+// One bounded phase of an expired market's queue settlement, `queue::settle_step`: DRAIN
+// refunds unfinished orders with reason 5, PAY pays Open records their settled payout through
+// Predict once the market is settled, and the call that reaches the last record emits
+// `MarketPayoutsCompleted`. Permissionless. Several calls in one PTB would share the
+// transaction's object limit, so the keeper sends one per transaction until
+// `readSettlementProgress` shows `payoutsCompleted`.
+export function settleStepTx(params: { marketId: string; protocolConfigId: string }): Transaction {
+    const tx = new Transaction();
     tx.moveCall({
-        target: target("plp", "rebalance_expiry_cash"),
+        target: ordersTarget("queue", "settle_step"),
         arguments: [
-            tx.object(params.poolVaultId),
+            tx.object(deriveMarketQueueId(params.marketId)),
             tx.object(params.marketId),
+            tx.object(ORDER_DESK_ID),
             tx.object(params.protocolConfigId),
+            tx.object(DENY_LIST_ID),
             tx.object(CLOCK_ID),
         ],
     });
     return tx;
+}
+
+// Pay one Open record of a settled market its settled payout, `queue::pay_open`: the record the
+// payout walk skipped because the market was short of cash or its receive address was denied.
+// Permissionless, before or after the walk completes. A record that is not Open is left alone.
+export function payOpenTx(params: { marketId: string; protocolConfigId: string; recordId: bigint }): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: ordersTarget("queue", "pay_open"),
+        arguments: [
+            tx.object(deriveMarketQueueId(params.marketId)),
+            tx.object(params.marketId),
+            tx.object(ORDER_DESK_ID),
+            tx.object(params.protocolConfigId),
+            tx.pure.u64(params.recordId),
+            tx.object(DENY_LIST_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// Send a finished record's parked funds to its receive address, `queue::claim_parked`, once that
+// address is no longer denied. Permissionless; returns 0 and changes nothing when nothing is parked.
+export function claimParkedTx(params: { marketId: string; recordId: bigint }): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: ordersTarget("queue", "claim_parked"),
+        arguments: [
+            tx.object(deriveMarketQueueId(params.marketId)),
+            tx.object(ORDER_DESK_ID),
+            tx.pure.u64(params.recordId),
+            tx.object(DENY_LIST_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// Delete a settled market's finished queue records, `queue::cleanup`. Permissionless, and the
+// storage rebate goes to the sender. Missing IDs and unfinished records are skipped, so a
+// keeper may pass every ID below `next_id`. Each deletion loads one record, so keep a call well
+// under the 1,000 objects a transaction may load.
+export const CLEANUP_BATCH = 200;
+export function cleanupQueueTx(params: { marketId: string; recordIds: bigint[] }): Transaction {
+    if (params.recordIds.length > CLEANUP_BATCH) {
+        throw new Error(`cleanupQueueTx takes at most ${CLEANUP_BATCH} records, got ${params.recordIds.length}`);
+    }
+    const tx = new Transaction();
+    tx.moveCall({
+        target: ordersTarget("queue", "cleanup"),
+        arguments: [
+            tx.object(deriveMarketQueueId(params.marketId)),
+            tx.object(params.marketId),
+            tx.object(ORDER_DESK_ID),
+            tx.pure.vector("u64", params.recordIds),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+export interface SettlementProgress {
+    settled: boolean;
+    // False for a market whose queue was never created: it has no records to drain or pay.
+    hasQueue: boolean;
+    payoutCursor: bigint;
+    nextId: bigint;
+    payoutsCompleted: boolean;
+}
+
+// Whether a market is settled and how far its queue's settlement walk has gone:
+// `expiry_market::is_settled`, then `queue::payout_progress` ->
+// `(payout_cursor, next_id, payouts_completed)`. A market without a queue has nothing to walk,
+// so it reads as complete.
+export async function readSettlementProgress(marketId: string): Promise<SettlementProgress> {
+    const queueId = deriveMarketQueueId(marketId);
+    const hasQueue = await objectExists(queueId);
+    const tx = new Transaction();
+    tx.moveCall({ target: target("expiry_market", "is_settled"), arguments: [tx.object(marketId)] });
+    if (hasQueue) {
+        tx.moveCall({ target: ordersTarget("queue", "payout_progress"), arguments: [tx.object(queueId)] });
+    }
+    tx.setSenderIfNotSet(address);
+    const result = await simulateGrpc(tx);
+    if (!isSuccessStatus(result.effects?.status)) {
+        throw new Error(
+            `settlement progress simulation failed: ${formatStatusError(result.effects?.status, JSON.stringify(result).slice(0, 300))}`,
+        );
+    }
+    const settled = (commandReturnBytes(result, 0)[0] ?? 0) !== 0;
+    if (!hasQueue) return { settled, hasQueue, payoutCursor: 0n, nextId: 0n, payoutsCompleted: true };
+    return {
+        settled,
+        hasQueue,
+        payoutCursor: parseU64LE(commandReturnBytes(result, 1, 0)),
+        nextId: parseU64LE(commandReturnBytes(result, 1, 1)),
+        payoutsCompleted: (commandReturnBytes(result, 1, 2)[0] ?? 0) !== 0,
+    };
+}
+
+// Every market Predict created, from its `MarketCreated` events, oldest first. A keeper that
+// restarts rebuilds its unfinished settlement work from these: the active set alone misses a
+// market someone else swept before its queue's payout walk completed.
+export async function readCreatedMarkets(): Promise<Array<{ id: string; expiryMs: bigint }>> {
+    const markets: Array<{ id: string; expiryMs: bigint }> = [];
+    let after: string | null = null;
+    for (;;) {
+        const page: any = await client.listEvents({
+            filter: { eventType: `${PACKAGE_ID}::config_events::MarketCreated` },
+            include: { json: true },
+            limit: 50,
+            after,
+        } as any);
+        for (const event of page.events) {
+            markets.push({ id: event.json.expiry_market_id, expiryMs: BigInt(event.json.expiry) });
+        }
+        if (!page.hasNextPage) return markets;
+        if (!page.endCursor) throw new Error("Sui gRPC returned an event page without its next cursor");
+        after = page.endCursor;
+    }
+}
+
+// The Open records below `nextId` of a market's queue, from `queue::order`, whose `OrderView`
+// starts with its status. After the settlement walk completes, an Open record is one the walk
+// skipped (the market was short of cash or the receive address was denied), which `pay_open`
+// pays.
+const ORDER_READ_BATCH = 200;
+const STATUS_OPEN = 2;
+export async function readOpenRecordIds(marketId: string, nextId: bigint): Promise<bigint[]> {
+    const open: bigint[] = [];
+    for (let first = 0n; first < nextId; first += BigInt(ORDER_READ_BATCH)) {
+        const ids: bigint[] = [];
+        for (let id = first; id < nextId && id < first + BigInt(ORDER_READ_BATCH); id++) ids.push(id);
+        const tx = new Transaction();
+        const queue = tx.object(deriveMarketQueueId(marketId));
+        for (const id of ids) tx.moveCall({ target: ordersTarget("queue", "order"), arguments: [queue, tx.pure.u64(id)] });
+        tx.setSenderIfNotSet(address);
+        const result = await simulateGrpc(tx);
+        if (!isSuccessStatus(result.effects?.status)) {
+            throw new Error(`queue record read failed: ${formatStatusError(result.effects?.status, "no status")}`);
+        }
+        ids.forEach((id, index) => {
+            const view = commandReturnBytes(result, index);
+            if (view[0] === 1 && view[1] === STATUS_OPEN) open.push(id);
+        });
+    }
+    return open;
 }
 
 // Create the sender's canonical derived account wrapper and share it. `new` derives
@@ -2255,16 +2443,19 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     return tx;
 }
 
-export async function refreshOracleAndMintTxs(
-    params: OracleRefreshParams & MintParams,
+// Refresh the oracle, then enqueue in a second transaction: enqueue loads its volatility
+// snapshot from the feeds, and a priced operation may not read an observation written in its
+// own transaction.
+export async function refreshOracleAndEnqueueMintTxs(
+    params: OracleRefreshParams & EnqueueMintParams,
 ): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addMint(tx, params));
+    return refreshThen(params, (tx) => addEnqueueMint(tx, params));
 }
 
-export async function refreshOracleAndRedeemTxs(
-    params: OracleRefreshParams & RedeemParams,
+export async function refreshOracleAndEnqueueRedeemOpenTxs(
+    params: OracleRefreshParams & EnqueueSellParams,
 ): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addRedeem(tx, params));
+    return refreshThen(params, (tx) => addEnqueueRedeemOpen(tx, params));
 }
 
 // Mint test USDC and transfer it to `toAddress`. The TreasuryCap is owned by the
@@ -2314,6 +2505,251 @@ export function mintBatchTx(mints: MintParams[]): Transaction {
 export function redeemTx(params: RedeemParams): Transaction {
     const tx = new Transaction();
     addRedeem(tx, params);
+    return tx;
+}
+
+// === Delayed execution (queued trading) ===
+// `mint_exact_*` and `redeem_live` (the builders above) abort `EDelayedExecutionRequired` at
+// any watermark. Trading is queued in the `deepbook_predict_orders` companion: enqueue escrows
+// the order in the market's `MarketQueue` and stamps its τ, commit attaches a verified Pyth
+// Lazer price for τ to the waiting cohort, and resolve fills (or refunds) committed orders
+// through Predict's order-flow primitives. Commit and resolve are permissionless. The harness
+// signs the Lazer update with its local trusted signer, the same re-signing it uses for every
+// Pyth spot update.
+//
+// The companion's publish shares the one `OrderDesk`, which holds the delayed-execution policy
+// with its launch values. Nothing trades until the admin allowlists the companion's witness
+// (`enableOrderFlowTx`) and the market's queue exists (`createMarketQueueTx`).
+
+// Admin allowlists the companion's `OrderFlow` witness, so Predict accepts its admissions,
+// commits, and fills. Re-enabling an enabled witness changes nothing. Callers read
+// `readOrderFlowEnabled` first only to skip the transaction.
+export function enableOrderFlowTx(): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_order_flow"),
+        typeArguments: [ORDER_FLOW_WITNESS_TYPE],
+        arguments: [
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.bool(true),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+export async function readOrderFlowEnabled(): Promise<boolean> {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "is_order_flow"),
+        typeArguments: [ORDER_FLOW_WITNESS_TYPE],
+        arguments: [tx.object(PROTOCOL_CONFIG_ID)],
+    });
+    return ((await devInspectFirstReturn(tx))[0] ?? 0) !== 0;
+}
+
+// Create and share a market's queue, `queue::create_and_share(registry, desk, market)`.
+// Permissionless and once per market: the queue claims the ID derived from the desk's registry
+// and the market (`deriveMarketQueueId`), so a second call aborts. Callers check `objectExists`
+// first.
+export function createMarketQueueTx(expiryMarketId: string): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: ordersTarget("queue", "create_and_share"),
+        arguments: [tx.object(QUEUE_REGISTRY_ID), tx.object(ORDER_DESK_ID), tx.object(expiryMarketId)],
+    });
+    return tx;
+}
+
+// Admin adds `operator` to the allowlist `plp::finish_flush` requires. Re-adding aborts
+// `EFlushOperatorAlreadyAdded`, so callers check `readIsFlushOperator` first.
+export function addFlushOperatorTx(operator: string): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "add_flush_operator"),
+        arguments: [
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.address(operator),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+export async function readIsFlushOperator(operator: string): Promise<boolean> {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "is_flush_operator"),
+        arguments: [tx.object(PROTOCOL_CONFIG_ID), tx.pure.address(operator)],
+    });
+    return ((await devInspectFirstReturn(tx))[0] ?? 0) !== 0;
+}
+
+export interface EnqueueMintParams extends OracleFeedIds {
+    expiryMarketId: string;
+    protocolConfigId: string;
+    wrapperId: string;
+    strike: bigint;
+    isUp: boolean;
+    higherStrike?: bigint; // Optional finite upper boundary for an UP range.
+    quantity: bigint;
+    tickSize?: bigint; // cadence tick size; live harness default is $0.01
+    // All-in USDC cap. Mandatory and finite: enqueue refuses an unlimited or zero cap.
+    maxCost: bigint;
+    maxProbability?: bigint; // entry-probability cap at τ (1e9); U64_MAX if omitted
+}
+
+// Queued exact-quantity mint. Enqueue loads its own volatility snapshot from the
+// updater-maintained feeds, so it needs no live Pricer; like every priced operation it must
+// not share a transaction with an oracle write.
+export function enqueueMintTx(params: EnqueueMintParams): Transaction {
+    const tx = new Transaction();
+    addEnqueueMint(tx, params);
+    return tx;
+}
+
+// The leading arguments every placement takes: the market's queue, the market, the trader's
+// account wrapper and owner auth, the desk, Predict's config, and the oracle objects the
+// volatility snapshot loads from.
+function placementPrefix(tx: Transaction, params: OracleFeedIds & { expiryMarketId: string; protocolConfigId: string; wrapperId: string }) {
+    return [
+        tx.object(deriveMarketQueueId(params.expiryMarketId)),
+        tx.object(params.expiryMarketId),
+        tx.object(params.wrapperId),
+        generateAuth(tx),
+        tx.object(ORDER_DESK_ID),
+        tx.object(params.protocolConfigId),
+        tx.object(ORACLE_REGISTRY_ID),
+        tx.object(params.pythFeedId),
+        tx.object(params.bsValueStoreId),
+        tx.object(params.bsSviStoreId),
+    ];
+}
+
+function addEnqueueMint(tx: Transaction, params: EnqueueMintParams): void {
+    const { lowerTick, higherTick } = mintRangeTicks(
+        params.strike,
+        params.isUp,
+        params.tickSize,
+        params.higherStrike,
+    );
+    tx.moveCall({
+        target: ordersTarget("queue", "enqueue_exact_quantity"),
+        arguments: [
+            ...placementPrefix(tx, params),
+            tx.pure.u64(lowerTick),
+            tx.pure.u64(higherTick),
+            tx.pure.u64(params.quantity),
+            tx.pure.u64(params.maxCost),
+            tx.pure.u64(params.maxProbability ?? U64_MAX),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
+export interface EnqueueSellParams extends OracleFeedIds {
+    expiryMarketId: string;
+    protocolConfigId: string;
+    wrapperId: string;
+    // The Open queue record that holds the position, not the position's order id.
+    recordId: bigint;
+    closeQuantity: bigint;
+    minProbability?: bigint; // close-side floors at τ; 0 (disabled) if omitted
+    minProceeds?: bigint;
+}
+
+// Queued early sell of part or all of an Open record's position. The only early exit for a
+// queued position: a position held in the account has none.
+export function enqueueRedeemOpenTx(params: EnqueueSellParams): Transaction {
+    const tx = new Transaction();
+    addEnqueueRedeemOpen(tx, params);
+    return tx;
+}
+
+function addEnqueueRedeemOpen(tx: Transaction, params: EnqueueSellParams): void {
+    tx.moveCall({
+        target: ordersTarget("queue", "enqueue_redeem_open"),
+        arguments: [
+            ...placementPrefix(tx, params),
+            tx.pure.u64(params.recordId),
+            tx.pure.u64(params.closeQuantity),
+            tx.pure.u64(params.minProbability ?? 0n),
+            tx.pure.u64(params.minProceeds ?? 0n),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
+}
+
+// One cohort price: the spot the local signer attests for envelope τ on the cohort's
+// fixed-rate channel. The feed's generation time is τ too, which satisfies the order's
+// `earliest_price_ms`.
+export interface CohortPrice {
+    tauMs: bigint;
+    channel: number;
+    spot1e9: bigint;
+}
+
+// Commit locally signed Lazer prices to the market's waiting cohorts, then resolve up to
+// `maxOrders` committed records, in one PTB. Each update is verified by the published Pyth
+// Lazer package earlier in the same PTB and passed to `commit` by value, as it requires. An
+// update that matches no waiting cohort is skipped, and resolve also refunds orders past their
+// deadline. Resolve visits at most 450 records per call whatever `maxOrders` asks.
+export function commitAndResolveTx(params: {
+    expiryMarketId: string;
+    protocolConfigId: string;
+    prices: CohortPrice[];
+    maxOrders: bigint;
+}): Transaction {
+    const tx = new Transaction();
+    const updates = params.prices.map((price) =>
+        tx.moveCall({
+            target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),
+            arguments: [
+                tx.object(PYTH_LAZER_STATE_ID),
+                tx.object(CLOCK_ID),
+                tx.pure.vector(
+                    "u8",
+                    Array.from(
+                        lazerUpdateFromConfig(
+                            localPythConfig(),
+                            PREDICT_ORACLE_ID,
+                            price.spot1e9,
+                            price.tauMs,
+                            price.channel,
+                        ),
+                    ),
+                ),
+            ],
+        }),
+    );
+    const queue = tx.object(deriveMarketQueueId(params.expiryMarketId));
+    tx.moveCall({
+        target: ordersTarget("queue", "commit"),
+        arguments: [
+            queue,
+            tx.object(params.expiryMarketId),
+            tx.object(ORDER_DESK_ID),
+            tx.object(params.protocolConfigId),
+            tx.makeMoveVec({ type: `${PYTH_LAZER_PACKAGE_ID}::update::Update`, elements: updates }),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    tx.moveCall({
+        target: ordersTarget("queue", "resolve"),
+        arguments: [
+            queue,
+            tx.object(params.expiryMarketId),
+            tx.object(ORDER_DESK_ID),
+            tx.object(params.protocolConfigId),
+            tx.pure.u64(params.maxOrders),
+            tx.object(DENY_LIST_ID),
+            tx.object(CLOCK_ID),
+        ],
+    });
     return tx;
 }
 
