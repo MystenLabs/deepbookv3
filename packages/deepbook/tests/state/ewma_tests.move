@@ -502,3 +502,49 @@ fun test_apply_taker_penalty_caps_gas_price() {
     destroy(clock);
     end(test);
 }
+
+#[test]
+fun test_update_with_max_variance_and_mean_above_cap() {
+    let mut test = begin(@0xF);
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_mean_for_testing(1_000_000_000_000_000);
+    ewma_state.set_variance_for_testing(18_446_744_073_709_551_615);
+
+    // mean = 0.99 * 100_000 + 0.01 * 1_000 = 99_010 MIST
+    // diff^2 = (100_000 - 1_000)^2 = 9_801_000_000 MIST^2
+    // variance = floor(0.99 * 18_446_744_073_709_551_615) + 0.01 * 9_801_000_000 * 1e9
+    //          = 18_262_276_632_972_456_098 + 98_010_000_000_000_000
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
+    assert_eq!(ewma_state.mean(), 99_010_000_000_000);
+    assert_eq!(ewma_state.variance(), 18_360_286_632_972_456_098);
+
+    destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_z_score_caps_mean_recorded_above_cap() {
+    let mut test = begin(@0xF);
+    let taker_fee = 1_000_000;
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_mean_for_testing(1_000_000_000_000_000);
+
+    // variance = 1_000_000 MIST^2, std_dev = 1_000 MIST
+    // z_score = (100_000 - 1_000) / 1_000 = 99; the uncapped mean would give 999.
+    ewma_state.set_variance_for_testing(1_000_000_000_000_000);
+    assert_eq!(ewma_state.z_score(test.ctx()), 99_000_000_000);
+
+    // Smallest non-zero variance, gas price above the cap: both the gas price and
+    // the mean read as the cap, so z_score = 0 and no penalty applies.
+    ewma_state.set_variance_for_testing(1);
+    ewma_state.enable();
+    advance_scenario_with_gas_price(&mut test, 1_000_001, 0);
+    assert_eq!(ewma_state.z_score(test.ctx()), 0);
+    assert_eq!(ewma_state.apply_taker_penalty(taker_fee, test.ctx()), taker_fee);
+
+    end(test);
+}

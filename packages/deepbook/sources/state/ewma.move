@@ -62,8 +62,7 @@ public(package) fun update(self: &mut EWMAState, pool_id: ID, clock: &Clock, ctx
     let alpha = self.alpha;
     let one_minute_alpha = constants::float_scaling() - alpha;
     let gas_price = capped_gas_price(ctx);
-    // A mean recorded before the cap existed can sit above it.
-    let mean = self.mean.min(constants::max_ewma_gas_price() * constants::float_scaling());
+    let mean = self.capped_mean();
 
     let mean_new = math::mul(alpha, gas_price) + math::mul(one_minute_alpha, mean);
 
@@ -101,10 +100,11 @@ public(package) fun z_score(self: &EWMAState, ctx: &TxContext): u64 {
     };
 
     let gas_price = capped_gas_price(ctx);
-    let diff = if (gas_price > self.mean) {
-        gas_price - self.mean
+    let mean = self.capped_mean();
+    let diff = if (gas_price > mean) {
+        gas_price - mean
     } else {
-        self.mean - gas_price
+        mean - gas_price
     };
 
     let std_dev = math::sqrt(self.variance, constants::float_scaling());
@@ -142,7 +142,7 @@ public(package) fun disable(self: &mut EWMAState) {
 /// If the gas price is below the mean, the taker fee is not applied.
 public(package) fun apply_taker_penalty(self: &EWMAState, taker_fee: u64, ctx: &TxContext): u64 {
     let gas_price = capped_gas_price(ctx);
-    if (!self.enabled || gas_price < self.mean) {
+    if (!self.enabled || gas_price < self.capped_mean()) {
         return taker_fee
     };
 
@@ -183,14 +183,25 @@ public(package) fun last_updated_timestamp(self: &EWMAState): u64 {
 }
 
 /// The transaction's gas price, capped at `max_ewma_gas_price` and scaled by `float_scaling`.
-/// With the gas price and `mean` both at most 1e14 once scaled, `math::mul(diff, diff)` in
+/// With the gas price and the `capped_mean` both at most 1e14 once scaled, `math::mul(diff, diff)` in
 /// `update` stays at most 1e19, inside u64 (an uncapped distance overflows above ~135_818
 /// MIST), and the scaled gas price itself cannot overflow.
 fun capped_gas_price(ctx: &TxContext): u64 {
     ctx.gas_price().min(constants::max_ewma_gas_price()) * constants::float_scaling()
 }
 
+/// The stored mean, capped like the gas price. A mean recorded before the cap existed
+/// can sit above it.
+fun capped_mean(self: &EWMAState): u64 {
+    self.mean.min(constants::max_ewma_gas_price() * constants::float_scaling())
+}
+
 #[test_only]
 public fun set_mean_for_testing(self: &mut EWMAState, mean: u64) {
     self.mean = mean;
+}
+
+#[test_only]
+public fun set_variance_for_testing(self: &mut EWMAState, variance: u64) {
+    self.variance = variance;
 }
