@@ -49,6 +49,8 @@ const MAP_UNITS = [
   { key: 'predict-config', pkg: 'predict', paths: 'sources/config' },
   { key: 'predict-capabilities', pkg: 'predict', paths: 'sources/capabilities' },
   { key: 'predict-events', pkg: 'predict', paths: 'sources/events' },
+  { key: 'predict-orders', pkg: 'predict_orders', paths: 'sources' },
+  { key: 'predict-math', pkg: 'predict_math', paths: 'sources' },
   { key: 'propbook', pkg: 'propbook', paths: 'sources' },
   { key: 'account', pkg: 'account', paths: 'sources' },
 ]

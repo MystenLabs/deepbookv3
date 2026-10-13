@@ -48,7 +48,7 @@ loss/compromise/leak is recoverable.
   transition (`share_object`) that widens access unexpectedly?
 
 **Version-gating consistency (first-class deliverable):**
-- Enumerate EVERY state-mutating public/external entry across all four packages; build the version-gate on/off
+- Enumerate EVERY state-mutating public/external entry across all five packages; build the version-gate on/off
   table. Find asymmetries — custody moves, fund-claim, object-creation NOT gated while sibling trade paths ARE;
   for each, deliberate escape hatch or oversight? The watermark model (`ProtocolConfig.version_watermark` is a
   monotonic floor; `config.chk_version()` gates; AdminCap `bump_version_watermark` advances): which mutating
