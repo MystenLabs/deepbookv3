@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-10-08. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-10-13. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -31,14 +31,6 @@ The full sequence passed a localnet rehearsal with the deployment tooling's vers
 The Mainnet multisig path, which emits unsigned transactions (`--emit-unsigned`), also ran end to end. The rehearsal cannot cover a real USDC denial, because localnet USDC is not regulated (Move tests cover it with a deny-list-regulated USDC, RP-46), or full-size batches (DBU-892).
 
 **Action:** run the sequence live on Testnet, measure the full-batch gas there as the rollout's step 10 requires (DBU-892), and only then run Mainnet.
-
-### S-8: `deepbook_predict_orders` and `deepbook_predict_math` have no audit coverage
-
-**Severity:** Deploy gate.
-
-The [Predict audit skill](../../../.claude/skills/predict-audit/SKILL.md) is scoped to `predict`, `propbook`, and `account`. Its primer module map, its ownership-walk units, and its rule-sweep scopes name only those packages. `deepbook_predict_orders` holds every queued order's USDC escrow in its own records and controls the exits of the positions it holds. `deepbook_predict_math` builds `LazerPrice`, the only price a queued fill trusts, and evaluates the pricing math Predict calls. Neither is reached by the skill as written, and Predict's v4 audit predates the split.
-
-**Action:** Extend the audit skill's scope, primer, and workflows to both packages, or audit them separately, and audit the order-flow boundary between them and Predict before Mainnet.
 
 ### S-7: Mainnet publication verification and gas plan
 
@@ -402,6 +394,43 @@ Only 62.65% of the backfill's slices satisfy the SSVI identities (`a = b·sigma�
 
 **Action:** ask Block Scholes what the 01:00 UTC output is, whether the live SSVI feed carries it, and whether every published slice is certified butterfly-free. Consider a Lee bound `b·(1 + |rho|) < 2` in place of `b ≤ 100`; it rejects nothing in either backfill.
 
+### P-38: Predict trusts the companion for an order's timing window
+
+**Severity:** Low. Safe at the launch policy, and reachable only through a companion policy or code change.
+
+Predict's `admit_gates` (`expiry_market.move`) requires τ on the channel's tick grid, `clock ≤ τ + tick`, `τ < deadline`, `τ + no_trade_window < expiry`, and `deadline + 5 s ≤ expiry`. It does not require τ to be after the clock, and it bounds τ and the deadline from above only by expiry. The companion supplies the rest: τ is the first tick at or after placement plus `delay_ms` (`order_queue::plan_timing`), `delay_ms` may be set anywhere in [0, 5,000], and the deadline is τ plus the stall timeout, at most 10 s (`delayed_execution_config`). If the companion's policy or code leaves those bounds:
+
+- With `delay_ms` below one channel tick, or a companion that computes τ differently, an order can bind to a print that was public before it was placed. A Move PoC admits τ one tick in the past and fills it at that print.
+- A deadline far past τ stretches RP-40's accepted withholding option toward expiry, and holds the order's escrow, cash need, and pins for that long. A Move PoC admits a deadline of `expiry − 5 s` and fills the order 60 s after τ.
+
+At the launch policy (800 ms delay on the 200 ms channel) τ lands 601–800 ms after placement on Testnet, so neither case applies today.
+
+**Action:** decide who owns these bounds. Either Predict asserts them in `admit_gates` (`τ > clock`, a deadline at most the maximum stall past τ, τ at most the maximum delay plus one tick past the clock), at a few dozen bytes of package size, or RP-44 records that the companion owns them and `delayed_execution_config` floors `delay_ms` at one channel tick.
+
+### P-39: The fee-subsidy reservation is first-come within a cohort
+
+**Severity:** Low. A grief on sponsored incentives, with no fund loss.
+
+`commit` reserves `min(subsidy bound × rate, remaining incentives)` for each record of a cohort in record order (`queue::commit_cohort`, `expiry_market::commit`), and a record returns its reservation only when it fills or is refunded. An earlier order with a large size and a tight limit can reserve most of a market's incentive balance, miss its limit (reason 1, which keeps its order fee), and return the reservation after the later orders in the cohort filled with less subsidy or none. The attacker gains nothing and pays the order fee. A Move PoC drops a later order's subsidy from 4,000 to 1,000 raw units.
+
+**Action:** cap each order's reservation (for example at the market's live incentive target divided by the per-cohort capacity), or accept the grief and record it in the register.
+
+### P-40: A late expiry print lets the first settler choose the settlement source
+
+**Severity:** Low. Needs the exact Pyth print to be missing 30 s after expiry.
+
+RP-4 lets `try_settle` settle on the Block Scholes exact spot once the clock is 30 s past expiry while Pyth's exact key is still missing. If the Pyth print lands after that, whoever calls `try_settle` first picks the source, and Propbook's exact key is also first-writer-wins across Lazer channels. A position whose strike sits between the two prices settles on a different side depending on that choice. Two of about 3,000 Mainnet v3 settlements had their Pyth print land that late.
+
+**Action:** alert when an expiry's exact Pyth key is still missing 10 s after expiry, keep the keeper's expiry insert well inside the grace period, and decide whether the fallback should be keeper-only or wait longer (RP-4).
+
+### P-41: One undecodable Lazer update aborts a whole commit call
+
+**Severity:** Low. Depends on Pyth's data, and a keeper can recover by dropping the update.
+
+`queue::commit` decodes every feed of every cohort an update matches before it checks whether the price fits (`commit_updates!`), and `lazer_price::from_parts` aborts `EGenerationAfterEnvelope` when a feed's update time is after the envelope that carries it. That is a property of Pyth-signed data, not a caller choice, yet it aborts the whole call: every other cohort in it misses that commit, and the affected cohort, with no usable price and the backup buffer at 0, waits for its deadline refund (and can trip the stuck gate meanwhile). `find_update` also matches an update by channel and timestamp only, so a same-stamped update for another feed set listed first aborts `EFeedMissing` instead of the next update being tried. Pyth normally stamps a feed's update time at or before the envelope, so the first case is not expected in practice.
+
+**Action:** have the fill keeper drop an update that aborts with either code and retry the rest. At the next `predict_math` and companion upgrade, return `none` for a feed update time after the envelope so the cohort waits like any other unusable price, skip updates that carry none of a cohort's feeds, and update the README and the delayed-execution error table.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
@@ -425,6 +454,17 @@ Coupled exposures:
   instantly redirecting and stranding pricing AND
   settlement of all in-flight predict markets, with no timelock and no
   predict-side detection.
+  With queued orders waiting, a rebind also makes every commit for their
+  cohorts abort until their deadline refunds them, and while
+  `pyth_price_buffer_ms > 0` the abort spreads to the next cohort's exact-tick
+  commit, because `queue::commit` decodes every cohort an update matches. No
+  test covers either case. A rebind runbook step should drain or commit the
+  affected queues first.
+- Predict's `AdminCap` can `queue::admin_refund` Committed orders, which lets
+  the operator cancel orders after their τ price is public and before they
+  fill against LPs. The order fee is returned, so it moves no value, but it is
+  a trust surface no register records. Either limit `admin_refund` to Pending
+  orders or record the decision.
 
 **Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
 multisig custody plus a rotation/replacement mechanism for each non-rotatable
@@ -441,6 +481,18 @@ trust coupling.
 
 - Instrument: `packages/predict/harness/ts/strategies/capacity.ts` `tree` profile against a localnet publish.
 - The run must include mid-window trades on the stamped market, including full closes, so the measured walk covers retained husks (husks are ordinary tree nodes converted in place, expected zero extra children — the run proves that expectation).
+
+### C-6: Congestion can cancel keeper transactions on Predict's shared objects
+
+**Severity:** Medium, operational. The mitigations are off-chain.
+
+Sui defers and then cancels transactions on a shared object that its congestion control treats as saturated, and a third party can make an object look saturated at low cost. A keeper transaction at the reference gas price on that object is then cancelled (`ExecutionCancelledDueToSharedObjectCongestion`), which a localnet PoC confirmed. For Predict that can:
+
+- hold back a market's commits and resolves, which makes RP-40's accepted withholding option cheap for up to the stall timeout, refunds the rest of the cohort at its deadline, and lets the stuck gate stop placement on that market;
+- halt placement on every market of an underlying while its `PythFeed` is congested;
+- push `try_settle` into RP-4's Block Scholes fallback (P-40).
+
+**Action:** have the fill and market keepers detect congestion cancellations and retry at an escalating gas price, alert on congestion cancellations that touch Predict objects, and revisit the stall timeout and RP-4's grace period against the value of the option.
 
 ## Oracle Calibration
 
@@ -488,6 +540,21 @@ correctness today.
   revision would, silently. Upstream's manifest states nothing there depends on
   retaining the capability, and the burn commitment obtained for the verifier
   package does not cover this one — worth asking for it.
+- Order-flow loose ends from the companion audit, none above Info:
+  - The mint premium and the trading-fee legs round down, toward the trader,
+    by at most one raw unit each, against R2. Round up or document the
+    accepted direction (R3).
+  - `settle_step`'s payout walk visits every record ID ever created, so the
+    number of calls grows with all records rather than with Open ones. Each
+    call is bounded (RP-43), and `pay_open` pays any Open record directly.
+  - A queue's per-account rows and the `MarketQueue` object are never deleted.
+  - Raising `gap_wait_ms` while cohorts wait can leave cohorts placed under a
+    shorter stall timeout with no backup window before their deadline refund.
+  - `math::roll_down`'s doc says the result is at most `value * 1e9`, but a
+    pricer can pass a ratio up to about 1.03. There is no overflow.
+  - The `delayed_execution_config` settle-batch comment says the deny-list
+    objects load once per transaction. The deny-list reads are per recipient
+    and uncounted toward the cached-object limit (RP-46).
 
 ### H-6: Maintainability backlog
 
