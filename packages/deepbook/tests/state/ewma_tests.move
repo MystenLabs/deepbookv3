@@ -411,3 +411,140 @@ fun test_alpha_parameter_effect() {
     destroy(clock);
     end(test);
 }
+
+#[test]
+fun test_init_ewma_state_caps_gas_price() {
+    let mut test = begin(@0xF);
+
+    // Just below the 100_000 MIST cap: kept as is.
+    advance_scenario_with_gas_price(&mut test, 99_999, 0);
+    let ewma_state = test_init_ewma_state(test.ctx());
+    assert_eq!(ewma_state.mean(), 99_999_000_000_000);
+
+    // At the cap.
+    advance_scenario_with_gas_price(&mut test, 100_000, 0);
+    let ewma_state = test_init_ewma_state(test.ctx());
+    assert_eq!(ewma_state.mean(), 100_000_000_000_000);
+
+    // Far above the cap: treated as the cap.
+    advance_scenario_with_gas_price(&mut test, 1_000_000, 0);
+    let ewma_state = test_init_ewma_state(test.ctx());
+    assert_eq!(ewma_state.mean(), 100_000_000_000_000);
+
+    end(test);
+}
+
+#[test]
+fun test_update_after_high_gas_seed_does_not_overflow() {
+    let mut test = begin(@0xF);
+    advance_scenario_with_gas_price(&mut test, 1_000_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+
+    // An ordinary gas price in a later millisecond. Uncapped, the seed would be
+    // 1_000_000 MIST and (1_000_000 - 100)^2 MIST^2 overflows the scaled u64.
+    // mean = 0.99 * 100_000 + 0.01 * 100 = 99_001 MIST
+    // diff = 100_000 - 100 = 99_900 MIST, variance = 99_900^2 = 9_980_010_000 MIST^2
+    advance_scenario_with_gas_price(&mut test, 100, 0);
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
+    assert_eq!(ewma_state.mean(), 99_001_000_000_000);
+    assert_eq!(ewma_state.variance(), 9_980_010_000_000_000_000);
+
+    destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_update_caps_mean_recorded_above_cap() {
+    let mut test = begin(@0xF);
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    // A mean of 1_000_000 MIST, as a pool could hold from before the cap existed.
+    ewma_state.set_mean_for_testing(1_000_000_000_000_000);
+
+    // The stored mean is read as the 100_000 MIST cap.
+    // mean = 0.99 * 100_000 + 0.01 * 1_000 = 99_010 MIST
+    // diff = 100_000 - 1_000 = 99_000 MIST, variance = 99_000^2 = 9_801_000_000 MIST^2
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
+    assert_eq!(ewma_state.mean(), 99_010_000_000_000);
+    assert_eq!(ewma_state.variance(), 9_801_000_000_000_000_000);
+
+    destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_apply_taker_penalty_caps_gas_price() {
+    let mut test = begin(@0xF);
+    let taker_fee = 1_000_000;
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+
+    // mean = 0.99 * 1_000 + 0.01 * 2_000 = 1_010 MIST
+    // variance = (2_000 - 1_000)^2 = 1_000_000 MIST^2, std_dev = 1_000 MIST
+    advance_scenario_with_gas_price(&mut test, 2_000, 0);
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
+    ewma_state.enable();
+
+    // 50_000_000_000 MIST, the protocol maximum, is read as the 100_000 MIST cap.
+    // Unscaled, 50_000_000_000 * 1e9 would not fit in a u64.
+    // z_score = (100_000 - 1_010) / 1_000 = 98.99
+    advance_scenario_with_gas_price(&mut test, 50_000_000_000, 0);
+    assert_eq!(ewma_state.z_score(test.ctx()), 98_990_000_000);
+    // 98.99 is above the default threshold of 3, so the default 10 bps is added.
+    assert_eq!(ewma_state.apply_taker_penalty(taker_fee, test.ctx()), 2_000_000);
+
+    destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_update_with_max_variance_and_mean_above_cap() {
+    let mut test = begin(@0xF);
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_mean_for_testing(1_000_000_000_000_000);
+    ewma_state.set_variance_for_testing(18_446_744_073_709_551_615);
+
+    // mean = 0.99 * 100_000 + 0.01 * 1_000 = 99_010 MIST
+    // diff^2 = (100_000 - 1_000)^2 = 9_801_000_000 MIST^2
+    // variance = floor(0.99 * 18_446_744_073_709_551_615) + 0.01 * 9_801_000_000 * 1e9
+    //          = 18_262_276_632_972_456_098 + 98_010_000_000_000_000
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
+    assert_eq!(ewma_state.mean(), 99_010_000_000_000);
+    assert_eq!(ewma_state.variance(), 18_360_286_632_972_456_098);
+
+    destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_z_score_caps_mean_recorded_above_cap() {
+    let mut test = begin(@0xF);
+    let taker_fee = 1_000_000;
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_mean_for_testing(1_000_000_000_000_000);
+
+    // variance = 1_000_000 MIST^2, std_dev = 1_000 MIST
+    // z_score = (100_000 - 1_000) / 1_000 = 99; the uncapped mean would give 999.
+    ewma_state.set_variance_for_testing(1_000_000_000_000_000);
+    assert_eq!(ewma_state.z_score(test.ctx()), 99_000_000_000);
+
+    // Smallest non-zero variance, gas price above the cap: both the gas price and
+    // the mean read as the cap, so z_score = 0 and no penalty applies.
+    ewma_state.set_variance_for_testing(1);
+    ewma_state.enable();
+    advance_scenario_with_gas_price(&mut test, 1_000_001, 0);
+    assert_eq!(ewma_state.z_score(test.ctx()), 0);
+    assert_eq!(ewma_state.apply_taker_penalty(taker_fee, test.ctx()), taker_fee);
+
+    end(test);
+}

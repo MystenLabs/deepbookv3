@@ -4881,6 +4881,79 @@ fun test_enable_ewma_params_ok() {
     end(test);
 }
 
+#[test]
+/// A pool's first order at a very high gas price seeds its EWMA state at the
+/// 100_000 MIST cap, so a later order at an ordinary gas price still goes through.
+fun high_gas_first_order_does_not_block_later_orders() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    advance_scenario_with_gas_price(&mut test, 1_000_000, 0);
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(),
+        1000 * constants::float_scaling(),
+        true,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let ewma_state = pool.load_ewma_state();
+        assert_eq!(ewma_state.mean(), 100_000_000_000_000);
+        assert_eq!(ewma_state.variance(), 0);
+        return_shared(pool);
+    };
+
+    // mean = 0.99 * 100_000 + 0.01 * 1_000 = 99_010 MIST
+    // variance = (100_000 - 1_000)^2 = 9_801_000_000 MIST^2
+    set_time(200, &mut test);
+    advance_scenario_with_gas_price(&mut test, 1_000, 0);
+    let order_info = place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(),
+        1000 * constants::float_scaling(),
+        true,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+    assert_eq!(order_info.status(), constants::live());
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let ewma_state = pool.load_ewma_state();
+        assert_eq!(ewma_state.mean(), 99_010_000_000_000);
+        assert_eq!(ewma_state.variance(), 9_801_000_000_000_000_000);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
 /// Trying to place an order that's expiring should fail
 fun place_order_expired_order_skipped() {
