@@ -1,6 +1,6 @@
 ---
 name: predict-audit
-description: Deep, multi-lens security & correctness audit of the DeepBook Predict smart contracts (the predict + propbook + account Move source). Use when asked to audit Predict, hunt bugs/invariant-violations/exploits in Predict, review Predict contract changes before merge, or assess economic safety of the Predict protocol. Smart-contract audit — finds bugs, invariant violations, exploits, and architecture/maintainability issues; it does not check deploy/ops readiness. RUNNING IT IS EXPENSIVE (a whole-fleet run is dozens of agents / a few million tokens; every harness requires an explicit scope and bounds its own agent count by construction) and REQUIRES explicit user confirmation before every run — never execute it automatically.
+description: Deep, multi-lens security & correctness audit of the DeepBook Predict smart contracts (the predict, predict_orders, predict_math, propbook and account Move source). Use when asked to audit Predict, hunt bugs/invariant-violations/exploits in Predict, review Predict contract changes before merge, or assess economic safety of the Predict protocol. Smart-contract audit — finds bugs, invariant violations, exploits, and architecture/maintainability issues; it does not check deploy/ops readiness. RUNNING IT IS EXPENSIVE (a whole-fleet run is dozens of agents / a few million tokens; every harness requires an explicit scope and bounds its own agent count by construction) and REQUIRES explicit user confirmation before every run — never execute it automatically.
 ---
 
 # Predict Smart-Contract Audit
@@ -15,9 +15,9 @@ This skill launches **expensive multi-agent audits** — a whole-fleet run (all 
 
 Invoking, reading, explaining, or editing this skill never needs the gate — **only *executing a harness run* does.** When in doubt, do not run.
 
-A self-driving harness for a deep, adversarial, **smart-contract-only** audit of DeepBook "Predict" — a binary prediction market on Sui — and its three split-out sibling packages. The goal is to **find real bugs**: solvency/fund-loss, liveness/abort (a bricked flow), griefing/DoS, mispricing, broken invariants, and authorization holes — plus, via a dedicated lens, architecture/cohesion/readability issues (overgrown "god" modules, coupling, decomposition). Findings are reasoned from the code AND, where it matters, **empirically reproduced** on localnet or in Python.
+A self-driving harness for a deep, adversarial, **smart-contract-only** audit of DeepBook "Predict" — a binary prediction market on Sui — and its four split-out sibling packages. The goal is to **find real bugs**: solvency/fund-loss, liveness/abort (a bricked flow), griefing/DoS, mispricing, broken invariants, and authorization holes — plus, via a dedicated lens, architecture/cohesion/readability issues (overgrown "god" modules, coupling, decomposition). Findings are reasoned from the code AND, where it matters, **empirically reproduced** on localnet or in Python.
 
-This is a *code-audit* skill (security/correctness + maintainability). It does NOT do testnet-readiness/deploy/ops checks (Move.toml hygiene, post-deploy admin steps, indexer parity, runbooks). If asked for those, say so and scope them separately. Scope is FIXED to the three Predict-cluster packages (predict + propbook + account); do NOT broaden it to deepbook core or other repo packages. Upgrade / object-layout migration correctness is also out of scope (matches `move.md` pre-deploy) — revisit only when nearing deploy.
+This is a *code-audit* skill (security/correctness + maintainability). It does NOT do testnet-readiness/deploy/ops checks (Move.toml hygiene, post-deploy admin steps, indexer parity, runbooks). If asked for those, say so and scope them separately. Scope is FIXED to the five Predict-cluster packages (predict + predict_orders + predict_math + propbook + account); do NOT broaden it to deepbook core or other repo packages. Upgrade / object-layout migration correctness is also out of scope (matches `move.md` pre-deploy) — revisit only when nearing deploy.
 
 ## When to use
 - "Audit Predict" / "deep audit of the predict contracts" / "find bugs in Predict before testnet."
@@ -25,21 +25,25 @@ This is a *code-audit* skill (security/correctness + maintainability). It does N
 - Any request to assess Predict economic safety at the Move-source level.
 
 ## Packages in scope (all Move source, read-only)
-The oracle and custody layers were extracted out of `predict`, so the audit spans three packages; Block Scholes data enters through the external `bs_oracle` signature verifier (Block Scholes-owned, git-pinned — a trust boundary to reason about, not audited surface). Dependency order (leaves first):
+The oracle and custody layers were extracted out of `predict`, and from package version 4 delayed execution added the order-flow companion and a pure math library, so the audit spans five packages; Block Scholes data enters through the external `bs_oracle` signature verifier (Block Scholes-owned, git-pinned — a trust boundary to reason about, not audited surface). Dependency order (leaves first):
 
 ```
 bs_oracle (external verifier)            account (account, account_registry, account_events)
 fixed_math (math) ─────────────┐              │
                                ▼              │
         propbook (registry, oracle_lane, feeds/{pyth,block_scholes_sid,block_scholes_store}, constants)
-                               ▼              ▼
-                    predict (31 modules — the center of gravity)
+                               │              │
+predict_math (math, lazer_price) ──┐          │
+                               ▼   ▼          ▼
+                    predict (29 modules — the center of gravity)
+                               ▼
+        predict_orders (order_flow, queue, order_queue, desk, delayed_execution_config, queue_events)
 ```
 
-`predict` is the top consumer and gets most of the audit budget; the siblings are audited for their own correctness AND for the trust `predict` places in them (lens 08).
+`predict` and its order-flow companion `predict_orders` get most of the audit budget. `predict_orders` holds every queued order's USDC escrow and the receipts of the positions it holds, and `predict_math` builds `LazerPrice`, the only price a queued fill trusts. The siblings are audited for their own correctness AND for the trust `predict` places in them, and `predict` for the trust it places in the companion (lens 08).
 
 ## Method (5 phases)
-1. **Ground truth — MAIN LOOP ONLY.** `sui build` + `sui test` all three packages (`--warnings-are-errors`), and a localnet sim smoke. "Tests don't compile / are red" is itself a finding. Results feed the audit.
+1. **Ground truth — MAIN LOOP ONLY.** `sui build` + `sui test` all five packages (`--warnings-are-errors`), and a localnet sim smoke. "Tests don't compile / are red" is itself a finding. Results feed the audit.
 2. **Find.** The orchestrator's lenses loop-until-dry (bug findings are SAMPLED, so each lens re-runs — bounded by `maxRounds`, retiring per-lane once dry — until it stops surfacing new ones). The rule sweep and ownership walk are SINGLE-PASS: mechanical and per-module conformance ENUMERATE rather than sample, and the next run is round 2.
 3. **Adversarial verify — High/Critical only, cross-model.** Only findings that can lose funds or brick a flow earn verify subagents: the orchestrator panels High/Critical (codex refute + codex repro + Claude settled — an escalated finding clears a different model than the one that found it; needs the codex CLI), the walk sends its 'high' violations to one codex verifier. Everything Medium and below is reported RAW — **the operator is the verifier for that tail** (that is where dispositions actually come from). A null codex verdict retries once on Claude, then surfaces as `unverified-panel` rather than silently degrading.
 4. **Empirical deep pass.** The economic-simulation lens (orchestrator 09) runs the localnet + Python sims and writes new adversarial scenarios to actually break invariants.
@@ -58,8 +62,8 @@ Axis split: lenses = perspective × whole codebase; ownership walk = per-module 
 ```
 python3 .claude/skills/predict-audit/preflight.py               # drift lint FIRST: fatal on primer module-map drift, warns on dangling D-ids
 python3 packages/predict/predeploy/check.py                     # dev-system linter: register pinning tests, ID cross-refs, MEASURED links, dead paths
-sui move build --path packages/<pkg> --warnings-are-errors   # pkg ∈ predict propbook account
-sui move test  --path packages/<pkg> --gas-limit 100000000000   # each of the three (predict is the big suite)
+sui move build --path packages/<pkg> --warnings-are-errors   # pkg ∈ predict predict_orders predict_math propbook account
+sui move test  --path packages/<pkg> --gas-limit 100000000000 --package-size 64   # each of the five (predict is the big suite)
 (cd packages/predict && npm run build && npm test)
 (cd packages/predict && python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v)
 (cd packages/predict && python3 -m harness parity --source /path/to/scenario_dataset.csv --max-rows 20) # localnet parity, MAIN LOOP only
@@ -114,6 +118,8 @@ The whole-codebase last-line-of-defense run is the exception, not the default. F
   | `predict/sources/capabilities/**` | `predict-capabilities` |
   | `predict/sources/{expiry_market,expiry_cash,order,ewma,builder_code,predict_account,constants}.move` | `predict-core` |
   | `predict/sources/events/**` | `predict-events` |
+  | `predict_orders/**` | `predict-orders` |
+  | `predict_math/**` | `predict-math` |
   | `propbook/**` / `account/**` | `propbook` / `account` |
 
 - **Cross-run memory lives in the committed registers, not in run artifacts.** There is no adjudication carry between runs: route a disposition worth remembering through the [Predict development-system authority order](../../../packages/predict/predeploy/README.md#authority-order) to its single owning register, and make finders/verifiers prior-aware through that pointer. A disposition not worth committing is not worth carrying.

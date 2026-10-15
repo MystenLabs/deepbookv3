@@ -25,12 +25,14 @@ import tomllib
 
 CHAINS = {"mainnet": "35834a8a", "testnet": "4c78adac"}
 NEW_PACKAGES = {
-    "fixed_math", "account", "propbook", "deepbook_predict",
-    "deepbook_core_account", "deepbook_sessions",
+    "fixed_math", "account", "propbook", "deepbook_predict_math", "deepbook_predict",
+    "deepbook_predict_orders", "deepbook_core_account", "deepbook_sessions",
 }
 NEW_PATHS = {
     "fixed_math": "packages/fixed_math", "account": "packages/account",
-    "propbook": "packages/propbook", "deepbook_predict": "packages/predict",
+    "propbook": "packages/propbook", "deepbook_predict_math": "packages/predict_math",
+    "deepbook_predict": "packages/predict",
+    "deepbook_predict_orders": "packages/predict_orders",
     "deepbook_core_account": "packages/deepbook_core_account",
     "deepbook_sessions": "packages/sessions",
 }

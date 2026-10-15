@@ -34,7 +34,7 @@ const ZERO_WITHDRAWAL: u64 = 0;
 const RESERVE_AFTER_PARTIAL_WITHDRAWAL: u64 = 15_000_000;
 
 /// A market holds at most fee_incentive_live_target_rate (2%) of its cadence's
-/// max_expiry_allocation (250,000 USDC) at a time: 0.02 * 250e9 = 5e9.
+/// max_alloc (250,000 USDC) at a time: 0.02 * 250e9 = 5e9.
 const LIVE_TARGET: u64 = 5_000_000_000;
 /// Sponsored on top of a full live target, so it stays in the pool reserve.
 const RESERVE_ABOVE_LIVE_TARGET: u64 = 30_000_000;
@@ -711,7 +711,7 @@ fun registration_reports_the_snapshotted_lifetime_cap() {
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let expiry_market_id = object::id_from_address(REGISTERED_MARKET);
 
-    vault.register_expiry(
+    vault.register_exp(
         expiry_market_id,
         test_constants::default_expiry_ms(),
         test_constants::default_max_expiry_allocation(),

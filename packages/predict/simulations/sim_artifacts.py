@@ -7,16 +7,16 @@ import math
 from pathlib import Path
 from typing import Any
 
-LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
+LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v6"
 LOCAL_TRACE_ACTIONS = {
     "mint",
-    "redeem_live",
+    "redeem_open",
     "request_supply",
     "request_withdraw",
     "flush",
     "rebalance_expiry_cash",
     "settle",
-    "redeem_settled",
+    "settle_payout",
 }
 _TRACE_FIELDS = {"schema_version", "steps"}
 _STEP_FIELDS = {

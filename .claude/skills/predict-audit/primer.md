@@ -5,7 +5,9 @@ NO risk opinions — only the protocol, scope, the **current** module map, the g
 toolbox, the discipline, and the report format. If you cannot read this file, stop and ask for it.
 
 > This map reflects the **post-split** code (oracle extracted to `propbook`, math to `fixed_math`,
-> custody to `account`; Block Scholes data is signature-verified by the external `bs_oracle` package).
+> custody to `account`; Block Scholes data is signature-verified by the external `bs_oracle` package;
+> from package version 4, queued order flow lives in the `predict_orders` companion and pure pricing
+> math plus `LazerPrice` in `predict_math`).
 > The older `.claude/predict-review/` files predate this rework — do not trust their module names.
 > Trust the tree below; verify against current HEAD.
 
@@ -31,6 +33,7 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
   (`PredictTradeCap`/`DepositCap`/`WithdrawCap`/`PredictTradeProof`) was removed when custody moved to `account`.
 - **LP** — supplies/withdraws USDC to the PLP vault (async request → privileged flush).
 - **Keeper** — permissionless: triggers settlement and pool syncs.
+- **Fill keeper / any caller** — permissionless on the companion: `commit` (a verified Pyth Lazer update per cohort), `resolve`, deadline `refund`, `settle_step`, `pay_open`, `claim_parked`, `cleanup`. No authority beyond holding a verified update; the deadline refund is the backstop when nobody commits.
 - **Builder** — earns attributed add-on fees via a `BuilderCode`.
 - **Oracle operator** — pushes Block-Scholes spot/forward/SVI updates into the `propbook` feeds; settlement
   is **passive** (no operator settle entrypoint).
@@ -48,9 +51,9 @@ from the pool reserve), PLP (LP vault share token).
 
 ## Module map (CURRENT)
 
-### `predict` (31 modules — the protocol core)
+### `predict` (29 modules — the protocol core)
 - `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap, lifecycle-cap & pool-valuation-cap allowlists, `create_and_share_expiry_market`.
-- `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
+- `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deploy`, higher-rank slot reservation.
 - `predict_account.move` — per-user account; USDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
 - `order.move` — packs immutable position terms (absolute boundary ticks, quantity, sequence) into a u256 order id (132 dense bits); validates shape.
@@ -59,7 +62,7 @@ from the pool reserve), PLP (LP vault share token).
 - `ewma.move` — gas-congestion surcharge ("EWMA penalty") added to trade fees.
 - `constants.move` — upgrade-only constants/sentinels (version, scalings, `pos_inf_tick`, resolution period).
 - `pricing/pricing.move` — the live pricing boundary: binds the market's underlying to current propbook feeds, pre-expiry live-pricing check, feed freshness, the pricing-safe surface envelope (forward>0, basis, |rho|<=1, sigma band), SVI variance + normal-CDF binary pricing; settlement read.
-- `config/` — `protocol_config.move` (global admin knobs + trading-pause + valuation lock + per-expiry rows), `config_constants.move` (defaults + hard bounds + `assert_*` validators), and per-subsystem snapshot configs: `pricing_config`, `ewma_config`, `strike_exposure_config`.
+- `config/` — `protocol_config.move` (global admin knobs + trading-pause + valuation lock + per-expiry rows), `config_constants.move` (defaults + hard bounds + `chk_*` validators), and per-subsystem snapshot configs: `pricing_config`, `ewma_config`, `strike_exposure_config`.
 - `capabilities/` — `admin.move` (singleton `AdminCap`), `market_lifecycle_cap.move` (revocable market-creation gate), `pool_valuation_cap.move` (revocable flush gate), `pause_cap.move` (versioned pause / per-pool mint pause).
 - `plp/plp.move` — LP vault: idle USDC, PLP treasury, per-expiry rebalancing, incentive streams, full-pool valuation (`PoolValuation` hot potato), the privileged flush.
 - `plp/pool_accounting.move` — durable per-expiry sent/received flows, profit basis, loss watermarks, funding caps, `pending_protocol_profit` (D033 deferred-carry).
@@ -68,6 +71,18 @@ from the pool reserve), PLP (LP vault share token).
 - `strike_exposure/range_codec.move` — absolute-tick ⟷ raw conversion, settlement prefix, sentinels (`raw = tick * tick_size`; no centered grid, no boundary indices).
 - `strike_exposure/index/strike_payout_tree.move` — payout-liability + max-live-backing index (treap; `walk_linear`).
 - `events/` — `order_events`, `vault_events`, `builder_code_events`, `config_events` (structs only).
+
+### `predict_orders` (6 modules — the order-flow companion, from package version 4)
+- `order_flow.move` — the `OrderFlow` witness Predict allowlists (`protocol_config::set_order_flow<OrderFlow>`); built only here, behind package-only wrappers around Predict's `admit_mint` / `admit_sell` / `commit` / `try_fill`. `release` and `try_pay_settled` need no witness: holding the `OrderReceipt` is the authority.
+- `queue.move` — one shared `MarketQueue` per market (derived ID from the `QueueRegistry`): queued placement (`enqueue_exact_{quantity,amount,cost}`, `enqueue_redeem_open`), `commit` of verified Lazer updates per cohort, `resolve`, deadline and admin refunds, the settlement drain and payout walk (`settle_step`), `pay_open`, `claim_parked`, `cleanup`, deny-list parking.
+- `order_queue.move` — the `OrderBook` and its `QueuedOrder` records: each record holds Predict's `OrderReceipt` and that order's own escrow `Balance<USDC>`; status/kind/refund-reason codes, τ and deadline planning, the stuck check, cohort spans, walker primitives.
+- `desk.move` — the singleton `OrderDesk` (policy + companion version floor) and `QueueRegistry`, created in `init`; administered with Predict's `AdminCap`.
+- `delayed_execution_config.move` — the admin-tunable `DelayedExecutionPolicy` (delay, stall, gap wait, buffer, capacities, per-account cap, order fee, settlement batch sizes) and its bounds.
+- `queue_events.move` — placement, commit, fill, refund, payout, and cleanup events.
+
+### `predict_math` (2 modules — pure library, from package version 4)
+- `math.move` — Predict's pricing math moved out for package size: SVI evaluation and roll-down, pricing-safe input checks as booleans, the fee curve, inventory-impact potential, premium sizing, builder fee, order-flow cash-need formulas. No objects, balances, events, or aborts on policy; Predict asserts with its own codes.
+- `lazer_price.move` — `LazerPrice` (copy + drop, no store), built only from a verified `pyth_lazer::update::Update` (`from_update`) or package-internally (`from_parts`); the only price a queued fill trusts.
 
 ### `propbook` (6 modules — the extracted oracle)
 - `registry.move` — `OracleRegistry`: Pyth feed creation + binding (`create_and_share_pyth_feed`, `bind_pyth_to_underlying`) and the admin-gated `create_and_share_block_scholes_stores`, which creates one underlying's value/SVI store pair canonical-at-creation (no separate BS bind step); typed canonical lookups.
@@ -86,10 +101,10 @@ from the pool reserve), PLP (LP vault share token).
 - `account_events.move` — account event structs.
 
 ## Lifecycle (per expiry market)
-`market_manager` cadence config → `create_and_share_expiry_market` (reads no live spot; absolute ticks snapshotted from cadence) → seed propbook Pyth + BS data for the emitted expiry → `mint` → live trade/redeem (partial or full close) → **passive settlement** (terminal spot = the exact post-expiry Pyth print from propbook minute history; if absent, the market stays unsettled and live valuation aborts) → settled redeem → compaction (free storage). Full-pool valuation: a transaction-local `PoolValuation` snapshots active expiries, values each once under the valuation lock; the **privileged** flush prices PLP supply AND withdraw at one exact `current_nav` mark.
+`market_manager` cadence config → `create_and_share_expiry_market` (reads no live spot; absolute ticks snapshotted from cadence) → seed propbook Pyth + BS data for the emitted expiry → `mint` → live trade/redeem (partial or full close) → **passive settlement** (terminal spot = the exact post-expiry Pyth print from propbook minute history; if absent, the market stays unsettled and live valuation aborts) → settled redeem → compaction (free storage). From package version 4 trading is queued: Predict's immediate mints and `redeem_live` abort, and the companion runs placement (`admit_*` locks escrow and pins under an `OrderReceipt`, τ = a future Lazer tick) → `commit` (the signed price at τ) → `resolve` (`try_fill` fills or returns a refund reason) or the deadline `refund` (`release`) → after expiry `settle_step` drains unfinished records and pays Open records (`try_pay_settled`) → `cleanup`. Full-pool valuation: a transaction-local `PoolValuation` snapshots active expiries, values each once under the valuation lock; the **privileged** flush prices PLP supply AND withdraw at one exact `current_nav` mark.
 
 ## Glossary (neutral)
-absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` = open-ended-range sentinels. winner payout = the full `Q` (leverage was removed 2026-08-14; there is no floor). The only pre-settlement conservatism is the aggregate disjoint-backing λ buffer (D030). payout_liability / settled_payout_liability = cash the market must back. inventory_impact_reserve = isolated escrow of collected inventory-impact charges. EWMA penalty = gas-congestion fee surcharge. basis = forward/spot from BS pushes. SVI = volatility-surface parameterization for the binary tail. NAV = pool value pricing PLP shares; the flush mark is the **exact** `current_nav` (tree `walk_linear`, floored), no conservative band. float_scaling = 1e9 fixed-point.
+absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` = open-ended-range sentinels. winner payout = the full `Q` (leverage was removed 2026-08-14; there is no floor). The only pre-settlement conservatism is the aggregate disjoint-backing λ buffer (D030). payout_liability / settled_payout_liability = cash the market must back. inventory_impact_reserve = isolated escrow of collected inventory-impact charges. EWMA penalty = gas-congestion fee surcharge. basis = forward/spot from BS pushes. SVI = volatility-surface parameterization for the binary tail. NAV = pool value pricing PLP shares; the flush mark is the **exact** `current_nav` (tree `walk_linear`, floored), no conservative band. float_scaling = 1e9 fixed-point. τ (tau) = the Pyth Lazer fixed-rate tick an order fills at; cohort = the records sharing one τ; deadline = when an uncommitted or unfilled order becomes refund-only; `OrderReceipt` = Predict's value-bearing record of an admitted order (`store` only, held inside a queue record); parked funds = a refund or payout held in its record while the receive address is on the USDC deny list.
 
 ## Prior-awareness (mandatory)
 Before raising anything, read and apply the [Predict development-system authority order](../../../packages/predict/predeploy/README.md#authority-order). Do not duplicate an existing open item or re-litigate a rejected direction unless its recorded revisit condition is met.

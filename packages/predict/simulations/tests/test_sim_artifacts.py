@@ -11,11 +11,11 @@ SIMULATIONS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIMULATIONS_DIR))
 
 from sim_artifacts import load_local_trace
-from write_benchmark_results import main as write_benchmark_results
+from write_benchmark_results import build_results, main as write_benchmark_results
 
 
 class LocalTraceTests(unittest.TestCase):
-    def test_consumers_reject_incomplete_or_coerced_v5_steps(self) -> None:
+    def test_consumers_reject_incomplete_or_coerced_v6_steps(self) -> None:
         invalid_steps = (
             {
                 "step": 1,
@@ -46,7 +46,7 @@ class LocalTraceTests(unittest.TestCase):
                 trace_path.write_text(
                     json.dumps(
                         {
-                            "schema_version": "predict_local_trace_v5",
+                            "schema_version": "predict_local_trace_v6",
                             "steps": [step],
                         }
                     )
@@ -69,7 +69,7 @@ class LocalTraceTests(unittest.TestCase):
             trace_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "predict_local_trace_v5",
+                        "schema_version": "predict_local_trace_v6",
                         "steps": [],
                         "unexpected": True,
                     }
@@ -77,6 +77,49 @@ class LocalTraceTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "unknown=unexpected"):
                 load_local_trace(trace_path)
+
+
+class BenchmarkResultsTests(unittest.TestCase):
+    def test_only_filled_mints_count_as_successful(self) -> None:
+        def step(number: int, action: str, events: list[str]) -> dict[str, object]:
+            return {
+                "step": number,
+                "action": action,
+                "digest": "digest",
+                "pricingTimestampMs": 1,
+                "wallMs": 2.0,
+                "gas": {
+                    "computationCost": 1,
+                    "storageCost": 2,
+                    "storageRebate": 0,
+                    "nonRefundableStorageFee": 0,
+                    "gasTotal": 3,
+                },
+                "events": [
+                    {"type": name, "full_type": f"0x1::queue_events::{name}", "parsedJson": {}}
+                    for name in events
+                ],
+            }
+
+        results = build_results(
+            {
+                "schema_version": "predict_local_trace_v6",
+                "steps": [
+                    step(1, "mint", ["OrderEnqueued", "OrderMinted", "QueuedOrderFilled"]),
+                    step(2, "mint", ["OrderEnqueued", "QueuedOrderRefunded"]),
+                    step(3, "mint", ["OrderEnqueued"]),
+                    step(4, "redeem_open", ["OrderEnqueued", "QueuedOrderFilled"]),
+                ],
+            }
+        )
+
+        summary = results["summary"]
+        self.assertEqual(
+            (summary["attemptedMints"], summary["successfulMints"], summary["rejectedMints"]),
+            (3, 1, 2),
+        )
+        self.assertEqual((len(results["mints"]), len(results["rejectedMints"])), (1, 2))
+        self.assertEqual(summary["byAction"]["mint"]["count"], 3)
 
 
 if __name__ == "__main__":

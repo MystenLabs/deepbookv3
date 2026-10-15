@@ -87,7 +87,7 @@ fun repeated_cost_mints_route_combined_fees_and_return_impact_escrow() {
         FIRST_COST,
         FIRST_QUANTITY,
     );
-    assert_eq!(order::from_order_id(first_id).quantity(), FIRST_QUANTITY);
+    assert_eq!(order::from_id(first_id).quantity(), FIRST_QUANTITY);
     assert_eq!(helpers::market(&market).cash_balance(), initial_cash + FIRST_CASH_DELTA);
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), FIRST_IMPACT);
 
@@ -112,7 +112,7 @@ fun repeated_cost_mints_route_combined_fees_and_return_impact_escrow() {
         FIRST_COST,
         SECOND_QUANTITY,
     );
-    assert_eq!(order::from_order_id(second_id).quantity(), SECOND_QUANTITY);
+    assert_eq!(order::from_id(second_id).quantity(), SECOND_QUANTITY);
     assert_eq!(
         helpers::market(&market).cash_balance(),
         initial_cash + FIRST_CASH_DELTA + SECOND_CASH_DELTA,
@@ -170,7 +170,7 @@ fun cost_quote_does_not_size_to_cash_backing() {
         BACKING_BUDGET,
         std::u64::max_value!(),
     );
-    assert_eq!(order::from_order_id(order_id).quantity(), FIRST_QUANTITY);
+    assert_eq!(order::from_id(order_id).quantity(), FIRST_QUANTITY);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - BACKED_COST,

@@ -20,19 +20,19 @@ const OVERFLOWING_ALIGNED_TICK_SIZE: u64 = 1_099_511_700_000;
 
 #[test]
 fun assert_market_tick_size_bounds_accepts_valid_granularity() {
-    config_constants::assert_market_tick_size_bounds(VALID_BTC_TICK_SIZE);
+    config_constants::chk_ticks(VALID_BTC_TICK_SIZE);
     assert!(VALID_BTC_TICK_SIZE % constants::market_tick_size_unit!() == 0);
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMarketTickSize)]
 fun assert_market_tick_size_bounds_zero_aborts() {
-    config_constants::assert_market_tick_size_bounds(0);
+    config_constants::chk_ticks(0);
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMarketTickSize)]
 fun assert_market_tick_size_bounds_unaligned_aborts() {
-    config_constants::assert_market_tick_size_bounds(UNALIGNED_TICK_SIZE);
+    config_constants::chk_ticks(UNALIGNED_TICK_SIZE);
     abort 999
 }
 
@@ -40,6 +40,6 @@ fun assert_market_tick_size_bounds_unaligned_aborts() {
 fun assert_market_tick_size_bounds_raw_strike_overflow_aborts() {
     // Aligned to `market_tick_size_unit` so the multiple-of-unit check passes and
     // the `tick_size <= u64::max / pos_inf_tick` overflow bound is what fires.
-    config_constants::assert_market_tick_size_bounds(OVERFLOWING_ALIGNED_TICK_SIZE);
+    config_constants::chk_ticks(OVERFLOWING_ALIGNED_TICK_SIZE);
     abort 999
 }

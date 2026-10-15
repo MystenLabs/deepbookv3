@@ -21,9 +21,9 @@ const SVI_FRESHNESS_ABOVE_MAX: u64 = 120_001;
 #[test]
 fun defaults_are_the_deployed_values() {
     let config = pricing_config::new();
-    assert_eq!(config.pyth_spot_freshness_ms(), 2_000);
-    assert_eq!(config.block_scholes_price_freshness_ms(), 2_000);
-    assert_eq!(config.block_scholes_svi_freshness_ms(), 60_000);
+    assert_eq!(config.pyth_age_ms(), 2_000);
+    assert_eq!(config.bs_age_ms(), 2_000);
+    assert_eq!(config.svi_age_ms(), 60_000);
     destroy(config);
 }
 
@@ -35,7 +35,7 @@ fun default_forward_source_is_the_pyth_reanchored_basis() {
     // is that live pricing carries the Block Scholes basis on the Pyth spot, and a
     // macro-vs-getter comparison would pass whichever way that default was flipped.
     let config = pricing_config::new();
-    assert!(config.use_pyth_spot_for_forward());
+    assert!(config.pyth_forward());
     destroy(config);
 }
 
@@ -43,9 +43,9 @@ fun default_forward_source_is_the_pyth_reanchored_basis() {
 fun set_use_pyth_spot_for_forward_toggles_both_ways() {
     let mut config = pricing_config::new();
     config.set_use_pyth_spot_for_forward(false);
-    assert!(!config.use_pyth_spot_for_forward());
+    assert!(!config.pyth_forward());
     config.set_use_pyth_spot_for_forward(true);
-    assert!(config.use_pyth_spot_for_forward());
+    assert!(config.pyth_forward());
     destroy(config);
 }
 
@@ -55,7 +55,7 @@ fun set_use_pyth_spot_for_forward_toggles_both_ways() {
 fun set_pyth_spot_freshness_ms_updates() {
     let mut config = pricing_config::new();
     config.set_pyth_spot_freshness_ms(VALID_PYTH_SPOT_FRESHNESS_MS);
-    assert_eq!(config.pyth_spot_freshness_ms(), VALID_PYTH_SPOT_FRESHNESS_MS);
+    assert_eq!(config.pyth_age_ms(), VALID_PYTH_SPOT_FRESHNESS_MS);
     destroy(config);
 }
 
@@ -63,9 +63,9 @@ fun set_pyth_spot_freshness_ms_updates() {
 fun set_pyth_spot_freshness_ms_accepts_endpoints() {
     let mut config = pricing_config::new();
     config.set_pyth_spot_freshness_ms(1);
-    assert_eq!(config.pyth_spot_freshness_ms(), 1);
+    assert_eq!(config.pyth_age_ms(), 1);
     config.set_pyth_spot_freshness_ms(60_000);
-    assert_eq!(config.pyth_spot_freshness_ms(), 60_000);
+    assert_eq!(config.pyth_age_ms(), 60_000);
     destroy(config);
 }
 
@@ -89,7 +89,7 @@ fun set_pyth_spot_freshness_ms_above_max_aborts() {
 fun set_block_scholes_price_freshness_ms_updates() {
     let mut config = pricing_config::new();
     config.set_block_scholes_price_freshness_ms(VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS);
-    assert_eq!(config.block_scholes_price_freshness_ms(), VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS);
+    assert_eq!(config.bs_age_ms(), VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS);
     destroy(config);
 }
 
@@ -97,9 +97,9 @@ fun set_block_scholes_price_freshness_ms_updates() {
 fun set_block_scholes_price_freshness_ms_accepts_endpoints() {
     let mut config = pricing_config::new();
     config.set_block_scholes_price_freshness_ms(1);
-    assert_eq!(config.block_scholes_price_freshness_ms(), 1);
+    assert_eq!(config.bs_age_ms(), 1);
     config.set_block_scholes_price_freshness_ms(60_000);
-    assert_eq!(config.block_scholes_price_freshness_ms(), 60_000);
+    assert_eq!(config.bs_age_ms(), 60_000);
     destroy(config);
 }
 
@@ -123,7 +123,7 @@ fun set_block_scholes_price_freshness_ms_above_max_aborts() {
 fun set_block_scholes_svi_freshness_ms_updates() {
     let mut config = pricing_config::new();
     config.set_block_scholes_svi_freshness_ms(VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
-    assert_eq!(config.block_scholes_svi_freshness_ms(), VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
+    assert_eq!(config.svi_age_ms(), VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
     destroy(config);
 }
 
@@ -131,9 +131,9 @@ fun set_block_scholes_svi_freshness_ms_updates() {
 fun set_block_scholes_svi_freshness_ms_accepts_endpoints() {
     let mut config = pricing_config::new();
     config.set_block_scholes_svi_freshness_ms(1);
-    assert_eq!(config.block_scholes_svi_freshness_ms(), 1);
+    assert_eq!(config.svi_age_ms(), 1);
     config.set_block_scholes_svi_freshness_ms(120_000);
-    assert_eq!(config.block_scholes_svi_freshness_ms(), 120_000);
+    assert_eq!(config.svi_age_ms(), 120_000);
     destroy(config);
 }
 

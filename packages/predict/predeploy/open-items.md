@@ -1,8 +1,36 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-17. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-10-13. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
+
+### S-10: A denied LP recipient aborts the flush
+
+**Severity:** Known gap, deferred to a future upgrade (decided 2026-10-09). Pre-existing on Mainnet.
+
+Mainnet USDC is a regulated coin, and Sui aborts any transaction that credits USDC to an address on its deny list, or to anyone while USDC is globally paused. The queued-order flow never makes such a send (RP-46), but the LP flush still does: `plp::finish_flush` drains the LP queues through `lp_book::drain`, which sends a withdrawal's payout (`lp_book.move` near line 563) and a refunded supply's escrow (near line 600) straight to the request's recipient. A request whose recipient is denied therefore makes the whole flush abort, which stops every LP fill until the request leaves the queue or the denial lifts. A global USDC pause does so for every queued request.
+
+**Workaround:** the operator starts the flush with the blocked queue's budget at `Some(0)`, which holds that queue while the other drains, and the request's owner can still cancel it.
+
+**Action:** deferred to a future upgrade (decided 2026-10-09). The fix is expected to park the funds for a later claim, as the queued-order flow does, and its response then goes in the register. Until then the workaround above is the operator's runbook step.
+
+### S-9: The v4 upgrade sequence still needs its live Testnet run
+
+**Severity:** Deploy gate. Passed on localnet.
+
+The package-version 4 rollout spans three packages and three version floors, and its order is owned by [architecture](../docs/design/architecture.md#version-gating). A dependent that misses its relink, or a step run out of order, stalls a queue after the bump (RP-45).
+
+The full sequence passed a localnet rehearsal with the deployment tooling's version 4 upgrade workflow, first on the code at `af9f7c37` and again on the final interface at `d8fa6aa8`. It started from the version 3 release (`predict-v3.0.0`) with live version 3 markets and a version 3 position from an immediate mint, then:
+
+- published `deepbook_predict_math`, upgraded Predict, and published `deepbook_predict_orders`, which created the desk and the `QueueRegistry`.
+- ran the admin transaction (`set_order_flow`, `set_order_fee`, and `add_flush_operator`), created queues for the markets created under version 3, upgraded Sessions, bumped the Predict and Sessions watermarks to 4 and 3, and reopened trading.
+- traded on the upgraded closure: a mint committed, resolved, and filled, an early sell, a deadline refund (reason 5), an order placed and filled through a session key, an LP flush finished by the new flush operator, `try_settle`, `settle_step` to DONE with `OpenRecordSettled`, `pay_open`, `claim_parked` returning 0, `cleanup`, and the settled sweep.
+- redeemed the version 3 position with `redeem_settled`.
+- confirmed that the old versions are retired: an immediate mint through version 3 and a Sessions version 1 call both abort `EPackageVersionDisabled`.
+
+The Mainnet multisig path, which emits unsigned transactions (`--emit-unsigned`), also ran end to end. The rehearsal cannot cover a real USDC denial, because localnet USDC is not regulated (Move tests cover it with a deny-list-regulated USDC, RP-46), or full-size batches (DBU-892).
+
+**Action:** run the sequence live on Testnet, measure the full-batch gas there as the rollout's step 10 requires (DBU-892), and only then run Mainnet.
 
 ### S-7: Mainnet publication verification and gas plan
 
@@ -338,7 +366,7 @@ The same scale sets a liveness edge. An SSVI slice's minimum total variance is `
 
 **Severity:** Low. Neither direction is exploitable; both are unmeasured on live data.
 
-`min_svi_variance_increment` computes `b·sigma·sqrt(1 − rho²)` with four floors. Flooring `rho²` rounds `1 − rho²` up, so near `|rho| = 1` the gate's increment can exceed the true minimum and admit a surface whose true minimum total variance is slightly negative (for example, in raw units, `b = 79_695_456_439`, `sigma = 9_025_768_115`, `rho = 995_630_907`, `a = −67_166_622_671`: the gate's increment is 67_166_622_672, one unit above `|a|`, while the true minimum is about −3.4e-6); the per-strike `ENonPositiveVariance` backstop then aborts at the vertex strike. The remaining floors round down, so elsewhere the gate is stricter than true math by up to about `1 + b·(1 + sigma)` raw units: about one unit on SSVI slices, whose tightest backfill margin is exactly one unit. Removing the `|a| ≤ 100` cap (DBU-849) widens the permissive case's reachable magnitude, since `a` can now offset a larger `b·sigma`.
+The minimum-variance increment in `deepbook_predict_math::math::raw_var_ok` computes `b·sigma·sqrt(1 − rho²)` with four floors. Flooring `rho²` rounds `1 − rho²` up, so near `|rho| = 1` the gate's increment can exceed the true minimum and admit a surface whose true minimum total variance is slightly negative (for example, in raw units, `b = 79_695_456_439`, `sigma = 9_025_768_115`, `rho = 995_630_907`, `a = −67_166_622_671`: the gate's increment is 67_166_622_672, one unit above `|a|`, while the true minimum is about −3.4e-6); the per-strike `ENonPositiveVariance` backstop then aborts at the vertex strike. The remaining floors round down, so elsewhere the gate is stricter than true math by up to about `1 + b·(1 + sigma)` raw units: about one unit on SSVI slices, whose tightest backfill margin is exactly one unit. Removing the `|a| ≤ 100` cap (DBU-849) widens the permissive case's reachable magnitude, since `a` can now offset a larger `b·sigma`.
 
 **Action:** decide a one-sided rounding — for example `mul_up` for `rho²` and a single `u128` product `b·sigma·sqrt(1 − rho²)` compared against `|a|` at 1e27 — and pin both sides of the boundary.
 
@@ -346,7 +374,7 @@ The same scale sets a liveness edge. An SSVI slice's minimum total variance is `
 
 **Severity:** High before one- and five-minute SSVI cadences go live, and already reachable on the current feed wherever one-to-five-minute markets are live; flush liveness. Pre-existing, independent of DBU-849.
 
-`compute_nd2` rounds `nd2` and the skew correction down separately, so in both tails, where the digital is a few raw units, the adjusted UP price can rise by one raw unit between neighbouring strikes on an arbitrage-free surface. The ripple is not rare: every one of 160 sampled SSVI slices that DBU-849 admits has one somewhere between whole-dollar strikes, and so do 8 of 20 sampled current-style slices one to five minutes out, always exactly one raw unit (`evidence/rp5-ssvi-backfill-2026-09-28.md`). On a real backfill slice (published 2026-03-19 07:06:40 for the 07:15 expiry: `a = 2218`, `b = 926_157`, `rho = −28_390_040`, `m = 68_038`, `sigma = 2_395_589` raw, forward 70_464.04) the contract returns UP(72,670) = 4 and UP(72,680) = 5. `strike_payout_tree` requires active-book UP prices to be non-increasing with no tolerance, so two active boundaries straddling such a ripple abort that market's valuation with `ENonMonotonePrice` and stall the pool-wide flush. RP-15 attributes such inversions only to a provider breaking its butterfly-free guarantee; this one needs no provider fault. It is also reachable on purpose: a ladder of minimum-size mints whose boundaries sit in the tails places active boundaries across the ripple region as expiry approaches and the tails move in, so a trader can make later valuation snapshots of that market abort. The mainnet entry band (5% to 95% since 2026-09-28) does not prevent it: a ladder entered at 5% or more reaches the ripple region as the tails move in. Before DBU-849 the same short-dated snapshots aborted earlier, at pricer load, on the sigma floor.
+`deepbook_predict_math::math::digital` rounds `nd2` and the skew correction down separately, so in both tails, where the digital is a few raw units, the adjusted UP price can rise by one raw unit between neighbouring strikes on an arbitrage-free surface. The ripple is not rare: every one of 160 sampled SSVI slices that DBU-849 admits has one somewhere between whole-dollar strikes, and so do 8 of 20 sampled current-style slices one to five minutes out, always exactly one raw unit (`evidence/rp5-ssvi-backfill-2026-09-28.md`). On a real backfill slice (published 2026-03-19 07:06:40 for the 07:15 expiry: `a = 2218`, `b = 926_157`, `rho = −28_390_040`, `m = 68_038`, `sigma = 2_395_589` raw, forward 70_464.04) the contract returns UP(72,670) = 4 and UP(72,680) = 5. `strike_payout_tree` requires active-book UP prices to be non-increasing with no tolerance, so two active boundaries straddling such a ripple abort that market's valuation with `ENonMonotonePrice` and stall the pool-wide flush. RP-15 attributes such inversions only to a provider breaking its butterfly-free guarantee; this one needs no provider fault. It is also reachable on purpose: a ladder of minimum-size mints whose boundaries sit in the tails places active boundaries across the ripple region as expiry approaches and the tails move in, so a trader can make later valuation snapshots of that market abort. The mainnet entry band (5% to 95% since 2026-09-28) does not prevent it: a ladder entered at 5% or more reaches the ripple region as the tails move in. Before DBU-849 the same short-dated snapshots aborted earlier, at pricer load, on the sigma floor.
 
 **Action:** decide the tolerance — for example accept a rise of up to two raw units against the running minimum and net with `min(price, previous)`, understating NAV by at most `2e-9` per unit of quantity — record it against RP-15, and land it before short SSVI cadences go live. Pin it with a walk over the two strikes above, and over the one-minute SSVI slice published 20 s before expiry with `a = 63`, `b = 185_973`, `rho = −2_190_270`, `m = 739`, `sigma = 337_252` raw at forward 66_415.25, where UP(66,811) = 9 and UP(66,812) = 10.
 
@@ -354,7 +382,7 @@ The same scale sets a liveness edge. An SSVI slice's minimum total variance is `
 
 **Severity:** Medium; pricing accuracy on live SSVI markets between publications, second order next to the provider's calibration gap near expiry. Pre-existing design (DBU-655), correct for the current feed.
 
-`roll_down_svi` scales `a` and `b` by `remaining / anchored` time and holds `rho`, `m`, and `sigma`, which is total variance scaling linearly with the smile's shape fixed. SSVI slices change shape with time: the provider's `phi = eta·theta^(−1/2)` makes `b`, `m`, and `sigma` scale with `sqrt(remaining / anchored)`. Rolled 20–100 s forward and compared with the provider's own next slice for the same expiry, Predict's roll misses by 0.34–1.27 pp of `UP` on average over `±3 sqrt(w)`, against 0.01–0.23 pp for the SSVI scaling; on the current-style feed Predict's roll is the better one (`evidence/rp5-ssvi-backfill-2026-09-28.md`). The roll only acts between publications — a quote at a publication second prices the fresh slice as-is — so with 20-second publications the ratio stays at or above 0.5 unless a publication is late, and the error is largest just before the next one. Predict's roll is still closer to the provider's next slice than not rolling at all (1.3–12.8 pp), so the near-expiry favourite underpricing measured on the backfill is a provider calibration question, not a roll-down one.
+`pricing::roll_svi` (through `deepbook_predict_math::math::roll_down`) scales `a` and `b` by `remaining / anchored` time and holds `rho`, `m`, and `sigma`, which is total variance scaling linearly with the smile's shape fixed. SSVI slices change shape with time: the provider's `phi = eta·theta^(−1/2)` makes `b`, `m`, and `sigma` scale with `sqrt(remaining / anchored)`. Rolled 20–100 s forward and compared with the provider's own next slice for the same expiry, Predict's roll misses by 0.34–1.27 pp of `UP` on average over `±3 sqrt(w)`, against 0.01–0.23 pp for the SSVI scaling; on the current-style feed Predict's roll is the better one (`evidence/rp5-ssvi-backfill-2026-09-28.md`). The roll only acts between publications — a quote at a publication second prices the fresh slice as-is — so with 20-second publications the ratio stays at or above 0.5 unless a publication is late, and the error is largest just before the next one. Predict's roll is still closer to the provider's next slice than not rolling at all (1.3–12.8 pp), so the near-expiry favourite underpricing measured on the backfill is a provider calibration question, not a roll-down one.
 
 **Action:** before the feed switches to SSVI, decide how the roll-down follows the model — an SSVI roll (`a` by `lambda`; `b`, `m`, `sigma` by `sqrt(lambda)`), a provider flag selecting the roll, or a publication cadence short enough that the roll barely matters — and pin it against the backfill's next-slice comparison. A `sqrt(lambda)`-scaled `sigma` also needs the smile root's exact 1e18 input, which DBU-849 already provides.
 
@@ -365,6 +393,43 @@ The same scale sets a liveness edge. An SSVI slice's minimum total variance is `
 Only 62.65% of the backfill's slices satisfy the SSVI identities (`a = b·sigma·sqrt(1 − rho²)`, `m = −rho·sigma/sqrt(1 − rho²)`). Every slice more than a day out is general raw SVI, and so are 98% of slices within a day that were published in the 01:00 UTC hour and 11.9% of those published outside it; the 01:00 UTC regime carries every negative `a` in the backfill (`evidence/rp5-ssvi-backfill-2026-09-28.md`). Butterfly-freeness is a theorem for the SSVI slices (Gatheral and Jacquier 2014, Theorem 4.2) but only the provider's guarantee for the rest, which RP-15 relies on, and the envelope checks no butterfly or wing condition: its `b ≤ 100` ceiling protects arithmetic headroom, while Lee's moment bound is `b·(1 + |rho|) ≤ 2`, and the backfill peaks at 0.39.
 
 **Action:** ask Block Scholes what the 01:00 UTC output is, whether the live SSVI feed carries it, and whether every published slice is certified butterfly-free. Consider a Lee bound `b·(1 + |rho|) < 2` in place of `b ≤ 100`; it rejects nothing in either backfill.
+
+### P-38: Predict trusts the companion for an order's timing window
+
+**Severity:** Low. Safe at the launch policy, and reachable only through a companion policy or code change.
+
+Predict's `admit_gates` (`expiry_market.move`) requires τ on the channel's tick grid, `clock ≤ τ + tick`, `τ < deadline`, `τ + no_trade_window < expiry`, and `deadline + 5 s ≤ expiry`. It does not require τ to be after the clock, and it bounds τ and the deadline from above only by expiry. The companion supplies the rest: τ is the first tick at or after placement plus `delay_ms` (`order_queue::plan_timing`), `delay_ms` may be set anywhere in [0, 5,000], and the deadline is τ plus the stall timeout, at most 10 s (`delayed_execution_config`). If the companion's policy or code leaves those bounds:
+
+- With `delay_ms` below one channel tick, or a companion that computes τ differently, an order can bind to a print that was public before it was placed. A Move PoC admits τ one tick in the past and fills it at that print.
+- A deadline far past τ stretches RP-40's accepted withholding option toward expiry, and holds the order's escrow, cash need, and pins for that long. A Move PoC admits a deadline of `expiry − 5 s` and fills the order 60 s after τ.
+
+At the launch policy (800 ms delay on the 200 ms channel) τ lands 601–800 ms after placement on Testnet, so neither case applies today.
+
+**Action:** decide who owns these bounds. Either Predict asserts them in `admit_gates` (`τ > clock`, a deadline at most the maximum stall past τ, τ at most the maximum delay plus one tick past the clock), at a few dozen bytes of package size, or RP-44 records that the companion owns them and `delayed_execution_config` floors `delay_ms` at one channel tick.
+
+### P-39: The fee-subsidy reservation is first-come within a cohort
+
+**Severity:** Low. A grief on sponsored incentives, with no fund loss.
+
+`commit` reserves `min(subsidy bound × rate, remaining incentives)` for each record of a cohort in record order (`queue::commit_cohort`, `expiry_market::commit`), and a record returns its reservation only when it fills or is refunded. An earlier order with a large size and a tight limit can reserve most of a market's incentive balance, miss its limit (reason 1, which keeps its order fee), and return the reservation after the later orders in the cohort filled with less subsidy or none. The attacker gains nothing and pays the order fee. A Move PoC drops a later order's subsidy from 4,000 to 1,000 raw units.
+
+**Action:** cap each order's reservation (for example at the market's live incentive target divided by the per-cohort capacity), or accept the grief and record it in the register.
+
+### P-40: A late expiry print lets the first settler choose the settlement source
+
+**Severity:** Low. Needs the exact Pyth print to be missing 30 s after expiry.
+
+RP-4 lets `try_settle` settle on the Block Scholes exact spot once the clock is 30 s past expiry while Pyth's exact key is still missing. If the Pyth print lands after that, whoever calls `try_settle` first picks the source, and Propbook's exact key is also first-writer-wins across Lazer channels. A position whose strike sits between the two prices settles on a different side depending on that choice. Two of about 3,000 Mainnet v3 settlements had their Pyth print land that late.
+
+**Action:** alert when an expiry's exact Pyth key is still missing 10 s after expiry, keep the keeper's expiry insert well inside the grace period, and decide whether the fallback should be keeper-only or wait longer (RP-4).
+
+### P-41: One undecodable Lazer update aborts a whole commit call
+
+**Severity:** Low. Depends on Pyth's data, and a keeper can recover by dropping the update.
+
+`queue::commit` decodes every feed of every cohort an update matches before it checks whether the price fits (`commit_updates!`), and `lazer_price::from_parts` aborts `EGenerationAfterEnvelope` when a feed's update time is after the envelope that carries it. That is a property of Pyth-signed data, not a caller choice, yet it aborts the whole call: every other cohort in it misses that commit, and the affected cohort, with no usable price and the backup buffer at 0, waits for its deadline refund (and can trip the stuck gate meanwhile). `find_update` also matches an update by channel and timestamp only, so a same-stamped update for another feed set listed first aborts `EFeedMissing` instead of the next update being tried. Pyth normally stamps a feed's update time at or before the envelope, so the first case is not expected in practice.
+
+**Action:** have the fill keeper drop an update that aborts with either code and retry the rest. At the next `predict_math` and companion upgrade, return `none` for a feed update time after the envelope so the cohort waits like any other unusable price, skip updates that carry none of a cohort's feeds, and update the README and the delayed-execution error table.
 
 ## Access and Governance
 
@@ -389,6 +454,17 @@ Coupled exposures:
   instantly redirecting and stranding pricing AND
   settlement of all in-flight predict markets, with no timelock and no
   predict-side detection.
+  With queued orders waiting, a rebind also makes every commit for their
+  cohorts abort until their deadline refunds them, and while
+  `pyth_price_buffer_ms > 0` the abort spreads to the next cohort's exact-tick
+  commit, because `queue::commit` decodes every cohort an update matches. No
+  test covers either case. A rebind runbook step should drain or commit the
+  affected queues first.
+- Predict's `AdminCap` can `queue::admin_refund` Committed orders, which lets
+  the operator cancel orders after their τ price is public and before they
+  fill against LPs. The order fee is returned, so it moves no value, but it is
+  a trust surface no register records. Either limit `admin_refund` to Pending
+  orders or record the decision.
 
 **Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
 multisig custody plus a rotation/replacement mechanism for each non-rotatable
@@ -405,6 +481,18 @@ trust coupling.
 
 - Instrument: `packages/predict/harness/ts/strategies/capacity.ts` `tree` profile against a localnet publish.
 - The run must include mid-window trades on the stamped market, including full closes, so the measured walk covers retained husks (husks are ordinary tree nodes converted in place, expected zero extra children — the run proves that expectation).
+
+### C-6: Congestion can cancel keeper transactions on Predict's shared objects
+
+**Severity:** Medium, operational. The mitigations are off-chain.
+
+Sui defers and then cancels transactions on a shared object that its congestion control treats as saturated, and a third party can make an object look saturated at low cost. A keeper transaction at the reference gas price on that object is then cancelled (`ExecutionCancelledDueToSharedObjectCongestion`), which a localnet PoC confirmed. For Predict that can:
+
+- hold back a market's commits and resolves, which makes RP-40's accepted withholding option cheap for up to the stall timeout, refunds the rest of the cohort at its deadline, and lets the stuck gate stop placement on that market;
+- halt placement on every market of an underlying while its `PythFeed` is congested;
+- push `try_settle` into RP-4's Block Scholes fallback (P-40).
+
+**Action:** have the fill and market keepers detect congestion cancellations and retry at an escalating gas price, alert on congestion cancellations that touch Predict objects, and revisit the stall timeout and RP-4's grace period against the value of the option.
 
 ## Oracle Calibration
 
@@ -436,7 +524,7 @@ correctness today.
 - The store pair could be one object. The verifier's two batch types force two
   typed entry functions, not two stores; a single store would drop
   `BlockScholesStorePair`, one registry id, one of the two binding checks in
-  `pricing::assert_current_oracles`, and the duplicated
+  `pricing::chk_oracles`, and the duplicated
   `block_scholes_base_asset` field whose two copies agree only by construction
   and can never be checked against each other on-chain.
 - Every series id is scoped to the verifier package id
@@ -452,6 +540,21 @@ correctness today.
   revision would, silently. Upstream's manifest states nothing there depends on
   retaining the capability, and the burn commitment obtained for the verifier
   package does not cover this one — worth asking for it.
+- Order-flow loose ends from the companion audit, none above Info:
+  - The mint premium and the trading-fee legs round down, toward the trader,
+    by at most one raw unit each, against R2. Round up or document the
+    accepted direction (R3).
+  - `settle_step`'s payout walk visits every record ID ever created, so the
+    number of calls grows with all records rather than with Open ones. Each
+    call is bounded (RP-43), and `pay_open` pays any Open record directly.
+  - A queue's per-account rows and the `MarketQueue` object are never deleted.
+  - Raising `gap_wait_ms` while cohorts wait can leave cohorts placed under a
+    shorter stall timeout with no backup window before their deadline refund.
+  - `math::roll_down`'s doc says the result is at most `value * 1e9`, but a
+    pricer can pass a ratio up to about 1.03. There is no overflow.
+  - The `delayed_execution_config` settle-batch comment says the deny-list
+    objects load once per transaction. The deny-list reads are per recipient
+    and uncounted toward the cached-object limit (RP-46).
 
 ### H-6: Maintainability backlog
 

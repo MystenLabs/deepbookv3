@@ -22,10 +22,10 @@ fun register_expiry_above_live_market_cap_aborts() {
 
     let mut i = 0;
     while (i < constants::max_live_expiry_markets!()) {
-        register_expiry(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
+        register_exp(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
         i = i + 1;
     };
-    register_expiry(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
+    register_exp(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
 
     abort 999
 }
@@ -36,10 +36,10 @@ fun expired_active_markets_do_not_consume_live_market_cap() {
 
     let mut i = 0;
     while (i < constants::max_live_expiry_markets!()) {
-        register_expiry(&mut vault, synthetic_expiry_id(i), EXPIRED_EXPIRY_MS, &clock);
+        register_exp(&mut vault, synthetic_expiry_id(i), EXPIRED_EXPIRY_MS, &clock);
         i = i + 1;
     };
-    register_expiry(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
+    register_exp(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
 
     assert_eq!(vault.active_live_expiry_count(&clock), 1);
     assert_eq!(vault.active_expiry_markets().length(), constants::max_live_expiry_markets!() + 1);
@@ -52,10 +52,10 @@ fun expired_market_can_register_when_live_market_cap_is_full() {
 
     let mut i = 0;
     while (i < constants::max_live_expiry_markets!()) {
-        register_expiry(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
+        register_exp(&mut vault, synthetic_expiry_id(i), FUTURE_EXPIRY_MS, &clock);
         i = i + 1;
     };
-    register_expiry(&mut vault, synthetic_expiry_id(i), EXPIRED_EXPIRY_MS, &clock);
+    register_exp(&mut vault, synthetic_expiry_id(i), EXPIRED_EXPIRY_MS, &clock);
 
     assert_eq!(vault.active_live_expiry_count(&clock), constants::max_live_expiry_markets!());
     assert_eq!(vault.active_expiry_markets().length(), constants::max_live_expiry_markets!() + 1);
@@ -78,8 +78,8 @@ fun finish_vault_test(scenario: Scenario, vault: PoolVault, clock: Clock) {
     scenario.end();
 }
 
-fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID, expiry_ms: u64, clock: &Clock) {
-    vault.register_expiry(
+fun register_exp(vault: &mut PoolVault, expiry_market_id: ID, expiry_ms: u64, clock: &Clock) {
+    vault.register_exp(
         expiry_market_id,
         expiry_ms,
         MAX_EXPIRY_ALLOCATION,

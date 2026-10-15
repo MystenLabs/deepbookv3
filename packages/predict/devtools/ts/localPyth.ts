@@ -18,6 +18,9 @@ const UPDATE_TRUSTED_SIGNER_ACTION = 1;
 const LAZER_UPDATE_MAGIC = 1_296_547_300;
 const LAZER_PAYLOAD_MAGIC = 2_479_346_549;
 const LAZER_CHANNEL_REAL_TIME = 1;
+// Lazer's fixed-rate channel ids, which Predict's queue also uses for `pyth_channel`.
+export const LAZER_CHANNEL_FIXED_RATE_50MS = 2;
+export const LAZER_CHANNEL_FIXED_RATE_200MS = 3;
 const LAZER_PRICE_PROPERTY = 0;
 const LAZER_EXPONENT_PROPERTY = 4;
 const LAZER_FEED_UPDATE_TIMESTAMP_PROPERTY = 12;
@@ -53,6 +56,11 @@ export interface LazerUpdateParams {
   sourceTimestampMs: bigint;
   /** When Pyth generated the price. Defaults to `sourceTimestampMs` (a fresh aggregate). */
   feedUpdateTimestampMs?: bigint;
+  /**
+   * Lazer channel id. Defaults to real-time, which Propbook ingests; a queued-order
+   * commit needs the fixed-rate channel its cohort was placed on.
+   */
+  channel?: number;
 }
 
 export function createLocalPythConfig(nowSeconds = Math.floor(Date.now() / 1000)): LocalPythConfig {
@@ -107,7 +115,7 @@ export function buildLazerUpdateBytes(params: LazerUpdateParams): Uint8Array {
   const payload = concatBytes(
     u32le(LAZER_PAYLOAD_MAGIC),
     u64le(envelopeTimestampUs),
-    u8(LAZER_CHANNEL_REAL_TIME),
+    u8(params.channel ?? LAZER_CHANNEL_REAL_TIME),
     u8(1),
     u32le(params.feedId),
     u8(3),
@@ -146,12 +154,14 @@ export function lazerUpdateFromConfig(
   feedId: number,
   spot1e9: bigint,
   sourceTimestampMs: bigint,
+  channel?: number,
 ): Uint8Array {
   return buildLazerUpdateBytes({
     signerPrivateKey: hexToBytes(config.signerPrivateKey),
     feedId,
     spot1e9,
     sourceTimestampMs,
+    channel,
   });
 }
 

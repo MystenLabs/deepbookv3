@@ -170,7 +170,7 @@ fun template_expiry_fee_max_multiplier_above_max_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidBackingBufferLambda)]
 fun backing_buffer_lambda_below_min_assert_aborts() {
-    config_constants::assert_backing_buffer_lambda(
+    config_constants::chk_lambda(
         config_constants::min_backing_buffer_lambda!() - 1,
     );
     abort 999
@@ -178,7 +178,7 @@ fun backing_buffer_lambda_below_min_assert_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidBackingBufferLambda)]
 fun backing_buffer_lambda_above_max_assert_aborts() {
-    config_constants::assert_backing_buffer_lambda(
+    config_constants::chk_lambda(
         config_constants::max_backing_buffer_lambda!() + 1,
     );
     abort 999
@@ -215,7 +215,7 @@ fun backing_buffer_lambda_market_snapshot_freezes_at_creation() {
 
     fx.set_template_backing_buffer_lambda(config_constants::min_backing_buffer_lambda!());
     let market = fx.take_market_bundle(expiry_id);
-    let snapshot = helpers::config(&market).strike_exposure_config_snapshot();
+    let snapshot = helpers::config(&market).se_snapshot();
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
     assert_eq!(
         helpers::market(&market).backing_buffer_lambda(),
@@ -477,7 +477,7 @@ fun plp_withdraw_fee_rate_above_max_aborts() {
 fun set_plp_supply_fee_rate_during_valuation_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.begin_valuation();
+    config.begin_val();
     config.set_plp_supply_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!(), &clock);
     abort 999
 }
@@ -486,7 +486,7 @@ fun set_plp_supply_fee_rate_during_valuation_aborts() {
 fun set_plp_withdraw_fee_rate_during_valuation_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.begin_valuation();
+    config.begin_val();
     config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!(), &clock);
     abort 999
 }
@@ -498,13 +498,13 @@ fun set_plp_withdraw_fee_rate_during_valuation_aborts() {
 /// to admit it fails here rather than aborting a live flush.
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpSupplyFeeRate)]
 fun plp_supply_fee_rate_at_full_scale_is_rejected() {
-    config_constants::assert_plp_supply_fee_rate(math::float_scaling!());
+    config_constants::chk_sup_fee(math::float_scaling!());
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpWithdrawFeeRate)]
 fun plp_withdraw_fee_rate_at_full_scale_is_rejected() {
-    config_constants::assert_plp_withdraw_fee_rate(math::float_scaling!());
+    config_constants::chk_wd_fee(math::float_scaling!());
     abort 999
 }
 
@@ -516,17 +516,17 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    assert_eq!(config.plp_supply_fee_rate(), 0); // entry is not taxed
-    assert_eq!(config.plp_withdraw_fee_rate(), 2_000_000); // 20 bps on exit
+    assert_eq!(config.sup_fee(), 0); // entry is not taxed
+    assert_eq!(config.wd_fee(), 2_000_000); // 20 bps on exit
 
     // Each leg moves independently over the shared envelope.
     config.set_plp_supply_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!(), &clock);
-    assert_eq!(config.plp_supply_fee_rate(), 50_000_000);
-    assert_eq!(config.plp_withdraw_fee_rate(), 2_000_000); // untouched
+    assert_eq!(config.sup_fee(), 50_000_000);
+    assert_eq!(config.wd_fee(), 2_000_000); // untouched
 
     config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!(), &clock);
-    assert_eq!(config.plp_withdraw_fee_rate(), 0);
-    assert_eq!(config.plp_supply_fee_rate(), 50_000_000); // untouched
+    assert_eq!(config.wd_fee(), 0);
+    assert_eq!(config.sup_fee(), 50_000_000); // untouched
 
     return_shared(config);
     clock.destroy_for_testing();

@@ -78,7 +78,7 @@ class ScenarioGenerationTests(unittest.TestCase):
             finite_mint, finite_close = rows[7:9]
             self.assertEqual(finite_mint["action"], "mint")
             self.assertLess(int(finite_mint["strike"]), int(finite_mint["higher_strike"]))
-            self.assertEqual(finite_close["action"], "redeem_live")
+            self.assertEqual(finite_close["action"], "redeem_open")
             self.assertEqual(finite_close["order_ref"], finite_mint["order_ref"])
 
     def test_config_rejects_missing_and_unknown_fields(self) -> None:
@@ -132,29 +132,99 @@ class ScenarioGenerationTests(unittest.TestCase):
                 {row["action"] for row in rows},
                 {
                     "mint",
-                    "redeem_live",
+                    "redeem_open",
                     "request_supply",
                     "request_withdraw",
                     "flush",
                     "rebalance_expiry_cash",
                     "settle",
-                    "redeem_settled",
+                    "settle_payout",
                 },
-            )
-            self.assertEqual(
-                [row["permissionless"] for row in rows if row["action"] == "redeem_settled"],
-                ["false", "true", "false", "true"],
             )
             partial = next(row for row in rows if row["tx"] == "3")
             self.assertEqual(partial["replacement_order_ref"], "")
+            self.assertEqual(partial["order_ref"], rows[0]["order_ref"])
+            # Every sell and every mint but the last commits a spot for its τ.
+            sells = [row for row in rows if row["action"] == "redeem_open"]
+            mints = [row for row in rows if row["action"] == "mint"]
+            self.assertTrue(all(row["commit_spot"] for row in sells))
+            self.assertTrue(all(row["commit_spot"] for row in mints[:-1]))
+            self.assertEqual(mints[-1]["commit_spot"], "")
             self.assertEqual(
-                next(row for row in rows if row["tx"] == "14")["order_ref"],
-                partial["order_ref"],
+                [bool(row["max_probability"]) for row in mints],
+                [False, False, False, False, False, True, False],
             )
             self.assertLessEqual(
                 max(int(row["quantity"]) for row in rows if row["action"] == "mint"),
                 6_250_000_000,
             )
+
+    def test_sampled_binary_strikes_stay_inside_the_entry_band_margin(self) -> None:
+        # Sampled binaries keep 4 points of room on each side of the 1%-99% entry band, so the
+        # roll-down to τ cannot carry an order meant to fill out of the band.
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            source = tmp / "source.csv"
+            source.write_text(SOURCE_HEADER + "".join(SOURCE_ROWS))
+            output = tmp / "scenario.csv"
+            self._generate(source, output, 0)
+            with output.open(newline="") as file:
+                rows = list(csv.DictReader(file))
+
+        replay = scenario_generator.replay
+        sampled = [
+            row
+            for row in rows
+            if row["action"] == "mint" and not row["higher_strike"] and not row["max_probability"]
+        ]
+        self.assertEqual(len(sampled), 5)
+        for row in sampled:
+            snapshot = {
+                key: int(row[key]) if key not in ("a_negative", "rho_negative", "m_negative")
+                else row[key] == "true"
+                for key in ("spot", "forward", "a", "a_negative", "b", "rho", "rho_negative", "m", "m_negative", "sigma")
+            }
+            lower, higher = replay.binary_range_bounds(int(row["strike"]), row["is_up"] == "true")
+            probability = replay.compute_range_price(
+                scenario_generator.svi_for_replay(snapshot), snapshot["forward"], lower, higher
+            )
+            with self.subTest(order_ref=row["order_ref"]):
+                self.assertGreaterEqual(probability, 50_000_000)
+                self.assertLessEqual(probability, 950_000_000)
+
+    def test_limit_probe_passes_its_cap_at_placement_and_misses_it_at_tau(self) -> None:
+        snapshot = {
+            "spot": 75_000_000_000_000,
+            "forward": 75_000_000_000_000,
+            "a": 171736,
+            "a_negative": False,
+            "b": 7449196,
+            "rho": 243059022,
+            "rho_negative": True,
+            "m": 1133202,
+            "m_negative": False,
+            "sigma": 15731214,
+            "svi_checkpoint_timestamp_ms": 1,
+            "price_checkpoint_timestamp_ms": 1,
+        }
+        generator = scenario_generator.Generator([snapshot], json.loads(CONFIG.read_text()), 0)
+        row = generator.limit_refund_mint_row(13, "probe")
+
+        replay = scenario_generator.replay
+        svi = scenario_generator.svi_for_replay(snapshot)
+        lower, higher = replay.binary_range_bounds(int(row["strike"]), True)
+        commit_spot = int(row["commit_spot"])
+        # The committed spot re-anchors the forward: forward * commit_spot / spot.
+        tick_forward = snapshot["forward"] * commit_spot // snapshot["spot"]
+        placement = replay.compute_range_price(svi, snapshot["forward"], lower, higher)
+        at_tick = replay.compute_range_price(svi, tick_forward, lower, higher)
+        cap = int(row["max_probability"])
+
+        self.assertEqual(row["is_up"], "true")
+        self.assertGreater(commit_spot, snapshot["spot"])
+        self.assertLessEqual(placement + 100_000_000, cap)
+        self.assertGreaterEqual(at_tick, cap + 100_000_000)
+        self.assertLessEqual(at_tick, replay.MAX_ENTRY_PROBABILITY)
 
     def test_settlement_positions_remain_admissible_when_forward_moves(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:

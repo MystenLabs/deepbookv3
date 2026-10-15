@@ -37,9 +37,15 @@ const MINT_MIN_FEE: u64 = 10_000_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
 const EXPIRY_PNL_EVENT_COUNT: u64 = 1;
+const EXPIRY_PNL_REALIZED_EVENT_COUNT: u64 = 1;
+const NO_EVENTS: u64 = 0;
 /// Sponsor subsidy on `MINT_MIN_FEE`: the default 20% subsidy rate (the fixture never
 /// changes it) of 10 USDC, well inside the incentives one minimum sponsorship allocates.
 const MIN_FEE_SUBSIDY: u64 = 2_000_000;
+/// Cash that reaches a settled market after its first sweep, through the test cash
+/// seam. It exceeds the order's full payout `mint_quantity()`, so it exceeds any loss
+/// that payout can leave and turns the expiry's lifetime result into a profit.
+const LATE_SETTLED_CASH: u64 = 1_500_000_000;
 
 /// BCS mirror used to assert the public `vault_events::ExpiryPnl` schema without
 /// adding production getters solely for tests.
@@ -52,6 +58,17 @@ public struct ExpectedExpiryPnl has copy, drop {
     settlement_price: u64,
     sent_to_expiry: u64,
     received_from_expiry: u64,
+    in_profit: bool,
+    amount: u64,
+}
+
+/// BCS mirror of the public `vault_events::ExpiryPnlRealized` schema, for the same reason.
+public struct ExpectedExpiryPnlRealized has copy, drop {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    settlement_price: u64,
     in_profit: bool,
     amount: u64,
 }
@@ -420,7 +437,7 @@ fun settled_order_payout_of_live_market_aborts() {
 
 /// A settled order can be redeemed exactly once.
 ///
-/// With the settled close-terms token gone, `predict_account::remove_position` is the
+/// With the settled close-terms token gone, `predict_account::remove_pos` is the
 /// SOLE mechanism preventing a second redeem from releasing the same payout liability
 /// twice. It also runs before the liability is decremented, so the second attempt
 /// aborts before touching any accounting.
@@ -914,6 +931,7 @@ fun expired_unsettled_standalone_rebalance_moves_no_cash() {
 /// its initial cash `F` and the trader paid `premium + fee` in; the settled sweep holds
 /// back the full-quantity payout and returns the rest, so the pool received
 /// `F + premium + fee - quantity` against `F` sent: a loss of `quantity - premium - fee`.
+/// As the expiry's first realized change, `ExpiryPnlRealized` reports that same loss.
 #[test]
 fun settled_sweep_reports_expiry_loss() {
     let (mut fx, expiry_id, trader) = setup_pool_funded_live_market();
@@ -947,6 +965,14 @@ fun settled_sweep_reports_expiry_loss() {
         false,
         test_constants::mint_quantity() - premium - MINT_MIN_FEE,
     );
+    assert_single_expiry_pnl_realized(
+        &fx,
+        expiry_id,
+        test_constants::short_expiry_ms(),
+        settlement_price,
+        false,
+        test_constants::mint_quantity() - premium - MINT_MIN_FEE,
+    );
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -955,7 +981,7 @@ fun settled_sweep_reports_expiry_loss() {
 
 /// A losing order leaves the pool up by everything the trader paid: the settled sweep
 /// holds back nothing and returns `F + premium + fee` against `F` sent. A repeat sweep
-/// returns no cash, so it reports nothing new.
+/// returns no cash, so it reports nothing new, in either event.
 #[test]
 fun settled_sweep_reports_expiry_profit_once() {
     let (mut fx, expiry_id, trader) = setup_pool_funded_live_market();
@@ -990,8 +1016,90 @@ fun settled_sweep_reports_expiry_profit_once() {
         true,
         premium + MINT_MIN_FEE,
     );
+    assert_single_expiry_pnl_realized(
+        &fx,
+        expiry_id,
+        test_constants::short_expiry_ms(),
+        settlement_price,
+        true,
+        premium + MINT_MIN_FEE,
+    );
 
     helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The first settled sweep realizes the lifetime loss `L = quantity - premium - fee`
+/// (derived in `settled_sweep_reports_expiry_loss`). No current flow adds cash to a
+/// settled market after that sweep, so the test cash seam stands in for one: a later
+/// sweep returns `LATE_SETTLED_CASH` and realizes exactly that as profit, while
+/// `ExpiryPnl` restates the lifetime total. The realized changes sum to that total,
+/// `LATE_SETTLED_CASH - L`, a profit. A further sweep returns nothing and emits nothing.
+#[test]
+fun later_settled_sweep_realizes_only_returned_cash() {
+    let (mut fx, expiry_id, trader) = setup_pool_funded_live_market();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+    let premium = finite_range_premium(&mut fx, &market);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    let expiry = test_constants::short_expiry_ms();
+    let settlement_price = settlement_inside_default_finite_range();
+    fx.set_clock_for_testing(expiry);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    let loss = test_constants::mint_quantity() - premium - MINT_MIN_FEE;
+    assert_single_expiry_pnl_realized(&fx, expiry_id, expiry, settlement_price, false, loss);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    // The first sweep left exactly the unredeemed payout in the market, so the seeded
+    // cash is all free and the later sweep returns all of it.
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.seed_market_cash(helpers::market_mut(&mut market), LATE_SETTLED_CASH);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    assert_single_expiry_pnl_realized(
+        &fx,
+        expiry_id,
+        expiry,
+        settlement_price,
+        true,
+        LATE_SETTLED_CASH,
+    );
+    // Sum of the realized changes: -L + LATE_SETTLED_CASH, positive because
+    // LATE_SETTLED_CASH exceeds the full payout and so exceeds L.
+    let sent = test_constants::default_initial_expiry_cash();
+    assert_single_expiry_pnl(
+        &fx,
+        expiry_id,
+        expiry,
+        settlement_price,
+        sent,
+        sent + premium + MINT_MIN_FEE - test_constants::mint_quantity() + LATE_SETTLED_CASH,
+        true,
+        LATE_SETTLED_CASH - loss,
+    );
+    helpers::return_market_bundle(market);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(event::events_by_type<vault_events::ExpiryPnlRealized>().length(), NO_EVENTS);
+    assert_eq!(event::events_by_type<vault_events::ExpiryPnl>().length(), NO_EVENTS);
+
     helpers::return_market_bundle(market);
     fx.finish();
 }
@@ -1020,6 +1128,7 @@ fun flush_sweep_reports_break_even_expiry() {
 
     let sent = test_constants::default_initial_expiry_cash();
     assert_single_expiry_pnl(&fx, expiry_id, expiry, settlement_price, sent, sent, true, 0);
+    assert_single_expiry_pnl_realized(&fx, expiry_id, expiry, settlement_price, true, 0);
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -1043,6 +1152,7 @@ fun first_settled_sweep_reports_unfunded_expiry() {
     fx.rebalance_expiry_cash_bundle(&mut market);
 
     assert_single_expiry_pnl(&fx, expiry_id, expiry, settlement_price, 0, 0, true, 0);
+    assert_single_expiry_pnl_realized(&fx, expiry_id, expiry, settlement_price, true, 0);
     assert_eq!(helpers::vault(&market).active_expiry_markets().length(), 0);
 
     helpers::return_market_bundle(market);
@@ -1094,6 +1204,14 @@ fun settled_sweep_counts_sponsor_subsidy_as_received() {
         settlement_price,
         sent,
         sent + quote.premium() + MINT_MIN_FEE,
+        true,
+        quote.premium() + MINT_MIN_FEE,
+    );
+    assert_single_expiry_pnl_realized(
+        &fx,
+        expiry_id,
+        test_constants::short_expiry_ms(),
+        settlement_price,
         true,
         quote.premium() + MINT_MIN_FEE,
     );
@@ -1194,6 +1312,30 @@ fun assert_single_expiry_pnl(
         settlement_price,
         sent_to_expiry,
         received_from_expiry,
+        in_profit,
+        amount,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+}
+
+/// Assert this transaction emitted exactly one `ExpiryPnlRealized` and that it equals
+/// the complete expected event for the market at `expiry`.
+fun assert_single_expiry_pnl_realized(
+    fx: &helpers::Fixture,
+    expiry_id: ID,
+    expiry: u64,
+    settlement_price: u64,
+    in_profit: bool,
+    amount: u64,
+) {
+    let events = event::events_by_type<vault_events::ExpiryPnlRealized>();
+    assert_eq!(events.length(), EXPIRY_PNL_REALIZED_EVENT_COUNT);
+    let expected = ExpectedExpiryPnlRealized {
+        pool_vault_id: fx.vault_id(),
+        expiry_market_id: expiry_id,
+        propbook_underlying_id: test_constants::propbook_underlying_id(),
+        expiry,
+        settlement_price,
         in_profit,
         amount,
     };

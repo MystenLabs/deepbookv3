@@ -10,9 +10,7 @@
 /// `ExpiryMarket` owns the stored state and decides when to fold observations in.
 module deepbook_predict::ewma;
 
-use deepbook_predict::ewma_config::EwmaConfig;
 use fixed_math::math;
-use sui::clock::Clock;
 
 /// Smoothed gas-price estimate for one expiry market. `mean` and `variance` are
 /// scaled by `float_scaling`.
@@ -29,7 +27,7 @@ public struct EwmaState has copy, drop, store {
 /// zero, so no penalty applies until a later observation creates variance.
 public(package) fun new(ctx: &TxContext): EwmaState {
     EwmaState {
-        mean: scaled_gas_price(ctx),
+        mean: scaled_gas(ctx),
         variance: 0,
         last_updated_timestamp_ms: 0,
     }
@@ -39,14 +37,15 @@ public(package) fun new(ctx: &TxContext): EwmaState {
 /// trading fee. Zero unless the penalty is enabled, variance has accumulated, and
 /// the current gas price sits above the mean by more than `z_score_threshold`
 /// standard deviations.
+#[test_only]
 public(package) fun penalty_fee(
     self: &EwmaState,
-    config: &EwmaConfig,
+    config: &deepbook_predict::ewma_config::EwmaConfig,
     quantity: u64,
     ctx: &TxContext,
 ): u64 {
     if (!config.enabled() || self.variance == 0) return 0;
-    let gas_price = scaled_gas_price(ctx);
+    let gas_price = scaled_gas(ctx);
     if (gas_price <= self.mean) return 0;
 
     let std_dev = math::sqrt_down(self.variance);
@@ -65,10 +64,11 @@ public(package) fun penalty_fee(
 ///
 /// The squared deviation is measured from the pre-update mean. When variance is
 /// zero, the first nonzero deviation becomes the variance without alpha scaling.
+#[test_only]
 public(package) fun update(
     self: &mut EwmaState,
-    config: &EwmaConfig,
-    clock: &Clock,
+    config: &deepbook_predict::ewma_config::EwmaConfig,
+    clock: &sui::clock::Clock,
     ctx: &TxContext,
 ) {
     let now = clock.timestamp_ms();
@@ -77,7 +77,7 @@ public(package) fun update(
 
     let alpha = config.alpha();
     let one_minus_alpha = math::float_scaling!() - alpha;
-    let gas_price = scaled_gas_price(ctx);
+    let gas_price = scaled_gas(ctx);
 
     let mean_new = math::mul_down(alpha, gas_price) + math::mul_down(one_minus_alpha, self.mean);
 
@@ -96,6 +96,6 @@ public(package) fun update(
 // === Private Functions ===
 
 /// Return the transaction gas price in FLOAT_SCALING.
-fun scaled_gas_price(ctx: &TxContext): u64 {
+fun scaled_gas(ctx: &TxContext): u64 {
     ctx.gas_price() * math::float_scaling!()
 }

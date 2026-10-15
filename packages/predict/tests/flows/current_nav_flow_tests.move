@@ -6,7 +6,7 @@
 /// production mint flow, then asserts `current_nav` exactly equals an INDEPENDENT
 /// per-order reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed
 /// straight from each order's atoms and `pricing::range_price`. The reference
-/// reuses NONE of `walk_linear` / `live_marked_liability` / `current_nav` /
+/// reuses NONE of `walk_linear` / `marked_liab` / `current_nav` /
 /// `expiry_cash::free_cash`, so it is a genuine oracle (unit-tests rule 1): it
 /// sums per order, while the contract nets per boundary.
 ///
@@ -207,7 +207,7 @@ fun check_nav(
 fun reference_nav(market: &ExpiryMarket, pricer: &Pricer, order_ids: &vector<u256>): u64 {
     let mut liability = 0;
     order_ids.do_ref!(|id| {
-        let decoded = order::from_order_id(*id);
+        let decoded = order::from_id(*id);
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
         liability =

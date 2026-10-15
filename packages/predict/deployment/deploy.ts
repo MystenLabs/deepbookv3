@@ -4,10 +4,11 @@
 /**
  * Publish and configure an independent Predict deployment on an explicit Sui network.
  *
- * Mainnet publishes six packages, uses native Circle USDC, and locks 10 USDC without
+ * Mainnet publishes eight packages, uses native Circle USDC, and locks 10 USDC without
  * an LP supply. Testnet publishes and mints collateral unless existing USDC is selected,
  * and supplies initial LP capital. Both authorize apps, wire BTC oracle state, configure
- * cadences, and create initial unfunded market objects without price observations.
+ * cadences, allowlist the order-flow companion, and create initial unfunded market objects,
+ * each with its delayed-execution queue, without price observations.
  * Operational capabilities are issued separately to an explicit recipient. Recovery
  * is written to the network-specific private journal. The public integration manifest is
  * derived after the contract deployment audit; external authorization is reported separately.
@@ -50,7 +51,7 @@ import {
     type TransactionArgument,
     type TransactionResult,
 } from "@mysten/sui/transactions";
-import { fromBase58, fromBase64, toHex } from "@mysten/sui/utils";
+import { deriveObjectID, fromBase58, fromBase64, toHex } from "@mysten/sui/utils";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..", "..");
@@ -91,12 +92,16 @@ function existingUsdc(): ExistingUsdc | null {
         : REUSED_TESTNET_USDC;
 }
 
+// Predict links the pricing-math library, and the order-flow companion links both, so the
+// library publishes before Predict and the companion after it. Sessions wraps the companion.
 const TESTNET_PACKAGES = [
     "fixed_math",
     "usdc",
     "account",
     "propbook",
+    "predict_math",
     "predict",
+    "predict_orders",
     "deepbook_core_account",
     "sessions",
 ] as const;
@@ -135,7 +140,10 @@ const EXPECTED_SHARED: Record<PackageName, readonly string[]> = {
     usdc: [],
     account: ["account_registry::AccountRegistry"],
     propbook: ["registry::OracleRegistry"],
+    predict_math: [],
     predict: ["plp::PoolVault", "protocol_config::ProtocolConfig", "registry::Registry"],
+    // `desk`'s `init` shares the deployment's one OrderDesk and its QueueRegistry at publish.
+    predict_orders: ["desk::OrderDesk", "desk::QueueRegistry"],
     deepbook_core_account: [],
     sessions: ["session_config::SessionsConfig"],
 };
@@ -302,6 +310,32 @@ export const CADENCES: readonly CadenceSpec[] = [
     },
 ] as const;
 
+// A fresh Sessions publish starts its watermark at `session_config::current_version!()`.
+export const EXPECTED_SESSIONS_VERSION_WATERMARK = "3";
+
+// The OrderDesk as `desk`'s `init` creates it: the launch policy
+// (`delayed_execution_config::new`) and the floor at the companion's `current_version!()`.
+// The deployment sets no policy, so the audit requires exactly these values.
+export const EXPECTED_ORDER_DESK: OrderDeskRecord = {
+    versionWatermark: "1",
+    policy: {
+        delayMs: "800",
+        stallTimeoutMs: "5000",
+        stuckThresholdMs: "1500",
+        gapWaitMs: "2000",
+        pythPriceBufferMs: "0",
+        pythChannel: "3",
+        sviMaxAgeMs: "60000",
+        mintCapacity: "100",
+        sellCapacity: "100",
+        perAccountCap: "5",
+        orderFee: "20000",
+        minSellQuantity: "10000",
+        settleRefundBatch: "450",
+        settlePayoutBatch: "900",
+    },
+};
+
 export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     usePythSpotForForward: true,
     pythSpotFreshnessMs: "2000",
@@ -327,7 +361,9 @@ export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     maxEntryProbability: "990000000",
     expiryFeeWindowMs: "86400000",
     expiryFeeMaxMultiplier: "1000000000",
-    versionWatermark: "1",
+    // A fresh publish starts the watermark at `constants::current_version!()`,
+    // which is past the delayed-execution cutover: only queued trading is open.
+    versionWatermark: "4",
     tradingPaused: false,
     frozen: false,
     valuationInProgress: false,
@@ -416,6 +452,32 @@ interface MarketRecord {
     initialExpiryCash: string;
     createTx: string | null;
     cashBalance: string | null;
+    // The market's delayed-execution queue, at the ID derived from the desk and the market.
+    // `queueCreateTx` stays null when someone else created the queue first.
+    queueId: string | null;
+    queueCreateTx: string | null;
+}
+
+interface DelayedExecutionPolicyRecord {
+    delayMs: string;
+    stallTimeoutMs: string;
+    stuckThresholdMs: string;
+    gapWaitMs: string;
+    pythPriceBufferMs: string;
+    pythChannel: string;
+    sviMaxAgeMs: string;
+    mintCapacity: string;
+    sellCapacity: string;
+    perAccountCap: string;
+    orderFee: string;
+    minSellQuantity: string;
+    settleRefundBatch: string;
+    settlePayoutBatch: string;
+}
+
+interface OrderDeskRecord {
+    versionWatermark: string;
+    policy: DelayedExecutionPolicyRecord;
 }
 
 interface WiringState {
@@ -558,6 +620,7 @@ interface Verification {
     valuationCap: ObjectEvidence;
     cadences: CadenceRecord[];
     protocolConfig: ProtocolConfigRecord;
+    orderDesk: OrderDeskRecord;
     pool: {
         totalSupply: string;
         idleBalance: string;
@@ -629,6 +692,8 @@ const FIXED_TRANSACTION_STEPS = [
     "bind_pyth_to_underlying",
     "register_predict_underlying",
     "set_cadence_configs",
+    "enable_order_flow",
+    "add_deployer_flush_operator",
     "create_deployer_account",
     "bootstrap_pool",
 ] as const;
@@ -641,13 +706,19 @@ export function plannedTransactionSteps(): string[] {
                 ["finalize_usdc_currency_registration", "mint_deployer_usdc"].includes(step)
             )
                 return false;
-            return NETWORK !== "mainnet" || step !== "create_deployer_account";
+            // Mainnet's lock-only bootstrap runs no flush, so neither the deployer
+            // account nor its flush-operator grant exists there.
+            return (
+                NETWORK !== "mainnet" ||
+                !["create_deployer_account", "add_deployer_flush_operator"].includes(step)
+            );
         }),
+        // Each initial market and then its queue, which needs the shared market.
         ...CADENCES.flatMap((cadence) =>
-            Array.from(
-                { length: cadence.marketsToCreate },
-                (_, index) => `create_market_${cadence.name}_${index}`,
-            ),
+            Array.from({ length: cadence.marketsToCreate }, (_, index) => [
+                `create_market_${cadence.name}_${index}`,
+                `create_queue_${cadence.name}_${index}`,
+            ]).flat(),
         ),
     ];
 }
@@ -665,7 +736,7 @@ export function irreversibleDeploymentSteps(): string[] {
 }
 
 export interface IntegrationManifest {
-    schemaVersion: 8 | 9;
+    schemaVersion: 10 | 11;
     deployment: string;
     network: string;
     chainId: string;
@@ -675,7 +746,9 @@ export interface IntegrationManifest {
         usdc: string;
         account: string;
         propbook: string;
+        predictMath: string;
         predict: string;
+        predictOrders: string;
         deepbookCoreAccount: string;
         sessions: string;
     };
@@ -692,6 +765,8 @@ export interface IntegrationManifest {
         protocolConfig: string;
         poolVault: string;
         registry: string;
+        orderDesk: string;
+        queueRegistry: string;
         sessionsConfig: string;
         deepbookRegistry: string;
         accumulatorRoot: string;
@@ -737,6 +812,10 @@ export interface IntegrationManifest {
                 digest: string;
             };
             oracleRegistry: {
+                objectVersion: string;
+                digest: string;
+            };
+            orderDesk: {
                 objectVersion: string;
                 digest: string;
             };
@@ -790,6 +869,7 @@ export interface IntegrationManifest {
             expiryFeeWindowMs: string;
             expiryFeeMaxMultiplier: string;
         };
+        delayedExecution: DelayedExecutionPolicyRecord;
         cadences: {
             BTC: Array<{
                 id: number;
@@ -837,18 +917,18 @@ class DryRunFailure extends Error {
     }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-function requiredString(value: unknown, label: string): string {
+export function requiredString(value: unknown, label: string): string {
     if (typeof value !== "string" || value.length === 0) {
         throw new Error(`${label} is missing`);
     }
     return value;
 }
 
-function requiredObjectId(value: unknown, label: string): string {
+export function requiredObjectId(value: unknown, label: string): string {
     const raw = requiredString(value, label);
     const id = normalizeId(raw);
     if (!OBJECT_ID.test(raw) || raw !== id) {
@@ -869,7 +949,7 @@ function exactKeys(
     }
 }
 
-function decimalString(value: unknown, label: string): string {
+export function decimalString(value: unknown, label: string): string {
     const raw = requiredString(value, label);
     if (!/^(0|[1-9][0-9]*)$/.test(raw)) throw new Error(`${label} is not an unsigned integer`);
     return raw;
@@ -914,7 +994,9 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
         : verifiedPackage("usdc");
     const account = verifiedPackage("account");
     const propbook = verifiedPackage("propbook");
+    const predictMath = verifiedPackage("predict_math");
     const predict = verifiedPackage("predict");
+    const predictOrders = verifiedPackage("predict_orders");
     const deepbookCoreAccount = verifiedPackage("deepbook_core_account");
     const sessions = verifiedPackage("sessions");
     const protocolConfigEvidence = verifiedSharedEvidence(
@@ -923,6 +1005,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
     );
     const registryEvidence = verifiedSharedEvidence("predict", "registry::Registry");
     const oracleRegistryEvidence = verifiedSharedEvidence("propbook", "registry::OracleRegistry");
+    const orderDeskEvidence = verifiedSharedEvidence("predict_orders", "desk::OrderDesk");
     const sessionsConfigEvidence = verifiedSharedEvidence(
         "sessions",
         "session_config::SessionsConfig",
@@ -932,6 +1015,9 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
     const protocol = verification.protocolConfig;
     if (JSON.stringify(protocol) !== JSON.stringify(EXPECTED_PROTOCOL_CONFIG)) {
         throw new Error("verified ProtocolConfig does not match the deployment policy");
+    }
+    if (JSON.stringify(verification.orderDesk) !== JSON.stringify(EXPECTED_ORDER_DESK)) {
+        throw new Error("verified OrderDesk does not match the launch policy and floor");
     }
     const cadences = verification.cadences.map((record) => {
         const spec = CADENCES.find((candidate) => candidate.id === record.id);
@@ -951,7 +1037,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
         };
     });
     const manifest: IntegrationManifest = {
-        schemaVersion: NETWORK === "mainnet" ? 9 : 8,
+        schemaVersion: NETWORK === "mainnet" ? 11 : 10,
         deployment: DEPLOYMENT,
         network: NETWORK,
         chainId: CHAIN_ID,
@@ -961,7 +1047,9 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
             usdc,
             account,
             propbook,
+            predictMath,
             predict,
+            predictOrders,
             deepbookCoreAccount,
             sessions,
         },
@@ -984,6 +1072,8 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
             protocolConfig: verifiedShared("predict", "protocol_config::ProtocolConfig"),
             poolVault: verifiedShared("predict", "plp::PoolVault"),
             registry: verifiedShared("predict", "registry::Registry"),
+            orderDesk: verifiedShared("predict_orders", "desk::OrderDesk"),
+            queueRegistry: verifiedShared("predict_orders", "desk::QueueRegistry"),
             sessionsConfig: verifiedShared("sessions", "session_config::SessionsConfig"),
             deepbookRegistry: verifiedLinkedObject("deepbookRegistry"),
             accumulatorRoot: verifiedLinkedObject("accumulatorRoot"),
@@ -1044,6 +1134,10 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
                     objectVersion: oracleRegistryEvidence.version,
                     digest: oracleRegistryEvidence.digest,
                 },
+                orderDesk: {
+                    objectVersion: orderDeskEvidence.version,
+                    digest: orderDeskEvidence.digest,
+                },
                 sessionsConfig: {
                     objectVersion: sessionsConfigEvidence.version,
                     digest: sessionsConfigEvidence.digest,
@@ -1094,6 +1188,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
                 expiryFeeWindowMs: protocol.expiryFeeWindowMs,
                 expiryFeeMaxMultiplier: protocol.expiryFeeMaxMultiplier,
             },
+            delayedExecution: { ...verification.orderDesk.policy },
             cadences: { BTC: cadences },
         },
     };
@@ -1123,7 +1218,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "integration manifest",
     );
     if (
-        manifest.schemaVersion !== (NETWORK === "mainnet" ? 9 : 8) ||
+        manifest.schemaVersion !== (NETWORK === "mainnet" ? 11 : 10) ||
         manifest.deployment !== DEPLOYMENT ||
         manifest.network !== NETWORK ||
         manifest.chainId !== CHAIN_ID ||
@@ -1135,7 +1230,17 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
     const packages = asRecord(manifest.packages);
     exactKeys(
         packages,
-        ["fixedMath", "usdc", "account", "propbook", "predict", "deepbookCoreAccount", "sessions"],
+        [
+            "fixedMath",
+            "usdc",
+            "account",
+            "propbook",
+            "predictMath",
+            "predict",
+            "predictOrders",
+            "deepbookCoreAccount",
+            "sessions",
+        ],
         "packages",
     );
     for (const [name, id] of Object.entries(packages)) requiredObjectId(id, `packages.${name}`);
@@ -1161,6 +1266,8 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
             "protocolConfig",
             "poolVault",
             "registry",
+            "orderDesk",
+            "queueRegistry",
             "sessionsConfig",
             "deepbookRegistry",
             "accumulatorRoot",
@@ -1265,6 +1372,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
             "units",
             "liveProtocol",
             "futureMarketTemplate",
+            "delayedExecution",
             "cadences",
         ],
         "initialConfiguration",
@@ -1281,13 +1389,21 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
     const stateAnchors = asRecord(initial.stateAnchors);
     exactKeys(
         stateAnchors,
-        ["protocolConfig", "registry", "oracleRegistry", "sessionsConfig", "deepbookRegistry"],
+        [
+            "protocolConfig",
+            "registry",
+            "oracleRegistry",
+            "orderDesk",
+            "sessionsConfig",
+            "deepbookRegistry",
+        ],
         "initialConfiguration.stateAnchors",
     );
     for (const name of [
         "protocolConfig",
         "registry",
         "oracleRegistry",
+        "orderDesk",
         "sessionsConfig",
         "deepbookRegistry",
     ]) {
@@ -1381,6 +1497,12 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         ],
         "initialConfiguration.futureMarketTemplate",
     );
+    const delayedExecution = asRecord(initial.delayedExecution);
+    exactKeys(
+        delayedExecution,
+        Object.keys(EXPECTED_ORDER_DESK.policy),
+        "initialConfiguration.delayedExecution",
+    );
     const numericConfig = [
         [pricing.pythSpotFreshnessMs, "pricing.pythSpotFreshnessMs"],
         [pricing.blockScholesPriceFreshnessMs, "pricing.blockScholesPriceFreshnessMs"],
@@ -1397,6 +1519,10 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         [live.maxValuationWindowMs, "liveProtocol.maxValuationWindowMs"],
         [live.noTradeWindowMs, "liveProtocol.noTradeWindowMs"],
         ...Object.entries(template).map(([name, item]) => [item, `futureMarketTemplate.${name}`]),
+        ...Object.entries(delayedExecution).map(([name, item]) => [
+            item,
+            `delayedExecution.${name}`,
+        ]),
     ] as Array<[unknown, string]>;
     for (const [item, label] of numericConfig) decimalString(item, label);
     if (typeof pricing.usePythSpotForForward !== "boolean" || typeof ewma.enabled !== "boolean") {
@@ -1450,7 +1576,7 @@ function command(executable: string, args: string[]): string {
     }).trim();
 }
 
-function sha256(value: string | Buffer): string {
+export function sha256(value: string | Buffer): string {
     return createHash("sha256").update(value).digest("hex");
 }
 
@@ -1488,7 +1614,7 @@ function transactionCheckpoint(snapshot: ClientSnapshot, digest: string): string
 
 export function createDeploymentState(): DeploymentResult {
     return {
-        schemaVersion: 6,
+        schemaVersion: 7,
         reusedTestnetUsdc: REUSED_TESTNET_USDC ? { ...REUSED_TESTNET_USDC } : null,
         status: "pending",
         network: NETWORK,
@@ -1516,7 +1642,7 @@ export function createDeploymentState(): DeploymentResult {
         transactions: {},
         failedTransactions: {},
         wiring: {
-            version: 4,
+            version: 5,
             network: NETWORK,
             operator: DEPLOYER,
             updatedAt: null,
@@ -1657,7 +1783,7 @@ function storePublishedMetadata(path: string, generated: string): void {
     }
 }
 
-function normalizeId(id: string): string {
+export function normalizeId(id: string): string {
     const hex = id.toLowerCase().replace(/^0x/, "");
     return `0x${hex.padStart(64, "0")}`;
 }
@@ -1675,7 +1801,7 @@ function isShared(owner: unknown): boolean {
     return "Shared" in asRecord(owner);
 }
 
-function addressOwner(owner: unknown): string | null {
+export function addressOwner(owner: unknown): string | null {
     return normalizeOptionalId(asRecord(owner).AddressOwner);
 }
 
@@ -1687,7 +1813,7 @@ function partyOwnerLabel(owner: string): string {
     return `party:${normalizeId(owner)}`;
 }
 
-function ownerLabel(owner: unknown): string {
+export function ownerLabel(owner: unknown): string {
     if (isShared(owner)) return "shared";
     const partyOwner = consensusAddressOwner(owner);
     if (partyOwner) return partyOwnerLabel(partyOwner);
@@ -1713,6 +1839,9 @@ function expectedCaps(pkg: PackageName, packageId: string): string[] {
             return ["account_registry::AccountAdminCap", "package::UpgradeCap"];
         case "propbook":
             return ["package::UpgradeCap", "registry::RegistryAdminCap"];
+        case "predict_math":
+        case "predict_orders":
+            return ["package::UpgradeCap"];
         case "predict":
             return [
                 "admin::AdminCap",
@@ -1913,13 +2042,13 @@ function cadenceMatches(actual: CadenceRecord, expected: CadenceSpec): boolean {
 
 export function assertStateFile(result: DeploymentResult): void {
     if (
-        result.schemaVersion !== 6 ||
+        result.schemaVersion !== 7 ||
         result.network !== NETWORK ||
         result.chainId !== CHAIN_ID ||
         result.buildEnvironment !== NETWORK ||
         normalizeId(result.deployer) !== DEPLOYER
     ) {
-        throw new Error(`${STATE_RELATIVE} is not the expected schema-6 ${NETWORK} deployment`);
+        throw new Error(`${STATE_RELATIVE} is not the expected schema-7 ${NETWORK} deployment`);
     }
     if (JSON.stringify(result.reusedTestnetUsdc) !== JSON.stringify(REUSED_TESTNET_USDC))
         throw new Error("existing Testnet USDC binding changed");
@@ -1983,7 +2112,7 @@ function releaseLock(lock: LockHandle): void {
     rmSync(lock.path);
 }
 
-function stripYamlScalar(value: string): string {
+export function stripYamlScalar(value: string): string {
     const trimmed = value.trim();
     if (
         (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
@@ -2162,28 +2291,59 @@ function packageMetadata(runtime: Runtime, id: string): ReturnType<typeof parseP
     return metadata;
 }
 
-function moveSourceTypeOrigins(directory: string): CompiledPackageMetadata["typeOrigins"] {
+// Whether the declaration at `lines[index]` carries `#[test_only]`: its attribute lines sit
+// directly above it, possibly interleaved with doc comments and blank lines.
+function testOnlyDeclaration(lines: readonly string[], index: number): boolean {
+    for (let line = index - 1; line >= 0; line -= 1) {
+        const text = lines[line]!.trim();
+        if (text === "" || text.startsWith("//")) continue;
+        if (!text.startsWith("#[")) return false;
+        if (/\btest_only\b/.test(text)) return true;
+    }
+    return false;
+}
+
+// The datatypes a production build of the package's sources declares. A normal publish strips
+// `#[test_only]` modules and declarations, so they never get a type origin.
+export function moveSourceTypeOriginsOf(
+    sources: ReadonlyArray<{ path: string; source: string }>,
+): CompiledPackageMetadata["typeOrigins"] {
     const origins: CompiledPackageMetadata["typeOrigins"] = [];
+    for (const { path, source } of sources) {
+        const lines = source.split("\n");
+        const moduleLine = lines.findIndex((line) =>
+            /^\s*module\s+[A-Za-z0-9_]+::[A-Za-z0-9_]+\s*;/.test(line),
+        );
+        if (moduleLine < 0) throw new Error(`${path} has no Move module declaration`);
+        if (testOnlyDeclaration(lines, moduleLine)) continue;
+        const module = lines[moduleLine]!.match(/::([A-Za-z0-9_]+)\s*;/)![1]!;
+        lines.forEach((line, index) => {
+            const match = line.match(
+                /^\s*(?:public(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/,
+            );
+            if (match && !testOnlyDeclaration(lines, index)) {
+                origins.push({ module, datatype: match[1]! });
+            }
+        });
+    }
+    return origins.sort((left, right) =>
+        `${left.module}::${left.datatype}`.localeCompare(`${right.module}::${right.datatype}`),
+    );
+}
+
+function moveSourceTypeOrigins(directory: string): CompiledPackageMetadata["typeOrigins"] {
+    const sources: Array<{ path: string; source: string }> = [];
     const visit = (path: string): void => {
         for (const entry of readdirSync(path, { withFileTypes: true })) {
             const child = resolve(path, entry.name);
             if (entry.isDirectory()) visit(child);
             else if (entry.isFile() && entry.name.endsWith(".move")) {
-                const source = readFileSync(child, "utf8");
-                const module = source.match(/\bmodule\s+[A-Za-z0-9_]+::([A-Za-z0-9_]+)\s*;/)?.[1];
-                if (!module) throw new Error(`${child} has no Move module declaration`);
-                for (const match of source.matchAll(
-                    /^\s*(?:public(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/gm,
-                )) {
-                    origins.push({ module, datatype: match[1] });
-                }
+                sources.push({ path: child, source: readFileSync(child, "utf8") });
             }
         }
     };
     visit(resolve(directory, "sources"));
-    return origins.sort((left, right) =>
-        `${left.module}::${left.datatype}`.localeCompare(`${right.module}::${right.datatype}`),
-    );
+    return moveSourceTypeOriginsOf(sources);
 }
 
 function compiledPackageMetadata(pkg: PackageName): CompiledPackageMetadata {
@@ -2527,7 +2687,7 @@ function assertCliTarget(snapshot: ClientSnapshot): void {
     assertDeploymentTarget(environment, chainId, address);
 }
 
-function effectsError(effects: unknown): string | null {
+export function effectsError(effects: unknown): string | null {
     const status = asRecord(asRecord(effects).status);
     const state = status.status;
     if (state === "success" || status.success === true) return null;
@@ -2539,7 +2699,7 @@ async function shortChainId(client: SuiGrpcClient): Promise<string> {
     return toHex(fromBase58(chainIdentifier).slice(0, 4));
 }
 
-function coreReceipt(response: unknown): Receipt {
+export function coreReceipt(response: unknown): Receipt {
     const envelope = asRecord(response);
     const transaction = asRecord(envelope.Transaction ?? envelope.FailedTransaction);
     const effects = asRecord(transaction.effects);
@@ -2584,7 +2744,7 @@ function coreReceipt(response: unknown): Receipt {
     };
 }
 
-async function settledReceipt(
+export async function settledReceipt(
     client: SuiGrpcClient,
     digest: string,
     attempts = 24,
@@ -2729,7 +2889,7 @@ async function executeTransaction(
     return receipt;
 }
 
-function recordPublish(result: DeploymentResult, pkg: PackageName, receipt: Receipt): void {
+export function recordPublish(result: DeploymentResult, pkg: PackageName, receipt: Receipt): void {
     const changes = receipt.objectChanges ?? [];
     const packageId = normalizeOptionalId(
         changes.find((change) => change.type === "published")?.packageId,
@@ -2983,7 +3143,7 @@ async function devInspect(runtime: Runtime, label: string, tx: Transaction): Pro
     return response;
 }
 
-function returnBytes(response: unknown, resultIndex = 0, returnIndex = 0): number[] {
+export function returnBytes(response: unknown, resultIndex = 0, returnIndex = 0): number[] {
     const results = asRecord(response).commandResults;
     if (!Array.isArray(results)) throw new Error("simulation response has no command results");
     const result = asRecord(results[resultIndex]);
@@ -2999,11 +3159,11 @@ function returnBytes(response: unknown, resultIndex = 0, returnIndex = 0): numbe
     throw new Error("simulation return is not byte-encoded");
 }
 
-function parseBool(bytes: number[]): boolean {
+export function parseBool(bytes: number[]): boolean {
     return bytes[0] === 1;
 }
 
-function parseU64(bytes: number[]): bigint {
+export function parseU64(bytes: number[]): bigint {
     if (bytes.length < 8) throw new Error(`invalid u64 return (${bytes.length} bytes)`);
     let value = 0n;
     for (let index = 7; index >= 0; index--) value = (value << 8n) + BigInt(bytes[index]);
@@ -3064,7 +3224,7 @@ function readUleb(bytes: number[], start: number): { value: number; next: number
     throw new Error("truncated ULEB128");
 }
 
-function parseIdVector(bytes: number[]): string[] {
+export function parseIdVector(bytes: number[]): string[] {
     const length = readUleb(bytes, 0);
     const ids: string[] = [];
     let offset = length.next;
@@ -3891,6 +4051,147 @@ async function ensureCadences(runtime: Runtime): Promise<void> {
     writeState(result);
 }
 
+// The witness Predict's order-flow primitives admit: the companion's `OrderFlow`.
+function orderFlowWitness(result: DeploymentResult): string {
+    return `${packageId(result, "predict_orders")}::order_flow::OrderFlow`;
+}
+
+async function orderFlowEnabled(runtime: Runtime): Promise<boolean> {
+    const result = runtime.result;
+    return inspectBool(
+        runtime,
+        "is_order_flow",
+        target(result, "predict", "protocol_config", "is_order_flow"),
+        (tx) => [tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig"))],
+        [orderFlowWitness(result)],
+    );
+}
+
+async function isFlushOperator(runtime: Runtime, operator: string): Promise<boolean> {
+    const result = runtime.result;
+    return inspectBool(
+        runtime,
+        "is_flush_operator",
+        target(result, "predict", "protocol_config", "is_flush_operator"),
+        (tx) => [
+            tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+            tx.pure.address(operator),
+        ],
+    );
+}
+
+function addFlushOperatorCall(result: DeploymentResult, tx: Transaction, operator: string): void {
+    call(tx, target(result, "predict", "protocol_config", "add_flush_operator"), [
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+        tx.object(capId(result, "predict", "admin::AdminCap")),
+        tx.pure.address(operator),
+        tx.object(CLOCK_ID),
+    ]);
+}
+
+// One admin transaction: allowlist the companion's `OrderFlow` witness, then re-state the
+// desk's launch order fee with `desk::set_order_fee`. The desk's `init` emits no
+// `DelayedExecutionPolicyUpdated`, so the re-stated fee is what records the launch policy and
+// the desk ID in an event for the indexer. Neither call changes anything when repeated.
+export function enableOrderFlowTransaction(
+    result: DeploymentResult,
+    launchOrderFee: string,
+): Transaction {
+    const tx = new Transaction();
+    const config = tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig"));
+    const adminCap = tx.object(capId(result, "predict", "admin::AdminCap"));
+    call(
+        tx,
+        target(result, "predict", "protocol_config", "set_order_flow"),
+        [config, adminCap, tx.pure.bool(true), tx.object(CLOCK_ID)],
+        [orderFlowWitness(result)],
+    );
+    call(tx, target(result, "predict_orders", "desk", "set_order_fee"), [
+        tx.object(sharedId(result, "predict_orders", "desk::OrderDesk")),
+        adminCap,
+        config,
+        tx.pure.u64(BigInt(launchOrderFee)),
+        tx.object(CLOCK_ID),
+    ]);
+    return tx;
+}
+
+// The desk policy as a record of decimal strings, from the desk's `policy` field or the
+// `policy` of a `DelayedExecutionPolicyUpdated` event.
+export function delayedExecutionPolicyRecord(value: unknown): DelayedExecutionPolicyRecord {
+    const policy = asRecord(value);
+    return Object.fromEntries(
+        Object.keys(EXPECTED_ORDER_DESK.policy).map((name) => [
+            name,
+            stringField(policy, snakeCase(name)),
+        ]),
+    ) as unknown as DelayedExecutionPolicyRecord;
+}
+
+// The `enable_order_flow` receipt must allowlist the witness and record the desk's launch
+// policy under this desk's ID.
+export function assertOrderFlowReceipt(result: DeploymentResult, receipt: Receipt): void {
+    const ordersPackage = packageId(result, "predict_orders");
+    const allowlisted = (receipt.events ?? []).find(
+        (event) =>
+            typeof event.type === "string" &&
+            event.type.endsWith("::config_events::OrderFlowUpdated") &&
+            asRecord(event.parsedJson).enabled === true,
+    );
+    if (!allowlisted) throw new Error("enable_order_flow emitted no enabling OrderFlowUpdated");
+    const updates = (receipt.events ?? []).filter(
+        (event) => event.type === `${ordersPackage}::queue_events::DelayedExecutionPolicyUpdated`,
+    );
+    if (updates.length !== 1) {
+        throw new Error(
+            `enable_order_flow emitted ${updates.length} DelayedExecutionPolicyUpdated events, expected 1`,
+        );
+    }
+    const event = asRecord(updates[0]!.parsedJson);
+    const deskId = sharedId(result, "predict_orders", "desk::OrderDesk");
+    if (normalizeOptionalId(event.desk_id) !== deskId) {
+        throw new Error(
+            `DelayedExecutionPolicyUpdated names desk ${String(event.desk_id)}, expected ${deskId}`,
+        );
+    }
+    const policy = delayedExecutionPolicyRecord(event.policy);
+    if (JSON.stringify(policy) !== JSON.stringify(EXPECTED_ORDER_DESK.policy)) {
+        throw new Error(
+            `DelayedExecutionPolicyUpdated records an unexpected policy: ${JSON.stringify(policy)}`,
+        );
+    }
+}
+
+// Queued trading runs through the order-flow companion, whose desk `init` created with the
+// launch policy. Predict refuses the companion's admissions, commits, and fills until its
+// `OrderFlow` witness is allowlisted, and the same transaction records the launch policy in a
+// `DelayedExecutionPolicyUpdated` event. Both calls are idempotent, so the step is keyed on its
+// journal entry rather than the allowlist: a witness allowlisted by anything else still gets
+// the policy event. `finish_flush` admits only allowlisted flush operators, so the Testnet
+// deployer, which completes the bootstrap flush, is added first.
+async function ensureOrderFlow(runtime: Runtime): Promise<void> {
+    const result = runtime.result;
+    const desk = await readOrderDesk(runtime);
+    const receipt = await executeTransaction(
+        runtime,
+        "enable_order_flow",
+        enableOrderFlowTransaction(result, desk.policy.orderFee),
+    );
+    assertOrderFlowReceipt(result, receipt);
+    if (!(await orderFlowEnabled(runtime))) {
+        throw new Error("the order-flow companion did not read back as allowlisted");
+    }
+    if (NETWORK === "mainnet") return;
+    if (!(await isFlushOperator(runtime, DEPLOYER))) {
+        const tx = new Transaction();
+        addFlushOperatorCall(result, tx, DEPLOYER);
+        await executeTransaction(runtime, "add_deployer_flush_operator", tx);
+        if (!(await isFlushOperator(runtime, DEPLOYER))) {
+            throw new Error("deployer flush-operator grant did not read back true");
+        }
+    }
+}
+
 async function ensureAccountWrapper(runtime: Runtime): Promise<string> {
     const result = runtime.result;
     const registry = sharedId(result, "account", "account_registry::AccountRegistry");
@@ -4323,6 +4624,8 @@ function marketFromEvent(receipt: Receipt, cadence: CadenceSpec): MarketRecord {
         initialExpiryCash: String(parsed.initial_expiry_cash ?? cadence.initialExpiryCash),
         createTx: receipt.digest ?? null,
         cashBalance: "0",
+        queueId: null,
+        queueCreateTx: null,
     };
 }
 
@@ -4456,6 +4759,89 @@ export async function ensureMarkets(
     }
 }
 
+// `queue::queue_id`: `derived_object::derive_address(registry_id, expiry_market_id)` under the
+// desk's `QueueRegistry`, whose key is the market's `ID`.
+export function marketQueueId(registryId: string, marketId: string): string {
+    return normalizeId(
+        deriveObjectID(
+            normalizeId(registryId),
+            "0x2::object::ID",
+            bcs.Address.serialize(normalizeId(marketId)).toBytes(),
+        ),
+    );
+}
+
+export function marketQueueCreationTransaction(
+    result: DeploymentResult,
+    marketId: string,
+): Transaction {
+    const tx = new Transaction();
+    call(tx, target(result, "predict_orders", "queue", "create_and_share"), [
+        tx.object(sharedId(result, "predict_orders", "desk::QueueRegistry")),
+        tx.object(sharedId(result, "predict_orders", "desk::OrderDesk")),
+        tx.object(marketId),
+    ]);
+    return tx;
+}
+
+// A market's queue step reuses its creation step's cadence and sequence.
+function queueLabel(result: DeploymentResult, market: MarketRecord): string {
+    const label = Object.entries(result.transactions).find(
+        ([candidate, digest]) =>
+            candidate.startsWith("create_market_") && digest === market.createTx,
+    )?.[0];
+    if (!label) throw new Error(`market ${market.id} has no recorded creation transaction`);
+    return label.replace(/^create_market_/, "create_queue_");
+}
+
+export function isObjectNotFound(error: unknown): boolean {
+    const reason = asRecord(error).reason;
+    return reason === "notFound" || reason === "deleted";
+}
+
+async function objectExists(runtime: Runtime, id: string): Promise<boolean> {
+    try {
+        await runtime.client.getObject({ objectId: normalizeId(id) });
+        return true;
+    } catch (error) {
+        if (isObjectNotFound(error)) return false;
+        throw error;
+    }
+}
+
+const queueOperations = { objectExists, executeTransaction, writeState };
+
+// Create each recorded market's queue at its derived ID. Creation is permissionless and
+// claims the derived ID, so a queue that already exists, from this run or anyone else, is
+// recorded rather than created again. The audit checks every active market's queue.
+export async function ensureMarketQueues(runtime: Runtime, ops = queueOperations): Promise<void> {
+    const result = runtime.result;
+    const registryId = sharedId(result, "predict_orders", "desk::QueueRegistry");
+    for (const market of result.wiring.markets) {
+        const queueId = marketQueueId(registryId, market.id);
+        if (market.queueId && market.queueId !== queueId) {
+            throw new Error(
+                `market ${market.id} records queue ${market.queueId}, expected ${queueId}`,
+            );
+        }
+        const label = queueLabel(result, market);
+        if (!result.transactions[label] && !(await ops.objectExists(runtime, queueId))) {
+            const receipt = await ops.executeTransaction(
+                runtime,
+                label,
+                marketQueueCreationTransaction(result, market.id),
+            );
+            const created = createdObjectId(receipt, "::queue::MarketQueue");
+            if (created !== queueId) {
+                throw new Error(`${label} created queue ${created}, expected ${queueId}`);
+            }
+        }
+        market.queueId = queueId;
+        market.queueCreateTx = result.transactions[label] ?? null;
+        ops.writeState(result);
+    }
+}
+
 function boolField(fields: Record<string, unknown>, name: string): boolean {
     const value = fields[name];
     if (typeof value !== "boolean") throw new Error(`ProtocolConfig.${name} is not a bool`);
@@ -4512,6 +4898,25 @@ async function readProtocolConfig(runtime: Runtime): Promise<Verification["proto
         throw new Error(`ProtocolConfig defaults are unexpected: ${JSON.stringify(config)}`);
     }
     return config;
+}
+
+function snakeCase(name: string): string {
+    return name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+async function readOrderDesk(runtime: Runtime): Promise<OrderDeskRecord> {
+    const fields = await moveObjectFields(
+        runtime,
+        sharedId(runtime.result, "predict_orders", "desk::OrderDesk"),
+    );
+    const desk: OrderDeskRecord = {
+        versionWatermark: stringField(fields, "version_watermark"),
+        policy: delayedExecutionPolicyRecord(fields.policy),
+    };
+    if (JSON.stringify(desk) !== JSON.stringify(EXPECTED_ORDER_DESK)) {
+        throw new Error(`OrderDesk policy or floor is unexpected: ${JSON.stringify(desk)}`);
+    }
+    return desk;
 }
 
 async function verifyDeployment(runtime: Runtime): Promise<Verification> {
@@ -4638,8 +5043,13 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     );
     const sessionsConfigFields = sessionsSnapshot.value;
     sharedObjects.sessions!["session_config::SessionsConfig"] = sessionsSnapshot.evidence;
-    if (stringField(sessionsConfigFields, "version_watermark") !== "1") {
-        throw new Error("SessionsConfig version watermark is not 1");
+    if (
+        stringField(sessionsConfigFields, "version_watermark") !==
+        EXPECTED_SESSIONS_VERSION_WATERMARK
+    ) {
+        throw new Error(
+            `SessionsConfig version watermark is not ${EXPECTED_SESSIONS_VERSION_WATERMARK}`,
+        );
     }
     const accountWrapper =
         NETWORK === "mainnet"
@@ -4674,6 +5084,15 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         throw new Error("bootstrap supply is not attributed to the deployment account");
     }
     if (NETWORK === "mainnet") await ensureLockedCapital(runtime, true);
+    if (!(await orderFlowEnabled(runtime))) {
+        throw new Error("the order-flow companion is not allowlisted");
+    }
+    const orderFlowDigest = result.transactions.enable_order_flow;
+    if (!orderFlowDigest) throw new Error("enable_order_flow has no recorded transaction");
+    assertOrderFlowReceipt(result, await settledReceipt(runtime.client, orderFlowDigest));
+    if (NETWORK === "testnet" && !(await isFlushOperator(runtime, DEPLOYER))) {
+        throw new Error("Testnet deployer is not a flush operator");
+    }
     const lifecycleCap = await objectEvidence(
         runtime,
         result.wiring.lifecycleCap.id,
@@ -4717,6 +5136,14 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     }
     await discoverMarkets(runtime);
     const activeIds = await activeMarketIds(runtime);
+    const deskId = sharedId(result, "predict_orders", "desk::OrderDesk");
+    const queueRegistryId = sharedId(result, "predict_orders", "desk::QueueRegistry");
+    const queueRegistry = await moveObjectFields(runtime, queueRegistryId);
+    if (normalizeOptionalId(queueRegistry.desk_id) !== deskId) {
+        throw new Error(
+            `QueueRegistry ${queueRegistryId} is bound to desk ${String(queueRegistry.desk_id)}, not ${deskId}`,
+        );
+    }
     let activeMarketCash = 0n;
     const verifiedMarkets: MarketRecord[] = [];
     for (const id of activeIds) {
@@ -4731,6 +5158,23 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
             `${packageId(result, "predict")}::expiry_market::ExpiryMarket`,
             "shared",
         );
+        const queueId = marketQueueId(queueRegistryId, id);
+        if (record.queueId !== queueId) {
+            throw new Error(`active market ${id} has no recorded queue at ${queueId}`);
+        }
+        await objectEvidence(
+            runtime,
+            queueId,
+            `${packageId(result, "predict_orders")}::queue::MarketQueue`,
+            "shared",
+        );
+        const queue = await moveObjectFields(runtime, queueId);
+        if (
+            normalizeOptionalId(queue.desk_id) !== deskId ||
+            normalizeOptionalId(queue.expiry_market_id) !== id
+        ) {
+            throw new Error(`queue ${queueId} is not bound to desk ${deskId} and market ${id}`);
+        }
         verifiedMarkets.push({ ...record });
     }
     for (const cadence of CADENCES.filter((spec) => spec.marketsToCreate > 0)) {
@@ -4800,6 +5244,13 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         () => readProtocolConfig(runtime),
     );
     sharedObjects.predict!["protocol_config::ProtocolConfig"] = protocolSnapshot.evidence;
+    const deskSnapshot = await stableObjectSnapshot(
+        runtime,
+        deskId,
+        `${packageId(result, "predict_orders")}::desk::OrderDesk`,
+        () => readOrderDesk(runtime),
+    );
+    sharedObjects.predict_orders!["desk::OrderDesk"] = deskSnapshot.evidence;
     const linkedObjects = {
         ...external.objects,
         deepbookRegistry: deepbookSnapshot.evidence,
@@ -4838,6 +5289,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         valuationCap,
         cadences,
         protocolConfig: protocolSnapshot.value,
+        orderDesk: deskSnapshot.value,
         pool: {
             totalSupply: totalSupply.toString(),
             idleBalance: idleBalance.toString(),
@@ -4890,7 +5342,7 @@ export async function assertGasFunding(runtime: Runtime): Promise<void> {
     const available = availableGasBalance(balance.balance);
     const remainingPackages = PACKAGES.filter((pkg) => !runtime.result.packages[pkg]).length;
     const fixedSteps = plannedTransactionSteps().filter(
-        (label) => !label.startsWith("create_market_"),
+        (label) => !label.startsWith("create_market_") && !label.startsWith("create_queue_"),
     );
     const remainingFixedTransactions = fixedSteps.filter(
         (label) => !runtime.result.transactions[label],
@@ -4928,9 +5380,11 @@ const deploymentOperations = {
     ensureOracleObjects,
     ensureUnderlyingRegistered,
     ensureCadences,
+    ensureOrderFlow,
     ensureAccountWrapper,
     ensureBootstrap,
     ensureMarkets,
+    ensureMarketQueues,
     verifyDeployment,
     writeIntegrationManifest,
 };
@@ -5000,7 +5454,14 @@ async function verifyOperationalCapAllowlists(runtime: Runtime): Promise<void> {
     );
 }
 
-export function capIssuanceTransaction(result: DeploymentResult, recipient: string): Transaction {
+// The pool-valuation cap starts flushes, and `finish_flush` admits only allowlisted
+// flush operators, so the handoff also grants the recipient that role unless it already
+// holds it (re-adding an operator aborts).
+export function capIssuanceTransaction(
+    result: DeploymentResult,
+    recipient: string,
+    grantFlushOperator: boolean,
+): Transaction {
     assertCapsIssuanceReady(result, recipient);
     const tx = new Transaction();
     const lifecycle = tx.object(
@@ -5021,11 +5482,13 @@ export function capIssuanceTransaction(result: DeploymentResult, recipient: stri
             [`${packageId(result, "predict")}::${type}`],
         );
     }
+    if (grantFlushOperator) addFlushOperatorCall(result, tx, recipient);
     return tx;
 }
 
 const capIssuanceOperations = {
     executeTransaction,
+    isFlushOperator,
     objectEvidence,
     verifyOperationalCapAllowlists,
     writeState,
@@ -5040,12 +5503,16 @@ export async function issueOperationalCaps(
     assertCapsIssuanceReady(result, recipient);
     const label = `issue_operational_caps_${recipient}`;
     await ops.verifyOperationalCapAllowlists(runtime);
+    const grantFlushOperator = !(await ops.isFlushOperator(runtime, recipient));
     // executeTransaction returns the original receipt on recovery without rebuilding or signing.
     const receipt = await ops.executeTransaction(
         runtime,
         label,
-        capIssuanceTransaction(result, recipient),
+        capIssuanceTransaction(result, recipient, grantFlushOperator),
     );
+    if (!(await ops.isFlushOperator(runtime, recipient))) {
+        throw new Error("cap recipient is not a flush operator after the handoff");
+    }
     const lifecycleCap = requiredObjectId(result.wiring.lifecycleCap.id, "setup lifecycle cap");
     const poolValuationCap = requiredObjectId(result.wiring.valuationCap.id, "setup valuation cap");
     const owner = partyOwnerLabel(recipient);
@@ -5115,9 +5582,11 @@ export async function executeDeployment(
         await ops.ensureOracleObjects(runtime);
         await ops.ensureUnderlyingRegistered(runtime);
         await ops.ensureCadences(runtime);
+        await ops.ensureOrderFlow(runtime);
         const wrapper = NETWORK === "testnet" ? await ops.ensureAccountWrapper(runtime) : "";
         await ops.ensureBootstrap(runtime, valuationCap, wrapper);
         await ops.ensureMarkets(runtime, lifecycleCap);
+        await ops.ensureMarketQueues(runtime);
         result.status = "verifying";
         ops.writeState(result);
         result.verification = await ops.verifyDeployment(runtime);

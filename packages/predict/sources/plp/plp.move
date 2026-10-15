@@ -148,10 +148,8 @@ public struct PoolValuation has drop, store {
     /// Clock time the flush was started, for the stuck-flush deadline.
     started_at_ms: u64,
     /// Drain budgets committed at start (the cap owner's choice), bounding how many
-    /// requests each queue processes at finish. Committing them here — not at finish —
-    /// is what lets `finish_flush` run permissionless: a stranger may complete a flush
-    /// but only ever drains at these budgets, so completion can help LPs, never starve
-    /// them by finishing with a zero budget.
+    /// requests each queue processes at finish. `finish_flush` takes no budget, so the
+    /// flush operator who completes it drains at exactly these.
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     /// Each LP queue's `next_index` at the snapshot instant: the drain fills only
@@ -176,7 +174,7 @@ public struct PoolValuation has drop, store {
 /// Register PLP metadata and create the pool vault on package publish.
 fun init(witness: PLP, ctx: &mut TxContext) {
     let (_, metadata_cap) = init_plp(witness, ctx);
-    transfer_metadata_cap(metadata_cap, ctx);
+    xfer_metacap(metadata_cap, ctx);
 }
 
 fun init_plp(witness: PLP, ctx: &mut TxContext): (ID, MetadataCap<PLP>) {
@@ -190,16 +188,16 @@ fun init_plp(witness: PLP, ctx: &mut TxContext): (ID, MetadataCap<PLP>) {
         ctx,
     );
     let metadata_cap = initializer.finalize(ctx);
-    let vault_id = create_and_share_vault(treasury_cap, ctx);
+    let vault_id = share_vault(treasury_cap, ctx);
     (vault_id, metadata_cap)
 }
 
 #[allow(lint(self_transfer))]
-fun transfer_metadata_cap(metadata_cap: MetadataCap<PLP>, ctx: &TxContext) {
+fun xfer_metacap(metadata_cap: MetadataCap<PLP>, ctx: &TxContext) {
     transfer::public_transfer(metadata_cap, ctx.sender());
 }
 
-fun create_and_share_vault(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
+fun share_vault(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
     let vault = PoolVault {
         id: object::new(ctx),
         protocol_reserve_balance: balance::zero(),
@@ -289,14 +287,14 @@ public fun start_pool_valuation(
     withdraw_budget: Option<u64>,
     clock: &Clock,
 ): SnapshotStage {
-    config.assert_version();
+    config.chk_version();
     // At most one snapshot stage may be open at a time. A second `start` while a
     // snapshot is still in progress (both inside one PTB) aborts rather than handing
     // back a second `SnapshotStage` hot potato. A stranded flush is always sealed
     // (seal cleared the flag), so superseding it with a fresh start is unaffected.
-    config.assert_snapshot_not_in_progress();
+    config.chk_no_snap();
     let PoolValuationProof {} = valuation_proof;
-    start_pool_valuation_internal(config, vault, supply_budget, withdraw_budget, clock);
+    start_val(config, vault, supply_budget, withdraw_budget, clock);
     SnapshotStage {}
 }
 
@@ -311,7 +309,7 @@ public fun start_pool_valuation(
 /// walks a payout tree — so all markets fit one PTB regardless of book size.
 ///
 /// The oracle feeding this stage must have been written in an EARLIER transaction:
-/// `pricing::resolve_live_pricer` refuses a read stamped with the current
+/// `pricing::resolve_live` refuses a read stamped with the current
 /// transaction digest (RP-24), so a keeper cannot refresh and snapshot in one PTB.
 ///
 /// A market already settled at snapshot time is recorded with no pricer, gets no
@@ -332,10 +330,10 @@ public fun snapshot_expiry_pricer(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    config.assert_version();
-    config.assert_valuation_in_progress();
+    config.chk_version();
+    config.chk_val();
     let expiry_market_id = market.id();
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    vault.expiry_accounting.chk_expiry(expiry_market_id);
 
     // Not in this flush's active set: skip rather than abort. The caller builds
     // its market list off-chain before submitting, and anything that sweeps a
@@ -358,7 +356,7 @@ public fun snapshot_expiry_pricer(
         // Swept inside the atomic stage, so its recoverable cash is in idle by
         // the time the seal freezes the vault figures — that cash is counted at
         // the instant, and `value_expiry` has nothing left to move.
-        vault.sweep_settled_expiry(market, config);
+        vault.sweep_done(market, config);
         option::none()
     } else {
         assert!(clock.timestamp_ms() < market.expiry(), EExpiredMarketNotSettled);
@@ -377,7 +375,7 @@ public fun snapshot_expiry_pricer(
     let stamp = frozen.is_some();
     vault.valuation.borrow_mut().frozen_pricers.insert(expiry_market_id, frozen);
     if (stamp) {
-        market.stamp_for_valuation(config.current_flush_seq());
+        market.stamp_val(config.flush_seq());
     };
 }
 
@@ -397,8 +395,8 @@ public fun seal_valuation_snapshot(
     stage: SnapshotStage,
     config: &mut ProtocolConfig,
 ) {
-    config.assert_version();
-    config.assert_valuation_in_progress();
+    config.chk_version();
+    config.chk_val();
     let SnapshotStage {} = stage;
     let frozen_idle_balance = vault.expiry_accounting.idle_balance();
     let frozen_profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
@@ -433,10 +431,10 @@ public fun seal_valuation_snapshot(
 /// expired mid-window is valued at its frozen pre-expiry mark; its settlement does
 /// not wait for this call, because settlement is never blocked by a flush.
 public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
-    config.assert_version();
-    config.assert_valuation_in_progress();
+    config.chk_version();
+    config.chk_val();
     let expiry_market_id = market.id();
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    vault.expiry_accounting.chk_expiry(expiry_market_id);
 
     let frozen = {
         let valuation = vault.valuation.borrow();
@@ -459,7 +457,7 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
         0
     } else {
         let nav = market.snapshot_nav(frozen.borrow());
-        market.clear_valuation_stamp();
+        market.clear_stamp();
         nav
     };
 
@@ -496,25 +494,30 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
 /// Because queueing is permissionless and a refunded request returns its escrow in the
 /// same transaction, an operator should bound both budgets in production rather than
 /// rely on queue length staying small — see RP-12.
+///
+/// Only an allowlisted flush operator may call it (`protocol_config::ENotFlushOperator`).
+/// Fills move idle cash, so restricting who completes a flush keeps idle predictable
+/// for the keeper that funds markets for queued orders.
 public fun finish_flush(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    config.assert_version();
-    config.assert_valuation_in_progress();
+    config.chk_operator(ctx);
+    config.chk_version();
+    config.chk_val();
     // Hard staleness bound: a flush older than the window cannot fill queued LP
     // requests at its now-stale frozen mark. Past the window the operator starts a
     // fresh flush (`start_pool_valuation` discards this one and re-snapshots).
     // Enforced for everyone, including the cap owner (starting carries no deadline;
     // finishing does).
     assert!(
-        clock.timestamp_ms() < vault.valuation.borrow().started_at_ms + config.max_valuation_window_ms(),
+        clock.timestamp_ms() < vault.valuation.borrow().started_at_ms + config.val_window(),
         EValuationWindowExpired,
     );
     let valuation = vault.valuation.extract();
-    assert_all_expected_valued(
+    chk_valued(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
     );
@@ -534,12 +537,12 @@ public fun finish_flush(
     } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
-    let pool_nav = lp_pool_value(
+    let pool_nav = pool_value(
         frozen_idle_balance,
         frozen_profit_basis_credits,
         frozen_profit_basis_debits,
         frozen_pending_protocol_profit,
-        config.protocol_reserve_profit_share(),
+        config.rsv_share(),
         total_nav,
     );
     let total_supply = vault.lp.total_supply();
@@ -550,17 +553,17 @@ public fun finish_flush(
     // (gross = frozen_idle_balance + active-NAV) alongside `idle_balance_before`, a
     // LIVE pre-drain read for telemetry that is deliberately not a mark input.
     let vault_id = vault.id();
-    let mark = lp_book::new_flush_mark(pool_nav, total_supply);
-    let fees = lp_book::new_fee_rates(
-        config.plp_supply_fee_rate(),
-        config.plp_withdraw_fee_rate(),
+    let mark = lp_book::new_mark(pool_nav, total_supply);
+    let fees = lp_book::new_fees(
+        config.sup_fee(),
+        config.wd_fee(),
     );
     // The frozen `FeeRates` is the only source for these: the config reads are inlined
     // above so no local survives that the event could report instead of what the drain
     // was handed, and each read is named per leg so a transposition cannot compile into
     // a silently-swapped event.
-    let frozen_supply_fee_rate = fees.supply_fee_rate();
-    let frozen_withdraw_fee_rate = fees.withdraw_fee_rate();
+    let frozen_supply_fee_rate = fees.sup_fee_rate();
+    let frozen_withdraw_fee_rate = fees.wd_fee_rate();
     let drain_summary = vault
         .lp
         .drain(
@@ -572,13 +575,13 @@ public fun finish_flush(
             withdraw_request_cutoff,
             supply_budget,
             withdraw_budget,
-            config.lp_request_limit_flush_attempts(),
-            config.max_lp_pool_value(),
+            config.req_attempts(),
+            config.max_pool(),
             ctx,
         );
     let total_supply_after = vault.lp.total_supply();
-    config.end_valuation();
-    vault_events::emit_flush_executed(
+    config.end_val();
+    vault_events::flush_done(
         vault_id,
         ctx.epoch(),
         pool_nav,
@@ -589,9 +592,9 @@ public fun finish_flush(
         market_count,
         idle_balance_before,
         frozen_idle_balance,
-        drain_summary.supplies_filled(),
-        drain_summary.withdrawals_filled(),
-        drain_summary.requests_processed(),
+        drain_summary.sups_filled(),
+        drain_summary.wds_filled(),
+        drain_summary.processed(),
         vault.expiry_accounting.idle_balance(),
         total_supply_after,
         supply_request_cutoff,
@@ -607,6 +610,9 @@ public fun finish_flush(
 /// three per-market cases — initial funding of a freshly registered (unfunded)
 /// market, ongoing live rebalance/surplus-sweep toward target, and the
 /// settled-market sweep (deactivate, return all free cash, materialize profit).
+/// The live target covers the market's queued orders' cash need
+/// (the waiting cash need in `expiry_market::order_flow_state`), so the keeper calls this after each
+/// enqueue to fund those orders' fills, and a sweep never takes that cash back.
 /// Call `expiry_market::try_settle` first in the same PTB when settlement may be due.
 /// An expired unsettled market is a no-op until that transition succeeds.
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
@@ -623,11 +629,11 @@ public fun rebalance_expiry_cash(
     config: &ProtocolConfig,
     clock: &Clock,
 ) {
-    config.assert_version();
-    vault.assert_snapshot_stage_closed();
+    config.chk_version();
+    vault.chk_no_stage();
     let expiry_market_id = market.id();
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    vault.sweep_or_rebalance_expiry(market, config, clock);
+    vault.expiry_accounting.chk_expiry(expiry_market_id);
+    vault.sweep_or_bal(market, config, clock);
 }
 
 /// Sponsor taker fee incentives with USDC. Anyone may contribute; the payment
@@ -641,15 +647,15 @@ public fun sponsor_fee_incentives(
     payment: Coin<USDC>,
     ctx: &mut TxContext,
 ) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.chk_version();
+    config.chk_no_val();
     let amount = payment.value();
     assert!(
         amount >= constants::min_fee_incentive_sponsorship!(),
         EBelowMinFeeIncentiveSponsorship,
     );
     vault.fee_incentive_reserve.join(payment.into_balance());
-    vault_events::emit_fee_incentives_sponsored(
+    vault_events::incent_given(
         vault.id(),
         ctx.sender(),
         amount,
@@ -678,10 +684,10 @@ public fun withdraw_fee_incentives(
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<USDC> {
-    config.assert_version();
+    config.chk_version();
     assert!(amount <= vault.fee_incentive_reserve.value(), EInsufficientFeeIncentiveReserve);
     let withdrawn = vault.fee_incentive_reserve.split(amount);
-    vault_events::emit_fee_incentives_withdrawn(
+    vault_events::incent_out(
         vault.id(),
         amount,
         vault.fee_incentive_reserve.value(),
@@ -698,7 +704,7 @@ public fun withdraw_fee_incentives(
 /// `total_supply`, which raises NAV per PLP for every current holder. It deliberately
 /// does not touch the profit basis — the basis tracks cash sent to and returned from
 /// expiries, so an outside contribution is neither a debit nor a credit, and the
-/// protocol reserve therefore takes no cut of it (`lp_pool_value` leaves `exclusion`
+/// protocol reserve therefore takes no cut of it (`pool_value` leaves `exclusion`
 /// unchanged while `gross_pool_value` grows). Sending the same USDC through
 /// `request_supply` instead mints shares against it, so only the supply fee would
 /// reach existing holders — zero as shipped.
@@ -737,26 +743,26 @@ public fun add_usdc_to_plp(
     payment: Coin<USDC>,
     ctx: &TxContext,
 ) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.chk_version();
+    config.chk_no_val();
     let total_supply = vault.lp.total_supply();
     assert!(total_supply > 0, ENotBootstrapped);
     let amount = payment.value();
     assert!(amount >= constants::min_usdc_contribution!(), EBelowMinUsdcContribution);
     //   price <= ceiling  <=>  cash <= ceiling·supply  <=>  ceil(cash/ceiling) <= supply
-    // `ceiling` is a tenth of `lp_book::is_executable_mark`'s band, so the fill
+    // `ceiling` is a tenth of `lp_book::is_exec_mark`'s band, so the fill
     // rounding and retained fees that follow a contribution have nine times the pool's
     // cash of room before they could carry the mark out of it.
     let cash_after =
         vault.expiry_accounting.idle_balance()
-        + vault.expiry_accounting.deployed_expiry_cash()
+        + vault.expiry_accounting.deployed()
         + amount;
     assert!(
         cash_after.div_ceil(constants::contribution_price_ceiling_factor!()) <= total_supply,
         EContributionExceedsPriceCeiling,
     );
     vault.expiry_accounting.receive_idle(payment.into_balance());
-    vault_events::emit_usdc_added_to_plp(vault.id(), ctx.sender(), amount);
+    vault_events::usdc_added(vault.id(), ctx.sender(), amount);
 }
 
 /// Bootstrap the pool exactly once: permanently lock `payment` USDC of minimum
@@ -772,13 +778,13 @@ public fun lock_capital(
     _admin_cap: &AdminCap,
     payment: Coin<USDC>,
 ) {
-    config.assert_version();
+    config.chk_version();
     assert!(vault.lp.total_supply() == 0, EAlreadyBootstrapped);
     let amount = payment.value();
     assert!(amount >= constants::min_bootstrap_liquidity!(), EBelowMinBootstrapLiquidity);
     vault.expiry_accounting.receive_idle(payment.into_balance());
-    vault.lp.mint_locked_liquidity(amount);
-    vault_events::emit_capital_locked(vault.id(), amount);
+    vault.lp.mint_locked(amount);
+    vault_events::cap_locked(vault.id(), amount);
 }
 
 /// Queue a supply request: pull `amount` USDC from account custody into queue
@@ -804,7 +810,7 @@ public fun request_supply(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    config.assert_version();
+    config.chk_version();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
@@ -813,7 +819,7 @@ public fun request_supply(
     let account_id = account.account_id();
     let recipient = account.receive_address();
     let index = vault.lp.request_supply(payment, account_id, recipient, min_plp_out);
-    vault_events::emit_supply_requested(
+    vault_events::supply_req(
         vault_id,
         account_id,
         recipient,
@@ -848,7 +854,7 @@ public fun request_withdraw(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    config.assert_version();
+    config.chk_version();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     wrapper.settle<PLP>(root, clock);
     let account = wrapper.load_account_mut(auth);
@@ -857,7 +863,7 @@ public fun request_withdraw(
     let account_id = account.account_id();
     let recipient = account.receive_address();
     let index = vault.lp.request_withdraw(lp, account_id, recipient, min_usdc_out);
-    vault_events::emit_withdraw_requested(
+    vault_events::wd_req(
         vault_id,
         account_id,
         recipient,
@@ -881,21 +887,21 @@ public fun cancel_supply_request(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    config.assert_version();
+    config.chk_version();
     // Cancels stay gated during a flush (requests do not): the frozen mark is
     // on-chain readable once the snapshot lands, so an ungated cancel of an
     // already-eligible request would be a free look at a stale price — keep the
     // fill if the mark favors you, cancel if it does not. Requests are safe
     // ungated because the drain's eligibility cutoff quarantines them to the
     // next mark.
-    config.assert_not_valuation_in_progress();
+    config.chk_no_val();
     let vault_id = vault.id();
     wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
     account.deposit<USDC>(refund.into_coin(ctx));
-    vault_events::emit_request_cancelled(
+    vault_events::req_cancel(
         vault_id,
         account_id,
         recipient,
@@ -919,21 +925,21 @@ public fun cancel_withdraw_request(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    config.assert_version();
+    config.chk_version();
     // Cancels stay gated during a flush (requests do not): the frozen mark is
     // on-chain readable once the snapshot lands, so an ungated cancel of an
     // already-eligible request would be a free look at a stale price — keep the
     // fill if the mark favors you, cancel if it does not. Requests are safe
     // ungated because the drain's eligibility cutoff quarantines them to the
     // next mark.
-    config.assert_not_valuation_in_progress();
+    config.chk_no_val();
     let vault_id = vault.id();
     wrapper.settle<PLP>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_withdraw_request(recipient, index);
     account.deposit<PLP>(refund.into_coin(ctx));
-    vault_events::emit_request_cancelled(
+    vault_events::req_cancel(
         vault_id,
         account_id,
         recipient,
@@ -948,7 +954,7 @@ public fun cancel_withdraw_request(
 /// Construct the flush-start proof. Called only by
 /// `registry::generate_pool_valuation_proof` after it validates the
 /// `PoolValuationCap` against the registry allowlist.
-public(package) fun new_pool_valuation_proof(): PoolValuationProof {
+public(package) fun new_proof(): PoolValuationProof {
     PoolValuationProof {}
 }
 
@@ -956,7 +962,7 @@ public(package) fun new_pool_valuation_proof(): PoolValuationProof {
 /// snapshotting its fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_and_share_expiry_market`.
-public(package) fun register_expiry(
+public(package) fun register_exp(
     vault: &mut PoolVault,
     expiry_market_id: ID,
     expiry_ms: u64,
@@ -976,14 +982,14 @@ public(package) fun register_expiry(
     };
     let fee_incentive_lifetime_cap = vault
         .expiry_accounting
-        .register_expiry(
+        .register_exp(
             expiry_market_id,
             expiry_ms,
             max_expiry_allocation,
             initial_expiry_cash,
             fee_incentive_lifetime_cap_rate,
         );
-    vault_events::emit_fee_incentive_lifetime_cap_snapshotted(
+    vault_events::cap_snapshot(
         vault.id(),
         expiry_market_id,
         fee_incentive_lifetime_cap,
@@ -1007,7 +1013,7 @@ public(package) fun register_expiry(
 /// `seal_valuation_snapshot` and `active_expiry_value` sums per-market NAVs
 /// measured over stamped cash and tree shadows. In-window cash moves therefore
 /// never reach the mark — there is nothing to reverse.
-fun lp_pool_value(
+fun pool_value(
     frozen_idle_balance: u64,
     frozen_profit_basis_credits: u64,
     frozen_profit_basis_debits: u64,
@@ -1032,7 +1038,7 @@ fun lp_pool_value(
 
 /// Sweep a settled market, rebalance a live market, or leave an expired unsettled
 /// market unchanged. Returns true when the market is settled and swept.
-fun sweep_or_rebalance_expiry(
+fun sweep_or_bal(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -1040,38 +1046,38 @@ fun sweep_or_rebalance_expiry(
 ): bool {
     let expiry_market_id = market.id();
     if (market.is_settled()) {
-        vault.sweep_settled_expiry(market, config);
+        vault.sweep_done(market, config);
         true
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, config, expiry_market_id);
+        vault.rebal_live(market, config, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(
+fun rebal_live(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     expiry_market_id: ID,
 ) {
-    vault.sync_fee_incentives(market, config, expiry_market_id);
+    vault.sync_incent(market, config, expiry_market_id);
 
-    let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
-    let (target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
+    let initial_expiry_cash = vault.expiry_accounting.init_cash(expiry_market_id);
+    let (target_cash, sweep_threshold_cash) = cash_terms(
         market,
         initial_expiry_cash,
     );
     let cash_balance = market.cash_balance();
     if (cash_balance < target_cash) {
-        vault.top_up_live_expiry_cash(market, expiry_market_id, cash_balance, target_cash);
+        vault.top_up_live(market, expiry_market_id, cash_balance, target_cash);
     } else if (cash_balance > sweep_threshold_cash) {
-        vault.sweep_live_expiry_surplus(market, expiry_market_id, cash_balance, target_cash);
+        vault.sweep_live(market, expiry_market_id, cash_balance, target_cash);
     };
 }
 
-fun top_up_live_expiry_cash(
+fun top_up_live(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     expiry_market_id: ID,
@@ -1079,13 +1085,13 @@ fun top_up_live_expiry_cash(
     target_cash: u64,
 ) {
     let requested_top_up = target_cash - cash_balance;
-    let funding_room = vault.expiry_accounting.available_expiry_funding(expiry_market_id);
+    let funding_room = vault.expiry_accounting.avail_fund(expiry_market_id);
     let top_up = requested_top_up.min(vault.expiry_accounting.idle_balance()).min(funding_room);
     if (top_up == 0) return;
 
-    let cash = vault.expiry_accounting.send_expiry_cash(expiry_market_id, top_up);
-    market.receive_pool_cash(cash);
-    vault_events::emit_expiry_cash_rebalanced(
+    let cash = vault.expiry_accounting.send_expiry(expiry_market_id, top_up);
+    market.recv_cash(cash);
+    vault_events::rebalanced(
         vault.id(),
         expiry_market_id,
         top_up,
@@ -1095,23 +1101,21 @@ fun top_up_live_expiry_cash(
     );
 }
 
-fun sweep_live_expiry_surplus(
+fun sweep_live(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     expiry_market_id: ID,
     cash_balance: u64,
     target_cash: u64,
 ) {
-    let returned_cash = market.release_pool_cash(cash_balance - target_cash);
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .receive_expiry_cash(returned_cash, expiry_market_id);
+    let returned_cash = market.release_cash(cash_balance - target_cash);
+    let returned_cash_amount = vault.expiry_accounting.recv_expiry(returned_cash, expiry_market_id);
     // Surplus just returned to idle — realize any protocol cut a prior settled
     // sweep could not cover because idle was deployed in other active markets.
-    let realized_profit = vault.expiry_accounting.realize_pending_protocol_profit();
+    let realized_profit = vault.expiry_accounting.realize_pend();
     let protocol_profit_realized = realized_profit.value();
     vault.protocol_reserve_balance.join(realized_profit);
-    vault_events::emit_expiry_cash_rebalanced(
+    vault_events::rebalanced(
         vault.id(),
         expiry_market_id,
         returned_cash_amount,
@@ -1124,13 +1128,13 @@ fun sweep_live_expiry_surplus(
 /// Top a live market's fee-incentive balance up to the configured live target share
 /// of its allocation cap, from the pool reserve and within its lifetime cap. Never
 /// takes a balance back: a market already above the target receives nothing.
-fun sync_fee_incentives(
+fun sync_incent(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     expiry_market_id: ID,
 ) {
-    let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
+    let max_expiry_allocation = vault.expiry_accounting.max_alloc(expiry_market_id);
     let requested_allocation = math::mul_down(
         max_expiry_allocation,
         config.fee_incentive_live_target_rate(),
@@ -1141,12 +1145,12 @@ fun sync_fee_incentives(
 
     let (allocation, allocated_after) = vault
         .expiry_accounting
-        .record_fee_incentives_allocated_up_to(expiry_market_id, requested_allocation);
+        .note_alloc(expiry_market_id, requested_allocation);
     if (allocation == 0) return;
 
     let incentives = vault.fee_incentive_reserve.split(allocation);
-    market.receive_fee_incentives(incentives);
-    vault_events::emit_fee_incentives_allocated(
+    market.recv_incent(incentives);
+    vault_events::incent_alloc(
         vault.id(),
         expiry_market_id,
         allocation,
@@ -1156,63 +1160,85 @@ fun sync_fee_incentives(
     );
 }
 
-/// Current cash, the target cash to hold, and the upper sweep band for one expiry.
+/// The target cash to hold and the upper sweep band for one expiry.
 ///
-/// `target_cash` adds one buffer above the expiry-cash required backing and
-/// `sweep_threshold_cash` adds two, both floored at the per-expiry initial cash
-/// target. Below target the pool tops up to target; above the sweep band it
-/// returns the excess over target.
-fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
+/// `target_cash` is the largest of one buffer above the expiry-cash required
+/// backing, the per-expiry initial cash target, and required backing plus the
+/// queued orders' cash need. `sweep_threshold_cash` is the largest of two buffers
+/// above required, the initial cash target, and `target_cash`. Below target the
+/// pool tops up to target; above the sweep band it returns the excess over target,
+/// so a sweep never leaves less than required plus the queued need. The band is
+/// floored at the target because a queued need above two buffers lifts the target
+/// over the other band terms, and a band under the target would sweep a market
+/// holding exactly its target by zero.
+fun cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
     let required_cash = market.required_cash();
     let target_buffer = math::mul_down(required_cash, constants::expiry_rebalance_pct!());
-    let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
-    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
-        initial_expiry_cash,
-    );
+    let target_cash = (required_cash + target_buffer)
+        .max(initial_expiry_cash)
+        .max(required_cash + market.wait_need());
+    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer)
+        .max(initial_expiry_cash)
+        .max(target_cash);
     (target_cash, sweep_threshold_cash)
 }
 
 /// Settled-market sweep: deactivate the expiry, return its free cash to idle,
-/// report the expiry's lifetime PnL, materialize its terminal profit, and return
-/// unused fee incentives to the pool reserve. Idempotent — a settled market already
-/// swept returns zero cash, emits nothing, and recognizes no further profit, so a
-/// second pass is a no-op.
-fun sweep_settled_expiry(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-) {
+/// report the expiry's lifetime PnL and its change since the last report,
+/// materialize its terminal profit, and return unused fee incentives to the pool
+/// reserve. Idempotent — a settled market already swept returns zero cash, emits
+/// nothing, and recognizes no further profit, so a second pass is a no-op.
+fun sweep_done(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
     let expiry_market_id = market.id();
-    let deactivated = vault.expiry_accounting.deactivate_expiry_if_present(expiry_market_id);
-    let returned_cash = market.release_settled_pool_cash();
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .receive_expiry_cash(returned_cash, expiry_market_id);
+    let deactivated = vault.expiry_accounting.deactivate(expiry_market_id);
+    let returned_cash = market.free_settled();
+    let returned_cash_amount = vault.expiry_accounting.recv_expiry(returned_cash, expiry_market_id);
     if (deactivated || returned_cash_amount > 0) {
-        vault_events::emit_expiry_cash_received(
+        vault_events::cash_recv(
             vault.id(),
             expiry_market_id,
             market.settlement_price(),
             returned_cash_amount,
         );
-        vault_events::emit_expiry_pnl(
+        let sent_to_expiry = vault.expiry_accounting.sent_cash(expiry_market_id);
+        let received_from_expiry = vault.expiry_accounting.received(expiry_market_id);
+        vault_events::expiry_pnl(
             vault.id(),
             expiry_market_id,
             market.propbook_underlying_id(),
             market.reference_tick_source_timestamp_ms(),
             market.expiry(),
             market.settlement_price(),
-            vault.expiry_accounting.sent_to_expiry(expiry_market_id),
-            vault.expiry_accounting.received_from_expiry(expiry_market_id),
+            sent_to_expiry,
+            received_from_expiry,
+        );
+        // Pool cash reaches an expiry only through the live top-up, and
+        // `note_sent` refuses it once the first settled sweep has started
+        // terminal accounting. So `sent_to_expiry` is final from that sweep on: it
+        // realizes the lifetime result, and each later sweep realizes exactly the cash
+        // it returned.
+        let (in_profit, realized_amount) = if (deactivated) {
+            (received_from_expiry >= sent_to_expiry, received_from_expiry.diff(sent_to_expiry))
+        } else {
+            (true, returned_cash_amount)
+        };
+        vault_events::pnl_realized(
+            vault.id(),
+            expiry_market_id,
+            market.propbook_underlying_id(),
+            market.expiry(),
+            market.settlement_price(),
+            in_profit,
+            realized_amount,
         );
     };
-    vault.materialize_expiry_profit(config, expiry_market_id);
-    let returned_incentives = market.release_fee_incentives();
+    vault.materialize(config, expiry_market_id);
+    let returned_incentives = market.free_incent();
     let returned_incentive_amount = returned_incentives.value();
     vault.fee_incentive_reserve.join(returned_incentives);
 
     if (returned_incentive_amount > 0) {
-        vault_events::emit_fee_incentives_returned(
+        vault_events::incent_back(
             vault.id(),
             expiry_market_id,
             returned_incentive_amount,
@@ -1225,20 +1251,16 @@ fun sweep_settled_expiry(
 /// cut is realized from idle into the protocol reserve — capped at available idle,
 /// with any remainder carried in `pending_protocol_profit` and realized on a later
 /// sweep — while the LP cut stays in idle.
-fun materialize_expiry_profit(
-    vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    expiry_market_id: ID,
-) {
-    let profit = vault.expiry_accounting.materialize_expiry_profit(expiry_market_id);
+fun materialize(vault: &mut PoolVault, config: &ProtocolConfig, expiry_market_id: ID) {
+    let profit = vault.expiry_accounting.materialize(expiry_market_id);
     if (profit == 0) {
         return
     };
-    let protocol_profit = math::mul_down(profit, config.protocol_reserve_profit_share());
+    let protocol_profit = math::mul_down(profit, config.rsv_share());
     let lp_profit = profit - protocol_profit;
-    let realized = vault.expiry_accounting.realize_protocol_profit(protocol_profit);
+    let realized = vault.expiry_accounting.realize_prof(protocol_profit);
     vault.protocol_reserve_balance.join(realized);
-    vault_events::emit_expiry_profit_materialized(
+    vault_events::profit_made(
         vault.id(),
         expiry_market_id,
         lp_profit,
@@ -1253,7 +1275,7 @@ fun materialize_expiry_profit(
 /// facts — the active expiry set, the start time, and each LP queue's
 /// eligibility cutoff — after requiring a bootstrapped pool with nonzero PLP
 /// supply.
-fun start_pool_valuation_internal(
+fun start_val(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
     supply_budget: Option<u64>,
@@ -1266,10 +1288,10 @@ fun start_pool_valuation_internal(
     // is simply starting a new one — there is no separate abort/restart. Emits
     // `FlushRestarted` for the superseded flush.
     if (vault.valuation.is_some()) {
-        vault.discard_valuation_internal(config);
+        vault.discard_val(config);
     };
-    config.begin_valuation();
-    config.begin_snapshot();
+    config.begin_val();
+    config.open_snap();
     vault.valuation =
         option::some(PoolValuation {
             expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
@@ -1280,8 +1302,8 @@ fun start_pool_valuation_internal(
             started_at_ms: clock.timestamp_ms(),
             supply_budget,
             withdraw_budget,
-            supply_request_cutoff: vault.lp.next_supply_request_index(),
-            withdraw_request_cutoff: vault.lp.next_withdraw_request_index(),
+            supply_request_cutoff: vault.lp.next_sup_idx(),
+            withdraw_request_cutoff: vault.lp.next_wd_idx(),
             frozen_idle_balance: 0,
             frozen_profit_basis_credits: 0,
             frozen_profit_basis_debits: 0,
@@ -1291,33 +1313,29 @@ fun start_pool_valuation_internal(
 
 /// Discard the in-flight valuation, release the flag, and report how far it got.
 /// Discard the in-flight valuation and release the flag. Called only by
-/// `start_pool_valuation_internal` when a new flush supersedes a prior one:
+/// `start_val` when a new flush supersedes a prior one:
 /// there is no separate abort/restart entrypoint — starting a flush IS the
 /// restart. Partial NAV is discarded rather than reused (the frozen marks are
 /// sound only as a simultaneous set, so the new flush re-snapshots); cash already
 /// moved by snapshot-stage settled sweeps and in-window maintenance stays moved
 /// (each is an invariant-preserving per-market operation), and market stamps are
 /// left to go stale by flush ordinal, discarded lazily on the next trade/settle.
-fun discard_valuation_internal(vault: &mut PoolVault, config: &mut ProtocolConfig) {
+fun discard_val(vault: &mut PoolVault, config: &mut ProtocolConfig) {
     let valuation = vault.valuation.extract();
-    config.end_valuation();
-    vault_events::emit_flush_restarted(
+    config.end_val();
+    vault_events::flush_redo(
         vault.id(),
         valuation.expected_expiry_markets.length(),
         valuation.valued_expiry_markets.length(),
     );
 }
 
-// (assert_valuation_starter removed: value_expiry and finish_flush are
-// permissionless; the drain budgets are committed at start, so completion can
-// only help LPs.)
-
 /// Abort while the atomic snapshot stage is still open (start → seal, one
 /// transaction, so only the flush-starter's own PTB can compose this state): an
 /// idle↔market move there could land between a market's stamp and the seal's
 /// vault capture, and the frozen figures would disagree about where that cash
 /// was at the instant.
-fun assert_snapshot_stage_closed(vault: &PoolVault) {
+fun chk_no_stage(vault: &PoolVault) {
     if (vault.valuation.is_some()) {
         assert!(vault.valuation.borrow().sealed, ESnapshotStageOpen);
     };
@@ -1328,7 +1346,7 @@ fun assert_snapshot_stage_closed(vault: &PoolVault) {
 /// The exactly-once completeness proof: the valued set must equal the snapshot
 /// (a missed market means a wrong pool NAV). `value_expiry` already rejects
 /// non-snapshot and duplicate ids, so equal lengths plus full coverage suffice.
-fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
+fun chk_valued(expected: &vector<ID>, valued: &vector<ID>) {
     assert!(valued.length() == expected.length(), EMissingExpiryValuation);
     expected.do_ref!(|id| assert!(valued.contains(id), EMissingExpiryValuation));
 }
@@ -1339,6 +1357,6 @@ fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
 /// Register PLP in tests.
 public fun init_for_testing(ctx: &mut TxContext): ID {
     let (vault_id, metadata_cap) = init_plp(PLP {}, ctx);
-    transfer_metadata_cap(metadata_cap, ctx);
+    xfer_metacap(metadata_cap, ctx);
     vault_id
 }

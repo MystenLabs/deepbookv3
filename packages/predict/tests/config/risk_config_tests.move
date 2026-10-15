@@ -25,14 +25,14 @@ fun lp_request_attempts_accepts_endpoints() {
     assert_eq!(config_constants::min_lp_request_limit_flush_attempts!(), MIN_LP_REQUEST_ATTEMPTS);
     assert_eq!(config_constants::max_lp_request_limit_flush_attempts!(), MAX_LP_REQUEST_ATTEMPTS);
 
-    config_constants::assert_lp_request_limit_flush_attempts(MIN_LP_REQUEST_ATTEMPTS);
-    config_constants::assert_lp_request_limit_flush_attempts(MAX_LP_REQUEST_ATTEMPTS);
+    config_constants::chk_attempts(MIN_LP_REQUEST_ATTEMPTS);
+    config_constants::chk_attempts(MAX_LP_REQUEST_ATTEMPTS);
 }
 
 /// Zero attempts would refund a request the mark could actually have filled.
 #[test, expected_failure(abort_code = config_constants::EInvalidLpRequestLimitFlushAttempts)]
 fun lp_request_attempts_below_min_aborts() {
-    config_constants::assert_lp_request_limit_flush_attempts(
+    config_constants::chk_attempts(
         config_constants::min_lp_request_limit_flush_attempts!() - 1,
     );
     abort 999
@@ -42,7 +42,7 @@ fun lp_request_attempts_below_min_aborts() {
 /// operator cannot widen the blocking window past what RP-12 accounts for.
 #[test, expected_failure(abort_code = config_constants::EInvalidLpRequestLimitFlushAttempts)]
 fun lp_request_attempts_above_max_aborts() {
-    config_constants::assert_lp_request_limit_flush_attempts(
+    config_constants::chk_attempts(
         config_constants::max_lp_request_limit_flush_attempts!() + 1,
     );
     abort 999
@@ -50,8 +50,8 @@ fun lp_request_attempts_above_max_aborts() {
 
 #[test]
 fun max_lp_pool_value_accepts_endpoints() {
-    config_constants::assert_max_lp_pool_value(config_constants::min_max_lp_pool_value!());
-    config_constants::assert_max_lp_pool_value(config_constants::max_max_lp_pool_value!());
+    config_constants::chk_max_pool(config_constants::min_max_lp_pool_value!());
+    config_constants::chk_max_pool(config_constants::max_max_lp_pool_value!());
 }
 
 /// The floor is the genesis lock plus one minimum supply — the smallest cap that
@@ -66,6 +66,6 @@ fun max_lp_pool_value_floor_leaves_room_for_one_minimum_supply() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMaxLpPoolValue)]
 fun max_lp_pool_value_below_floor_aborts() {
-    config_constants::assert_max_lp_pool_value(config_constants::min_max_lp_pool_value!() - 1);
+    config_constants::chk_max_pool(config_constants::min_max_lp_pool_value!() - 1);
     abort 999
 }

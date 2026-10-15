@@ -61,5 +61,11 @@ def parse_json_lenient(text: str) -> Any:
         start = arr
     end = max(text.rfind("}"), text.rfind("]"))
     if start != -1 and end > start:
-        return json.loads(text[start : end + 1])
+        # A failed command can print a plain error line that only contains braces, such as
+        # `MovePackageTooBig { object_size: ..., max_object_size: ... }`. Surface that line as a
+        # SuiError rather than a bare JSONDecodeError that hides it.
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            pass
     raise SuiError(f"could not parse sui JSON output:\n{text[:1000]}")

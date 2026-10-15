@@ -15,7 +15,7 @@ and contributors. For *how* each mechanism works, follow the links into
   and isolated inventory-impact reserve
   (`cash ≥ payout_liability + inventory_impact_reserve`),
   re-asserted after every cash mutation
-  (`expiry_cash::assert_backing`).
+  (`expiry_cash::chk_backing`).
 - **Inventory-impact escrow covers the current potential.** While live,
   `inventory_impact_reserve ≥ phi(payout_liability)`. Mints credit exactly the
   potential increase and voluntary live closes may withdraw only the potential
@@ -28,7 +28,7 @@ and contributors. For *how* each mechanism works, follow the links into
   cross-range reorderings.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed payout at any *single* settlement price, read
-  from `StrikePayoutTree::payout_reserve_terms`; the buffer is
+  from `StrikePayoutTree::rsv_terms`; the buffer is
   `backing_buffer_lambda × (Σ payout − floor)`, with both terms derived from
   the payout tree's aggregate payout terms (each order's `quantity`). Because exactly one
   settlement price resolves a market, the floor alone covers every settlement
@@ -36,11 +36,12 @@ and contributors. For *how* each mechanism works, follow the links into
   governs how much pre-settlement exit demand beyond the floor is funded. A
   lambda of 1.0 reproduces the fully summed reserve. See
   [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
-- **Early exits are buffer-bounded, settlement is not.** A live redeem that
-  would push cash below the reserve aborts; smaller closes, later retries, and
-  the full settlement payout remain available. Closing a position releases its
+- **Early exits are buffer-bounded, settlement is not.** An early sell that
+  would push cash below the reserve is refunded at its fill (reason 8), and its
+  position returns to its Open record. Smaller closes, later retries, and the
+  full settlement payout remain available. Closing a position releases its
   own share of the buffer, so exit liquidity cannot be monopolized.
-- **Settled liability is exact.** `StrikeExposure::record_settlement` records the
+- **Settled liability is exact.** `StrikeExposure::set_settled` records the
   terminal price and exact payout liability together; the liability is always ≤
   the settlement floor (hence ≤ the live reserve).
 - **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
@@ -48,11 +49,78 @@ and contributors. For *how* each mechanism works, follow the links into
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
   on every funding move as a ceiling, and the pool sync tops every market up toward
   its reserve target before an LP withdrawal pays out.
-- **Custody.** USDC lives in exactly three places: account-package `Account`
-  custody, each expiry's `ExpiryCash`, and the pool ledger's idle balance.
+- **Custody.** USDC lives in exactly four places: account-package `Account`
+  custody, each expiry's `ExpiryCash`, each queued order's escrow in its
+  `deepbook_predict_orders` record, and the pool ledger's idle balance.
   `ExpiryMarket` is the sole authorizer of expiry cash movement. The protocol
   reserve accumulates the protocol's profit share and is excluded from PLP
   redemption.
+
+## Delayed execution
+
+See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
+
+- **Predict decides every fill.** Every change to a queued order's position,
+  market cash, or Predict's order-flow ledger happens inside one Predict
+  primitive that checks its own gates and the order's receipt when it runs.
+  Admission, commit, and fills also require an allowlisted witness type.
+  Predict never names a companion type.
+- **A receipt is consumed exactly once.** `OrderReceipt` has `store` only, so
+  it cannot be copied, forged, or dropped, and only Predict unpacks it. A
+  payout or a full close consumes it, so a position is paid or closed once.
+  A receipt is refused on any market but its own, and every primitive checks
+  the stage it needs.
+- **The ledger is exact.** A market's waiting cash need and payout-tree pins
+  enter only through an admission and leave only through the receipt that
+  added them.
+- **Each record holds exactly its own escrow.** A record's escrow is its
+  order's budget, order fee, and reserved subsidy, held next to its receipt.
+  A fill or a release requires escrow of at least that sum (`EEscrowMismatch`
+  otherwise), and a refund returns exactly that record's escrow, less a fee
+  kept for reasons 1 and 2, so no pooled shortfall or residue can arise.
+- **Escrow is outside cash, NAV, and backing.** No waiting order changes market
+  cash, required cash, NAV, or the pool mark until it fills.
+- **Fills never draw on the pool.** A fill pays from the order's escrow and the
+  market's own cash, and leaves market cash at or above required cash. The
+  fill checks this before anything moves and refunds a cash-short order
+  (reason 8), then the backing check re-asserts it after the fill.
+- **One price per cohort, fixed by τ.** A cohort accepts only the update stamped
+  exactly τ on its stored channel, or, with the backup tick switched on and once
+  `gap_wait_ms` has passed, the single update one tick of that channel later.
+  Predict stores only a `LazerPrice` built from a Pyth-verified update for the
+  receipt's feed and channel, generated at or after τ. A cohort commits whole
+  or not at all, and never at or past its deadline.
+- **τ and the deadline never decrease along record IDs.** A committed cohort
+  never grows, and a cohort never mixes Pyth channels.
+- **The deadline is final.** At or past its deadline an unfinished order can
+  only be refunded in full. Predict refuses a deadline less than 5 seconds
+  before expiry, so every waiting order is due before the market can settle.
+- **Fill, refund, and settlement calls create no objects.** Commit, resolve,
+  refund, and `settle_step` take `&TxContext`, admission creates and pins
+  every payout-tree node a fill will touch, and the trader whose order creates
+  a market's ledger pays its storage. A pinned node is never pruned, and a
+  snapshot release keeps it. A market's queue is created once, by a separate
+  call.
+- **Settlement never waits on the queue.** `try_settle` reads nothing from the
+  queue. `settle_step` refunds waiting orders and pays Open records in bounded
+  batches, one phase per call, and never aborts because of a queued order. A
+  record the market cannot pay stays Open (`OpenRecordPayoutSkipped`). Each
+  batch fits Sui's 1,000 dynamic-field loads per transaction.
+- **No USDC send aborts.** No fill, fee, refund, or settled payout sends USDC
+  to an address on its deny list, or to anyone while USDC is globally paused.
+  A fill is refused (reason 9), a fee stays in market cash, a refund is parked
+  in its record, and a payout is skipped, so one denied address never stops a
+  market's walks. Parked funds and skipped payouts are paid only to the
+  record's own receive address (`claim_parked`, `pay_open`).
+- **Queue creation never contends with trading.** It writes the
+  `QueueRegistry`, which no trading call reads, and each market has exactly
+  one queue at the ID derived from the registry and the market.
+- **Exits need no authority.** Refunds and settled payouts go through `release`
+  and `try_pay_settled`, which need no witness and check only the version
+  floor, so they keep working while frozen and after the witness is disabled.
+- **A queued fill never enters the account.** It stays an Open record until an
+  early sell moves it out or the settlement payout closes it. Status moves only
+  forward, except that a refunded sell returns to Open.
 
 ## Position value
 
@@ -83,15 +151,15 @@ and contributors. For *how* each mechanism works, follow the links into
   atomically; otherwise it returns false without changing the market. Settled consumers read no
   oracle.
 - A settled order pays its full `quantity` if the settlement price is in
-  `(lower, higher]`, else 0 (`strike_exposure::process_settled_close`).
+  `(lower, higher]`, else 0 (`strike_exposure::settle_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
   prices against tick boundaries through one threshold tick, `prefix_limit_tick =
   ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is
-  active in the prefix walk iff `t < prefix_limit_tick`, which is exactly
+  active in the prefix walk iff `t < limit_tick`, which is exactly
   `t · tick_size < settlement`. The payout-tree prefix-sum winner therefore equals
   the per-order settled-close winner — both use the same half-open `(lower, higher]`
   threshold and the same `tick_size`, so settlement equal to a higher boundary still
-  wins at `higher`. `prefix_limit_tick` is a plain `u64` comparison bound (it can
+  wins at `higher`. `limit_tick` is a plain `u64` comparison bound (it can
   legitimately exceed `pos_inf_tick` when settlement is above the encodable range)
   and is never validated as a domain tick.
 - `StrikeExposure` owns the settled phase: its settlement-price option is the phase
@@ -142,8 +210,8 @@ and contributors. For *how* each mechanism works, follow the links into
   registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
-- While `use_pyth_spot_for_forward` is set, every live trade — mint, mint quote, and live redeem — requires a pricer that loaded a usable Pyth spot no older than `pyth_spot_freshness_ms`. Valuation (`current_nav`, `live_order_value`, the flush snapshot) accepts a pricer that fell back to the Block Scholes forward, and settlement and settled redemption read no live price, so a Pyth gap blocks early exits but never the flush or settlement.
-- Trading pause blocks new risk creation. Trade flows (mint, live redeem, settled redeem) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
+- A queued fill prices at the committed Pyth price for its τ and never reads the stored on-chain spot, and admission does not require that spot to be fresh. Valuation (`current_nav`, `live_order_value`, the flush snapshot) and the mint quotes accept a pricer that fell back to the Block Scholes forward, and settlement and settled redemption read no live price, so a gap in stored Pyth updates blocks neither trading, the flush, nor settlement. A gap in signed Pyth Lazer updates refunds the affected cohorts at their deadlines.
+- Trading pause blocks new risk creation: queued mints abort, while early sells, commit, resolve, refunds, and settlement run. Trade flows (queued admission and fills, settled redeem) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
   there is no expiry-only path that can strand capital. (The standalone compaction
@@ -154,7 +222,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Configuration
 
 - Admin-tunable values have a stored field plus a `default_*` seed and an
-  `assert_*` bound in `config_constants`, snapshotted per object at creation;
+  `chk_*` bound in `config_constants`, snapshotted per object at creation;
   later admin updates do not reprice active markets. Upgrade-required values stay
   as constants/macros read directly. `min_*`/`max_*` bounds are upgrade-required
   validation envelopes, not config fields. See
@@ -173,7 +241,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Cross-module returns carry owned facts, not a consumer's policy.** A module
   returns quantities it is the source of truth for (an exposure book returns its raw
   live liability; the pool returns its profit basis), never a value pre-shaped for a
-  caller's mark, haircut, or stance. `strike_exposure::live_marked_liability` returns
+  caller's mark, haircut, or stance. `strike_exposure::marked_liab` returns
   the liability fact; `expiry_market::current_nav` owns the NAV cash floor.
 - **Each economic quantity is clamped exactly once, at the policy owner.** A lossy
   transform (clamp at zero, `min`/`max`, saturating subtraction, rounding) is applied
