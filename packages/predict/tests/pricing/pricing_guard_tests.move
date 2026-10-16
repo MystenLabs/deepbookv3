@@ -68,6 +68,7 @@ use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
 const FOREIGN_UNDERLYING_ID: u32 = 2;
+const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
 /// The largest provider-native magnitude that Predict can represent without narrowing loss.
 const MAX_REPRESENTABLE_U64: u128 = 18_446_744_073_709_551_615;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
@@ -196,6 +197,16 @@ fun live_quote_with_prices_but_no_svi_aborts() {
     let now = test_constants::live_source_timestamp_ms();
     fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
     fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
+fun switching_the_svi_model_stops_pricing_from_the_previous_surface() {
+    // A fresh surface lands under the default model, then the admin switches the store: Predict
+    // reads the new model's series, which nothing has signed yet.
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_model_bundle(&mut oracle, SVI_REGIME_MODEL.to_string());
     live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
     abort EUnexpectedSuccess
 }

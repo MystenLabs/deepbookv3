@@ -50,6 +50,7 @@ use deepbook_predict::{
 use fixed_math::math;
 use std::unit_test::assert_eq;
 
+const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
 const SKEW_CLAMP_SVI_A: u64 = 1;
 const SKEW_CLAMP_SVI_B: u64 = 100_000_000_000;
 const SKEW_CLAMP_RHO_UNIT: u64 = 1_000_000_000;
@@ -177,6 +178,23 @@ fun seed_ssvi_slice(
 #[test]
 fun short_dated_slice_with_the_smallest_sigma_prices_to_true_math() {
     run_ssvi_slice(ssvi::smallest_sigma_slice());
+}
+
+/// The SVI store's admin-set model chooses which signed surface Predict reads, not how it prices:
+/// the same slice signed under `SVI_REGIME` after the switch prices to the same true-math reference.
+#[test]
+fun short_dated_slice_signed_under_a_switched_model_prices_to_true_math() {
+    let s = ssvi::smallest_sigma_slice();
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.set_bs_svi_model_bundle(&mut oracle, SVI_REGIME_MODEL.to_string());
+    seed_ssvi_slice(&mut fx, &mut oracle, s, ssvi::spot(s), ssvi::forward(s));
+
+    assert_eq!(oracle.bs().svi().svi_model(), SVI_REGIME_MODEL.to_string());
+    assert_ssvi_points(&mut fx, &oracle, ssvi::points(s));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 /// `a` is negative and the rounded analytical minimum total variance is one raw

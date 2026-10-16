@@ -35,7 +35,7 @@ use propbook::{
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
-use std::unit_test::destroy;
+use std::{string::String, unit_test::destroy};
 use sui::{
     clock::{Self, Clock},
     test_scenario::{Self as test, Scenario, return_shared},
@@ -816,6 +816,20 @@ public fun set_use_pyth_spot_for_forward_bundle(
 }
 
 // === Accessors ===
+
+/// Admin-set the provider model the bundle's SVI store accepts and serves, through the production
+/// Propbook registry entry.
+public fun set_bs_svi_model_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    svi_model: String,
+) {
+    propbook_registry::set_block_scholes_svi_model(
+        oracle.bs.svi_mut(),
+        &self.propbook_admin_cap,
+        svi_model,
+    );
+}
 
 public fun pyth(oracle: &OracleBundle): &PythFeed { &oracle.pyth }
 
