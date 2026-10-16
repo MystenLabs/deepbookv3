@@ -63,7 +63,7 @@ stateDiagram-v2
 - **Settlement and payout** are the terminal, irreversible transition. Anyone may call Predict's `try_settle`, which records the settlement price. Then anyone may call the companion's `settle_step`, which refunds any order still waiting and pays every Open record its full `quantity` if it won and zero otherwise.
 - **Settled sweep** deactivates a settled market from the pool's active set, returns free LP cash to idle, and materializes terminal profit.
 
-Before package version 4, mints and live redeems executed immediately and kept positions in the account. Those entrypoints now abort, while `redeem_settled` still pays any position an immediate mint left in an account. See [delayed execution](./concepts/delayed-execution.md) and [markets and positions](./concepts/markets-and-positions.md).
+Before package version 4, mints and live redeems executed immediately and kept positions in the account. Those entrypoints now abort, and so does `redeem_settled`, the settled redeem of an account position. A queued fill stays in its market and is paid at settlement. See [delayed execution](./concepts/delayed-execution.md) and [markets and positions](./concepts/markets-and-positions.md).
 
 ## Liquidity is asynchronous
 
