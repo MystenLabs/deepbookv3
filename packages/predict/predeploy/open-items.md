@@ -470,9 +470,10 @@ Coupled exposures:
   model (`registry::set_block_scholes_svi_model`): one call switches the SVI
   surface every market on that underlying prices from, or, with a model the
   provider does not publish for some expiry, halts live pricing, live exits,
-  and the pool flush for the whole underlying. Like a rebind, it also makes
-  queued orders' commits abort until the new model's observations land or
-  their deadline refunds them.
+  and the pool flush for the whole underlying. New queued admissions abort
+  until the new model's observations land, but orders already queued keep the
+  volatility snapshot their receipt captured at admission, so their commits
+  and fills still price from the previous surface.
 
 **Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
 multisig custody plus a rotation/replacement mechanism for each non-rotatable
