@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-10-13. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-10-22. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -370,16 +370,6 @@ The same scale sets a liveness edge. An SSVI slice's minimum total variance is `
 The minimum-variance increment in `deepbook_predict_math::math::raw_var_ok` computes `b·sigma·sqrt(1 − rho²)` with four floors. Flooring `rho²` rounds `1 − rho²` up, so near `|rho| = 1` the gate's increment can exceed the true minimum and admit a surface whose true minimum total variance is slightly negative (for example, in raw units, `b = 79_695_456_439`, `sigma = 9_025_768_115`, `rho = 995_630_907`, `a = −67_166_622_671`: the gate's increment is 67_166_622_672, one unit above `|a|`, while the true minimum is about −3.4e-6); the per-strike `ENonPositiveVariance` backstop then aborts at the vertex strike. The remaining floors round down, so elsewhere the gate is stricter than true math by up to about `1 + b·(1 + sigma)` raw units: about one unit on SSVI slices, whose tightest backfill margin is exactly one unit. Removing the `|a| ≤ 100` cap (DBU-849) widens the permissive case's reachable magnitude, since `a` can now offset a larger `b·sigma`.
 
 **Action:** decide a one-sided rounding — for example `mul_up` for `rho²` and a single `u128` product `b·sigma·sqrt(1 − rho²)` compared against `|a|` at 1e27 — and pin both sides of the boundary.
-
-### P-35: One-unit rounding ripple in the far tails trips the active-book monotonicity guard
-
-**Severity:** High before one- and five-minute SSVI cadences go live, and already reachable on the current feed wherever one-to-five-minute markets are live; flush liveness. Pre-existing, independent of DBU-849.
-
-`deepbook_predict_math::math::digital` rounds `nd2` and the skew correction down separately, so in both tails, where the digital is a few raw units, the adjusted UP price can rise by one raw unit between neighbouring strikes on an arbitrage-free surface. The ripple is not rare: every one of 160 sampled SSVI slices that DBU-849 admits has one somewhere between whole-dollar strikes, and so do 8 of 20 sampled current-style slices one to five minutes out, always exactly one raw unit (`evidence/rp5-ssvi-backfill-2026-09-28.md`). On a real backfill slice (published 2026-03-19 07:06:40 for the 07:15 expiry: `a = 2218`, `b = 926_157`, `rho = −28_390_040`, `m = 68_038`, `sigma = 2_395_589` raw, forward 70_464.04) the contract returns UP(72,670) = 4 and UP(72,680) = 5. `strike_payout_tree` requires active-book UP prices to be non-increasing with no tolerance, so two active boundaries straddling such a ripple abort that market's valuation with `ENonMonotonePrice` and stall the pool-wide flush. RP-15 attributes such inversions only to a provider breaking its butterfly-free guarantee; this one needs no provider fault. It is also reachable on purpose: a ladder of minimum-size mints whose boundaries sit in the tails places active boundaries across the ripple region as expiry approaches and the tails move in, so a trader can make later valuation snapshots of that market abort. The mainnet entry band (5% to 95% since 2026-09-28) does not prevent it: a ladder entered at 5% or more reaches the ripple region as the tails move in. Before DBU-849 the same short-dated snapshots aborted earlier, at pricer load, on the sigma floor.
-
-The 1e-7 sigma floor (DBU-1059) adds a larger form of the ripple. On a 1e-5 USD strike ladder, wing rises appear at every sigma: at most 57 raw units at 1e-5, and 2,534 at 1e-7. No ladder on the production admission grid ($1 plus one $0.01 reference tick) showed one (`evidence/rp5-sigma-floor-scan-2026-10-22.md`). A constant tolerance therefore also needs that admission grid kept coarser than a cent.
-
-**Action:** decide the tolerance — for example accept a rise of up to two raw units against the running minimum and net with `min(price, previous)`, understating NAV by at most `2e-9` per unit of quantity — record it against RP-15, and land it before short SSVI cadences go live. Pin it with a walk over the two strikes above, and over the one-minute SSVI slice published 20 s before expiry with `a = 63`, `b = 185_973`, `rho = −2_190_270`, `m = 739`, `sigma = 337_252` raw at forward 66_415.25, where UP(66,811) = 9 and UP(66,812) = 10.
 
 ### P-36: Predict's SVI roll-down does not follow SSVI's time scaling
 
