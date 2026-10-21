@@ -128,7 +128,7 @@ After expiry, the companion's `settle_step` first refunds every order still wait
 
 ### Settled redeem (retired)
 
-Before package version 4, `redeem_settled` (owner auth) and `redeem_settled_permissionless` (an allowlisted keeper, with Predict app auth) paid a settled position held in an account: the full `quantity` when the settlement price lay in `(lower, higher]`, zero otherwise, emitting **`SettledOrderRedeemed`**. In package version 4 both keep their signatures and abort `EDelayedExecutionRequired` at any watermark. A queued fill never enters an account, and settlement pays its Open record (`OpenRecordSettled`). Positions immediate mints left in accounts are redeemed through an older package before the watermark bump. The settled-redeem keeper allowlist on `ProtocolConfig` gates nothing.
+Through package version 4, `redeem_settled` (owner auth) and `redeem_settled_permissionless` (an allowlisted keeper, with Predict app auth) pay a settled position held in an account: the full `quantity` when the settlement price lies in `(lower, higher]`, zero otherwise, emitting **`SettledOrderRedeemed`**. A queued fill never enters an account, and settlement pays its Open record (`OpenRecordSettled`), so from version 4 they serve only positions immediate mints left in accounts. Mainnet held none at the cutover. Package version 5 retires both: they keep their signatures and abort `EDelayedExecutionRequired` at any watermark, and the settled-redeem keeper allowlist on `ProtocolConfig` gates nothing.
 
 ### Retired immediate paths
 

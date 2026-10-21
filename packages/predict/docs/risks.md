@@ -57,7 +57,7 @@ The single most important LP-facing trust assumption is **who decides when the p
 
 ## Settlement exact-data liveness and fallback authority
 
-Terminal settlement is implemented by the permissionless `try_settle` transition. It reads Propbook exact history at the market expiry and atomically records one terminal price plus exact payout liability; settled redeem and the later sweep consume only that recorded state.
+Terminal settlement is implemented by the permissionless `try_settle` transition. It reads Propbook exact history at the market expiry and atomically records one terminal price plus exact payout liability. The queue's payout walk and the later sweep consume only that recorded state.
 
 The remaining risks are exact-data liveness and source disagreement:
 
@@ -73,7 +73,7 @@ stateDiagram-v2
     [*] --> Active: market created (expiry in future)
     Active --> Live: queued mints and early sells
     Active --> Settled: try_settle records exact Pyth or BS expiry spot + liability
-    Settled --> [*]: settle_step drains and pays the queue, settled redeem + sweep
+    Settled --> [*]: settle_step drains and pays the queue, then the sweep
     note right of Active
       If both exact sources are missing,
       the flush snapshot refuses the
@@ -104,7 +104,7 @@ From package version 4, mints and early sells are queued and fill at Pyth's sign
 - **Two more packages to trust.** The order flow lives in `deepbook_predict_orders` and the pure pricing math in `deepbook_predict_math`. Predict checks every value-moving step itself, but the companion still chooses the exact or backup tick (one channel tick of drift at most), orders fills and refunds, holds escrow, and controls the exits of the positions it holds: if it breaks, those positions wait for a companion upgrade, with their value still backed in market cash. A library upgrade reaches as far as a Predict upgrade, because Predict trusts `LazerPrice` as Pyth's signature and calls the library's pricing math. Both packages' upgrade authority needs Predict's custody.
 - **Upgrades are coupled.** Predict, the companion, and Sessions each keep a version floor. A Predict floor bump before the companion is relinked to the new Predict makes every companion call into Predict abort, refunds and the settlement walk included, until the relink is published. Escrow and receipts are held, not lost. The relink rule is in [architecture](./design/architecture.md#version-gating).
 - **Fill events come from two packages.** Queue events originate at the companion, while each fill also emits Predict's `OrderMinted` or `LiveOrderRedeemed` from a transaction that called the companion. Indexers and monitors that filter on the called package must match on event type instead.
-- **The cutover is one way.** The watermark bump that opens admission retires every older Predict version, including through a Sessions package or companion linked against one. Integrations must move to the queued calls first, and the bump cannot be undone. Positions that immediate mints left in accounts must be redeemed through an older package before the bump, because `redeem_settled` aborts from package version 4.
+- **The cutover is one way.** The watermark bump that opens admission retires every older Predict version, including through a Sessions package or companion linked against one. Integrations must move to the queued calls first, and the bump cannot be undone. Positions that immediate mints left in accounts redeem through `redeem_settled` only until the watermark passes package version 4, because version 5 retires it.
 
 ## Admin powers
 

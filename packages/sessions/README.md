@@ -79,7 +79,7 @@ An active session may also call these wrappers:
 - `redeem_live`
 - `redeem_settled`
 
-All five always abort through Predict, which retires those functions from package version 4. `redeem_settled` paid a settled position held in the Account, and settlement pays a queued fill's Open record instead. They keep their signatures so the upgrade stays compatible.
+The immediate `mint_exact_*` and `redeem_live` wrappers always abort through Predict, which retires those functions from package version 4. Predict package version 5 retires `redeem_settled` the same way, because settlement pays a queued fill's Open record and no fill enters the Account. The `redeem_settled` wrapper aborts once Sessions links that version. They keep their signatures so the upgrade stays compatible.
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict or companion function. All market parameters remain caller-selected and are validated by the companion and Predict.
 
