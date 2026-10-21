@@ -86,8 +86,6 @@ const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
 #[allow(unused_const)]
 const EMintCostAboveMaxPayout: u64 = 11;
-#[allow(unused_const)]
-const ENotSettledRedeemKeeper: u64 = 12;
 const EDelayedExecutionRequired: u64 = 13;
 const EOrderFailsLimits: u64 = 14;
 const EInsufficientMarketCash: u64 = 15;
