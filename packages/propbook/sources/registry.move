@@ -340,9 +340,11 @@ public fun replace_pyth_binding_for_underlying(
 /// was never set uses `"SVI"`, and the store must be at the running package version.
 /// After a change, a batch signed under any other model aborts as a foreign series, so a relayer
 /// must resubscribe under the new model. A model never used on this store reads `none` until its
-/// first signed observation lands; a model set back serves its last stored rows, which consumers'
-/// freshness checks reject until newer ones land. Confirm the provider publishes the model for
-/// every expiry the store serves before setting it.
+/// first signed observation lands; a model set back serves its last stored rows again, which
+/// consumers accept for as long as those rows are within their freshness windows. Consumers linked
+/// to package version 1 keep reading the `"SVI"` rows under that version's hardcoded model until
+/// those rows age out. Confirm the provider publishes the model for every expiry the store serves
+/// before setting it.
 public fun set_block_scholes_svi_model(
     svi_store: &mut BlockScholesSVIStore,
     _admin_cap: &RegistryAdminCap,
