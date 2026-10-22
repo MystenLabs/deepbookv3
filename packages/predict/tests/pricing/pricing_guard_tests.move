@@ -24,7 +24,7 @@
 /// The `chk_inputs` envelope rejects (`EBlockScholesInputsInvalid`)
 /// is covered here too: one test per reachable branch seeds a surface that violates
 /// exactly that bound (`forward` ceiling, `basis`, `b`, `rho`, `m`, `sigma` below
-/// its 1e-5 floor, at zero, and above its ceiling), leaving every other input
+/// its 1e-7 floor, at zero, and above its ceiling), leaving every other input
 /// default so only the targeted branch fires. `a` has no envelope bound: it is
 /// pinned at the provider-width limit in both signs and past the former
 /// `|a| <= 100` cap on both sides of the minimum-variance boundary. The smile root

@@ -411,7 +411,7 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
 
 /// The flush freezes every active market's pricer in its atomic snapshot stage, so
 /// a surface the pricing-safe envelope rejects stops the pool-wide flush from
-/// starting. A `sigma` one raw unit under the 1e-5 floor still does.
+/// starting. A `sigma` one raw unit under the 1e-7 floor still does.
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun svi_sigma_below_the_floor_aborts_pool_valuation_flush() {
     let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
@@ -419,6 +419,23 @@ fun svi_sigma_below_the_floor_aborts_pool_valuation_flush() {
     );
     fx.start_flush_bundle(&mut market);
     abort 999
+}
+
+/// A quiet market's last seconds before expiry, which trading never prices but
+/// valuation does: `sigma` exactly at the 1e-7 floor values, and with no orders on
+/// the market the flush marks the pool at its idle seed.
+#[test]
+fun svi_sigma_at_the_floor_completes_pool_valuation_flush() {
+    let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
+        test_constants::pricing_min_svi_sigma(),
+    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 /// The backfill's smallest one-minute `sigma` (4.7e-5), which the former 1e-3 floor
