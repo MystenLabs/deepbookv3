@@ -332,8 +332,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   - The provider reports such slices only in the last 5–10 s before expiry,
     inside the 10 s no-trade window that both networks run, so they reach
     valuation, not trades.
-  - At most one boundary per market sits that close to the vertex, so the 1%
-    NAV ceiling holds.
+  - The NAV error it adds is at most about 0.6% of the quantity on boundaries
+    within a few widths of the vertex. Those are at most one $1-grid strike and
+    the reference tick, which can sit one cent (1.5 widths) away. The 1% NAV
+    ceiling therefore holds while that quantity stays under about 1.6 times the
+    pool's NAV. That is a condition, not a guarantee: a pool whose NAV is small
+    next to one market's near-vertex quantity can exceed it, and no
+    occupied-book test pins the bound yet.
   - The alternative is the flush abort the floor used to cause.
   - Meeting the ceiling there would need log-moneyness finer than 1e9.
 
@@ -1603,7 +1608,8 @@ rounding, not model-evaluation accuracy):
 - **Exception (RP-5, 2026-10-22):** on surfaces below the former 1e-5 `sigma`
   floor, a strike within a few smile widths of the vertex may exceed the
   contract-price ceiling. Such surfaces are valuation-only behind the no-trade
-  window, and the NAV ceiling still holds.
+  window. The NAV ceiling holds while the quantity on near-vertex boundaries
+  stays under about 1.6 times pool NAV (RP-5).
 
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
