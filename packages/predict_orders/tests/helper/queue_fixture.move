@@ -48,6 +48,9 @@ const STALL_TIMEOUT_MS: u64 = 5_000;
 const STUCK_THRESHOLD_MS: u64 = 1_500;
 const GAP_WAIT_MS: u64 = 2_000;
 const SVI_MAX_AGE_MS: u64 = 60_000;
+// The last Predict version before the delayed-execution cutover at version 4: a
+// watermark that keeps queued placement closed.
+const PRE_CUTOVER_WATERMARK: u64 = 3;
 
 /// Everything one queue test transaction holds.
 public struct QueueTest {
@@ -130,13 +133,17 @@ public fun from_fixture(fx: Fixture, expiry_id: ID, trader: Trader): QueueTest {
 }
 
 /// The default live market with the queue set up but Predict's watermark still
-/// below the cutover.
+/// below the cutover. The Predict fixture seeds the watermark one below its own
+/// version, which is past the cutover once Predict is beyond it, so the floor is
+/// set explicitly.
 public fun new_before_cutover(): QueueTest {
     let (fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::default_expiry_ms(),
         live_price(),
     );
-    assemble(fx, expiry_id, trader, false)
+    let mut q = assemble(fx, expiry_id, trader, false);
+    q.set_predict_floor(PRE_CUTOVER_WATERMARK);
+    q
 }
 
 /// The default live market over a pool bootstrapped with `lock_amount`, so a

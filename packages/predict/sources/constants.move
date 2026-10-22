@@ -8,7 +8,7 @@ module deepbook_predict::constants;
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 4 }
+public macro fun current_version(): u64 { 5 }
 
 /// The version floor at which queued placement opens: the delayed-execution cutover, the first
 /// version that retires every package without the order flow. Fixed, so a later upgrade's own
