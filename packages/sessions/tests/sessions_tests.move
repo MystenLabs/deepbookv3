@@ -82,7 +82,6 @@ const EUnexpectedSuccess: u64 = 999;
 
 const FLOW_SESSION_EXPIRES_AT_MS: u64 = 180_000; // 120_000 + 60_000.
 const SETTLEMENT_SESSION_DURATION_MS: u64 = 180_000;
-const SETTLEMENT_SESSION_EXPIRES_AT_MS: u64 = 300_000; // 120_000 + 180_000.
 const TEN_THOUSAND_LOTS: u64 = 100_000_000;
 const SETTLEMENT_HIGHER_TICK_OFFSET: u64 = 10;
 const SETTLEMENT_PRICE_TICK_OFFSET: u64 = 1;
@@ -754,8 +753,10 @@ fun another_signer_cannot_use_an_approved_session() {
     abort EUnexpectedSuccess
 }
 
-#[test]
-fun session_redeems_settled_order() {
+/// The session wrapper reaches Predict's retired `redeem_settled`, so even a
+/// settled winner in the account aborts after the session check passes.
+#[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
+fun session_redeem_settled_is_retired() {
     let expiry_ms = test_constants::short_expiry_ms();
     let mut fixture = setup_flow_fixture(expiry_ms);
     authorize_flow_session(&mut fixture, SETTLEMENT_SESSION_DURATION_MS);
@@ -851,25 +852,7 @@ fun session_redeems_settled_order() {
         clock,
         scenario.ctx(),
     );
-    assert_eq!(
-        wrapper.load_account().balance<USDC>(&root, clock),
-        post_mint_balance + test_constants::mint_quantity(),
-    );
-    assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(event::events_by_type<order_events::SettledOrderRedeemed>().length(), ONE_EVENT);
-    assert_eq!(
-        sessions::session_expiration_ms(&wrapper, SESSION),
-        option::some(SETTLEMENT_SESSION_EXPIRES_AT_MS),
-    );
-    return_settled_inputs(SettledInputs {
-        market,
-        account_registry,
-        wrapper,
-        sessions_config,
-        config,
-        root,
-    });
-    finish_flow_fixture(fixture);
+    abort EUnexpectedSuccess
 }
 
 fun session_addresses(): vector<address> {
@@ -1076,16 +1059,6 @@ fun begin_settled_tx(fixture: &mut SessionFlowFixture, sender: address): Settled
     }
 }
 
-fun return_settled_inputs(inputs: SettledInputs) {
-    let SettledInputs { market, account_registry, wrapper, sessions_config, config, root } = inputs;
-    return_shared(market);
-    return_shared(account_registry);
-    return_shared(wrapper);
-    return_shared(sessions_config);
-    return_shared(config);
-    return_shared(root);
-}
-
 fun settle_flow_market(fixture: &mut SessionFlowFixture, settlement_price: u64) {
     let expiry_ms = fixture.clock.timestamp_ms();
     fixture.predict.scenario_mut().next_tx(test_constants::admin());
@@ -1119,21 +1092,4 @@ fun settle_flow_market(fixture: &mut SessionFlowFixture, settlement_price: u64) 
     return_shared(pyth);
     return_shared(bs_values);
     fixture.predict.scenario_mut().next_tx(test_constants::admin());
-}
-
-fun finish_flow_fixture(fixture: SessionFlowFixture) {
-    let SessionFlowFixture {
-        predict,
-        clock,
-        market_id: _,
-        owner: _,
-        wrapper_id: _,
-        sessions_config_id: _,
-        config_id: _,
-        pyth_id: _,
-        bs_values_id: _,
-        bs_svi_id: _,
-    } = fixture;
-    clock.destroy_for_testing();
-    predict.finish();
 }
