@@ -27,7 +27,7 @@
 /// strikes hit the normal CDF/PDF clamps and are EXACT (tolerance = 2-unit cushion).
 ///
 /// Block Scholes SSVI slices whose `sigma` sits below 1e-3, and synthetic surfaces at
-/// the relaxed bounds (`sigma` at its 1e-5 floor, `a` past the former `|a| <= 100`
+/// the relaxed bounds (`sigma` at its 1e-7 floor, `a` past the former `|a| <= 100`
 /// cap), are checked against the generated `pricing_ssvi_reference_data` module
 /// (`tests/helper/reference/generate_ssvi_reference.py`) twice: at each slice's real
 /// forward, quoting the forward, where the contract's log-moneyness is exactly zero
@@ -205,15 +205,15 @@ fun sub_hour_slice_the_1e9_root_mispriced_prices_to_true_math() {
     run_ssvi_slice(ssvi::sub_hour_root_miss_slice());
 }
 
-/// `sigma` exactly at the 1e-5 floor with the smile's vertex at the forward: the
+/// `sigma` exactly at the 1e-7 floor with the smile's vertex at the forward: the
 /// former 1e9 root was zero here, so the skew slope's division aborted.
 #[test]
 fun surface_at_the_sigma_floor_prices_at_its_vertex() {
     run_ssvi_slice(ssvi::floor_vertex_slice());
 }
 
-/// `k - m == -sigma` at the floor, so both squares under the root are a tenth of
-/// a raw unit at 1e9 and only the 1e18 input represents either; the former root
+/// `k - m == -sigma` at the floor, so both squares under the root are a
+/// hundred-thousandth of a raw unit at 1e9 and only the 1e18 input represents either; the former root
 /// was zero and the wing term went negative.
 #[test]
 fun surface_at_the_sigma_floor_prices_one_width_from_its_vertex() {

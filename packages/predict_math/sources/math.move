@@ -29,11 +29,13 @@ macro fun max_basis_factor(): u64 { 100 }
 
 macro fun max_spot(): u64 { std::u64::max_value!() / max_basis_factor!() }
 
-// 1e-5, the floor Block Scholes recommends: SSVI surfaces narrow `sigma` toward
-// expiry, so one-minute slices commonly sit below 1e-3. Any positive floor keeps
-// the smile root `sqrt((k - m)^2 + sigma^2)` nonzero, so the skew slope's
-// `(k - m) / root` division is safe at the smile vertex.
-macro fun min_svi_sigma(): u64 { 10_000 }
+// 1e-7, the floor Block Scholes recommends: SSVI surfaces narrow `sigma` toward
+// expiry, so one-minute slices commonly sit below 1e-3, and in a quiet market the
+// last seconds before expiry approach 1e-5. Trading stops before then, but pool
+// valuation still prices those seconds. Any positive floor keeps the smile root
+// `sqrt((k - m)^2 + sigma^2)` nonzero, so the skew slope's `(k - m) / root`
+// division is safe at the smile vertex.
+macro fun min_svi_sigma(): u64 { 100 }
 
 macro fun max_svi_input(): u64 { 100 * fixed::float_scaling!() }
 
