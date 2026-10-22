@@ -4,6 +4,8 @@
 /// Owns the canonical Block Scholes feed shapes accepted by Propbook stores.
 /// The upstream `bs_sid` package owns descriptor encoding and hashing; this
 /// module only fixes Propbook's chosen spot, forward, SVI, scaling, and timestamp spellings.
+/// The SVI model spelling is the one exception: each SVI store carries an admin-set model, and
+/// `default_svi_model` is what a store uses until one is set.
 module propbook::block_scholes_sid;
 
 use bs_oracle::verify::PackageMarker;
@@ -19,7 +21,9 @@ macro fun forward_exchange(): String { b"composite".to_string() }
 
 macro fun svi_asset_class(): String { b"option".to_string() }
 
-macro fun svi_model(): String { b"SVI".to_string() }
+/// The model Block Scholes publishes its SVI surface under, and every SVI store's model until the
+/// admin sets another.
+public(package) macro fun default_svi_model(): String { b"SVI".to_string() }
 
 macro fun timestamp_precision(): String { b"ms".to_string() }
 
@@ -46,12 +50,16 @@ public(package) fun forward(block_scholes_base_asset: &String, expiry_ms: u64): 
     )
 }
 
-public(package) fun svi(block_scholes_base_asset: &String, expiry_ms: u64): u256 {
+public(package) fun svi(
+    block_scholes_base_asset: &String,
+    svi_model: &String,
+    expiry_ms: u64,
+): u256 {
     sid::model_params(
         oracle_package_id(),
         svi_asset_class!(),
         *block_scholes_base_asset,
-        svi_model!(),
+        *svi_model,
         sid::expiry_at(expiry_ms),
         constants::float_scaling_decimals!() as u8,
         timestamp_precision!(),
