@@ -316,16 +316,31 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (3) the root's `u128` input is bounded by `|k − m| ≤ 144.4` and `sigma ≤ 100`,
   not by the floor; (4) it did not bound the skew correction: `w'` is at most
   `2b` for any `sigma`, so the correction's headroom is set by `b` and the
-  variance. Precision at the floor: `sigma` is 100 raw units at 1e-7, so the
-  1e9 granularity of `k` and of the root is a percent of a smile width. For a
-  strike within a few widths of the vertex (a few cents on BTC), the floor
-  slices' true-math budget in `pricing_exact_tests.move` is about 0.6
-  percentage points, against about 0.007 at 1e-5. The true digital there moves
-  about a quarter of a percentage point per raw unit of `m`, so the feed's own
-  1e9 rounding of `m` is the same order. Strikes away from the vertex keep
-  their budgets. Positive total variance stays owned by the analytical-minimum
+  variance. Positive total variance stays owned by the analytical-minimum
   check and the per-strike `ENonPositiveVariance` backstop, neither of which
   reads the floor.
+- **Precision exception below 1e-5 (ratified 2026-10-22, DBU-1059):** at the
+  1e-7 floor `sigma` is 100 raw units, and near the vertex the digital moves
+  about 0.28 percentage points per raw unit of `k` or `m`. The 1e9 floor of
+  the smile root, and `k`'s 1e9 error (up to about 2 raw units near a BTC
+  forward), put a strike within a few widths of the vertex (a few cents on
+  BTC) up to about 0.6 percentage points off true math. That is past the 0.1%
+  contract-price ceiling in the deviation bounds below. The floor slices'
+  budgets in `pricing_exact_tests.move` carry it, and points at `d2 = ±1, ±2`
+  stay within 0.0001 (`evidence/rp5-sigma-floor-scan-2026-10-22.md`). It is
+  accepted, not fixed, for four reasons:
+  - The provider reports such slices only in the last 5–10 s before expiry,
+    inside the 10 s no-trade window that both networks run, so they reach
+    valuation, not trades.
+  - At most one boundary per market sits that close to the vertex, so the 1%
+    NAV ceiling holds.
+  - The alternative is the flush abort the floor used to cause.
+  - Meeting the ceiling there would need log-moneyness finer than 1e9.
+
+  No ladder on the production admission grid ($1 plus one $0.01 reference
+  tick) raised a price at any sigma. Rises on a grid finer than a cent are
+  P-35's. Reopen if the no-trade window drops under 10 s, or the provider
+  publishes `sigma` below 1e-5 more than 10 s before expiry.
 - **`a` magnitude cap removed (was `|a| ≤ 100`):** Block Scholes recommends no
   bound on `a` beyond positive total variance. Negative `a` was already admitted
   and still is: slices in the SSVI backfill carry it (0.27% of one-minute slices,
@@ -1585,6 +1600,10 @@ rounding, not model-evaluation accuracy):
   real-math value by more than **0.1%** (relative, in the 1c–99c tradeable band).
 - **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
   more than **1%** (relative).
+- **Exception (RP-5, 2026-10-22):** on surfaces below the former 1e-5 `sigma`
+  floor, a strike within a few smile widths of the vertex may exceed the
+  contract-price ceiling. Such surfaces are valuation-only behind the no-trade
+  window, and the NAV ceiling still holds.
 
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
