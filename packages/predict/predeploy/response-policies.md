@@ -289,7 +289,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `EBlockScholesInputTooWide` before the `u128`-to-`u64` cast and semantic
   envelope. Recovery is a newer signed, representable observation followed by
   retrying the affected action or flush.
-- **Sigma floor (lowered from 1e-3 to 1e-5):** Block Scholes SSVI surfaces
+- **Sigma floor (lowered from 1e-3 to 1e-5, then to 1e-7):** Block Scholes SSVI surfaces
   narrow `sigma` toward expiry. In their SSVI backfill (BTC, February–June 2026,
   6.5M slices; `evidence/rp5-ssvi-backfill-2026-09-28.md`) 83% of slices at most
   a minute from expiry, 55% of slices one to five minutes out, and 12% of slices
@@ -297,21 +297,55 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   floor rejected 1.6M of them, and every pricer load over such a slice aborted:
   mints and live closes on that market, and the flush's atomic snapshot stage,
   so the pool-wide flush could not start and queued LP fills waited. None is
-  below 1e-5, the floor the provider recommends. Duty inventory of the old
+  below 1e-5, the floor the provider first recommended. The provider later
+  reported that in a quiet market `sigma` approaches 1e-5 in the last 5–10 s
+  before expiry, closer than the backfill's last publication at 20 s. Trading stops
+  before then, but mandatory `plp::value_expiry` still loads the pricer there,
+  so a slice under the floor would abort the flush snapshot. The floor is now
+  1e-7, the provider's number, which leaves two orders of magnitude of headroom
+  (DBU-1059). Duty inventory of the old
   floor: (1) it kept `sigma²` representable in the 1e9 smile root — replaced by
   taking the root from exact `u128` squares at 1e18, without which the lowered
   floor misprices real one-minute slices by up to 49% relative off the forward;
   (2) it kept the root, the skew slope's divisor, away from zero — any positive
-  floor does, so 1e-5 is the provider's number rather than an arithmetic need,
-  and for SSVI slices the gate's minimum-variance rounding binds first: with the
-  provider's `eta ≤ 2`, `sigma < 1e-5` means a minimum total variance under
-  4e-10, which rounds to zero at 1e9 (P-33);
+  floor does, so the floor is the provider's number rather than an arithmetic
+  need, and for SSVI slices of the backfill's shape the gate's minimum-variance
+  rounding binds first: with the provider's `eta ≤ 2`, `sigma < 1e-5` means a
+  minimum total variance under 4e-10, which rounds to zero at 1e9 (P-33), so
+  the 1e-7 floor admits only slices whose minimum variance stays representable;
   (3) the root's `u128` input is bounded by `|k − m| ≤ 144.4` and `sigma ≤ 100`,
   not by the floor; (4) it did not bound the skew correction: `w'` is at most
   `2b` for any `sigma`, so the correction's headroom is set by `b` and the
-  variance. Positive total variance stays owned by the analytical-minimum check
-  and the per-strike `ENonPositiveVariance` backstop, neither of which reads the
-  floor.
+  variance. Positive total variance stays owned by the analytical-minimum
+  check and the per-strike `ENonPositiveVariance` backstop, neither of which
+  reads the floor.
+- **Precision exception below 1e-5 (ratified 2026-10-22, DBU-1059):** at the
+  1e-7 floor `sigma` is 100 raw units, and near the vertex the digital moves
+  about 0.28 percentage points per raw unit of `k` or `m`. The 1e9 floor of
+  the smile root, and `k`'s 1e9 error (up to about 2 raw units near a BTC
+  forward), put a strike within a few widths of the vertex (a few cents on
+  BTC) up to about 0.6 percentage points off true math. That is past the 0.1%
+  contract-price ceiling in the deviation bounds below. The floor slices'
+  budgets in `pricing_exact_tests.move` carry it, and points at `d2 = ±1, ±2`
+  stay within 0.0001 (`evidence/rp5-sigma-floor-scan-2026-10-22.md`). It is
+  accepted, not fixed, for four reasons:
+  - The provider reports such slices only in the last 5–10 s before expiry,
+    inside the 10 s no-trade window that both networks run, so they reach
+    valuation, not trades.
+  - The NAV error it adds is at most about 0.6% of the quantity on boundaries
+    within a few widths of the vertex. Those are at most one $1-grid strike and
+    the reference tick, which can sit one cent (1.5 widths) away. The 1% NAV
+    ceiling therefore holds while that quantity stays under about 1.6 times the
+    pool's NAV. That is a condition, not a guarantee: a pool whose NAV is small
+    next to one market's near-vertex quantity can exceed it, and no
+    occupied-book test pins the bound yet.
+  - The alternative is the flush abort the floor used to cause.
+  - Meeting the ceiling there would need log-moneyness finer than 1e9.
+
+  No ladder on the production admission grid ($1 plus one $0.01 reference
+  tick) raised a price at any sigma. Rises on a grid finer than a cent are
+  P-35's. Reopen if the no-trade window drops under 10 s, or the provider
+  publishes `sigma` below 1e-5 more than 10 s before expiry.
 - **`a` magnitude cap removed (was `|a| ≤ 100`):** Block Scholes recommends no
   bound on `a` beyond positive total variance. Negative `a` was already admitted
   and still is: slices in the SSVI backfill carry it (0.27% of one-minute slices,
@@ -383,14 +417,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `pool_valuation_flow_tests.move` —
   `overwide_block_scholes_spot_aborts_pool_valuation_flush`,
   `newer_representable_block_scholes_spot_restores_pool_valuation_flush`,
-  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`, and
+  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`,
+  `svi_sigma_at_the_floor_completes_pool_valuation_flush`, and
   `short_dated_ssvi_surface_completes_pool_valuation_flush`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
   a bounded-skew source rule, or explicit unavailable classification rather than
   the named mandatory-path abort. Revisit the SVI bounds if the provider
-  publishes `sigma < 1e-5` or a live surface with `|a| > 100` reaches a NAV mark.
+  publishes `sigma < 1e-7` or a live surface with `|a| > 100` reaches a NAV mark.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -1570,6 +1605,11 @@ rounding, not model-evaluation accuracy):
   real-math value by more than **0.1%** (relative, in the 1c–99c tradeable band).
 - **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
   more than **1%** (relative).
+- **Exception (RP-5, 2026-10-22):** on surfaces below the former 1e-5 `sigma`
+  floor, a strike within a few smile widths of the vertex may exceed the
+  contract-price ceiling. Such surfaces are valuation-only behind the no-trade
+  window. The NAV ceiling holds while the quantity on near-vertex boundaries
+  stays under about 1.6 times pool NAV (RP-5).
 
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
