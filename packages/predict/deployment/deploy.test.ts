@@ -691,7 +691,7 @@ function completeStateFixture() {
         })),
         protocolConfig: { ...EXPECTED_PROTOCOL_CONFIG },
         orderDesk: {
-            versionWatermark: "1",
+            versionWatermark: "2",
             policy: { ...manifest.initialConfiguration.delayedExecution },
         },
         pool: {
