@@ -143,6 +143,9 @@ const BUTTERFLY_EDGE_HIGHER_TICK: u64 = 170_692;
 /// A whole multiple of 1e9, so every boundary product is exact and the walk's
 /// divergence from the per-order sum is exactly the rise times it.
 const SELF_INVERTED_QUANTITY: u64 = 2_000_000_000_000;
+/// Larger than the self-inverted order and also a whole multiple of 1e9, so a
+/// charge on anything but the ending quantity would show.
+const CONTINUING_QUANTITY: u64 = 6_000_000_000_000;
 /// A deep-ITM strike on scenario 0, priced above the inverting pair, so an order
 /// from it to the pair's upper boundary does not itself invert.
 const DEEP_LOWER_TICK: u64 = 50_000;
@@ -488,6 +491,44 @@ fun a_self_inverted_order_is_charged_its_rise() {
             vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
             vector[DUST_INVERSION_HIGHER_TICK, DUST_INVERSION_SHARED_TICK],
             vector[SELF_INVERTED_QUANTITY, SELF_INVERTED_QUANTITY],
+        ),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The charge falls only on the quantity ending at the risen boundary. That
+/// boundary closes the self-inverted order and opens a larger one, so charging the
+/// starting quantity, or the larger of the two, would read the book above its
+/// per-order sum.
+#[test]
+fun a_risen_boundary_charges_only_the_quantity_ending_there() {
+    let (mut fixture, oracle, pricer) = real_scenario_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(raw(DUST_INVERSION_LOWER_TICK));
+    let higher_price = pricer.up_price(raw(DUST_INVERSION_HIGHER_TICK));
+    assert!(higher_price > lower_price);
+
+    tree.insert_range(
+        DUST_INVERSION_LOWER_TICK,
+        DUST_INVERSION_HIGHER_TICK,
+        SELF_INVERTED_QUANTITY,
+    );
+    tree.insert_range(
+        DUST_INVERSION_HIGHER_TICK,
+        DUST_INVERSION_SHARED_TICK,
+        CONTINUING_QUANTITY,
+    );
+
+    assert_eq!(
+        walk_linear(&tree, &pricer),
+        range_reference(
+            &pricer,
+            vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
+            vector[DUST_INVERSION_HIGHER_TICK, DUST_INVERSION_SHARED_TICK],
+            vector[SELF_INVERTED_QUANTITY, CONTINUING_QUANTITY],
         ),
     );
 

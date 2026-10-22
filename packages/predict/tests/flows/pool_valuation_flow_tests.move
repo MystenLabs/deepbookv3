@@ -91,6 +91,14 @@ const DUST_LOWER_TICK: u64 = 66_170;
 const DUST_HIGHER_TICK: u64 = 66_180;
 const DUST_SHARED_TICK: u64 = 76_000;
 const DUST_QUANTITY: u64 = 2_000_000_000;
+/// The rise between the two dust ticks on scenario 2, and its charge on an order
+/// of `DUST_QUANTITY` ending at the higher one: one raw unit on two whole
+/// contracts.
+const DUST_RISE: u64 = 1;
+const DUST_RISE_CHARGE: u64 = 2;
+/// A strike in the money on both surfaces: in band at mint, priced at 1.0 on
+/// scenario 2, so a range from it to the higher dust tick does not invert.
+const DEEP_ITM_TICK: u64 = 60_000;
 /// Scale on scenario 0's SVI `a` and `b` for the mint-time surface: the same smile
 /// carrying 16x its remaining variance, as a market 16x as far from expiry would.
 const EARLIER_VARIANCE_SCALE: u64 = 16;
@@ -496,26 +504,8 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
     assert_eq!(fx.current_nav_bundle(&market), free_cash - per_order_liability);
 
     // ... and the flush runs to completion over that same book, marking the market
-    // at that same per-order figure. The pool mark composes it with the vault's
-    // ledger as `multi_market_pool_nav_is_idle_plus_sum_of_navs` pins: gross value
-    // less the protocol's share of realised profit. The admin is the fixture's
-    // flush operator.
-    fx.scenario_mut().next_tx(test_constants::admin());
-    fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut market);
-    let pool_nav = fx.finish_flush_bundle(&mut market);
-    let active =
-        helpers::market(&market).cash_balance() - helpers::market(&market).inventory_impact_reserve()
-            - per_order_liability;
-    let vault = helpers::vault(&market);
-    let expected_exclusion = math::mul_down(
-        (vault.profit_basis_credits() + active).saturating_sub(vault.profit_basis_debits()),
-        config_constants::default_protocol_reserve_profit_share!(),
-    );
-    assert_eq!(
-        pool_nav,
-        vault.idle_balance() + active - expected_exclusion - vault.pending_protocol_profit(),
-    );
+    // at that same per-order figure.
+    assert_flush_marks_liability(&mut fx, &mut market, per_order_liability);
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -550,6 +540,68 @@ fun the_entry_band_keeps_a_plateau_boundary_out_of_a_mint() {
 
     fx.mint_bundle(&mut market, &mut account, PLATEAU_LOWER_TICK, DUST_SHARED_TICK, DUST_QUANTITY);
     abort 999
+}
+
+/// The flush regression's other half: an order that ENDS at the risen boundary is
+/// charged the rise on its quantity, so the live mark and the flush mark both read
+/// the market low by exactly that charge, the conservative direction RP-15 records.
+/// That order starts deep in the money, so its own per-order value needs no charge.
+/// The book is minted in band and aged onto committed scenario 2 as above.
+#[test]
+fun a_tolerated_rise_is_charged_through_the_flush() {
+    let mut fx = helpers::setup_market_default();
+    let (mut market, mut account) = funded_market(&mut fx);
+    let tick_size = test_constants::default_tick_size();
+
+    seed_scenario_surface(
+        &mut fx,
+        &mut market,
+        MINT_SCENARIO,
+        EARLIER_VARIANCE_SCALE,
+        test_constants::live_source_timestamp_ms() + 1,
+    );
+    // One order opens at the lower dust boundary; the other closes at the risen one.
+    let id_open = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        DUST_LOWER_TICK,
+        DUST_SHARED_TICK,
+        DUST_QUANTITY,
+    );
+    let id_close = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        DEEP_ITM_TICK,
+        DUST_HIGHER_TICK,
+        DUST_QUANTITY,
+    );
+    helpers::return_account_bundle(account);
+
+    fx.set_clock_for_testing(REPRICE_MS);
+    seed_scenario_surface(
+        &mut fx,
+        &mut market,
+        AGED_SCENARIO,
+        COMMITTED_VARIANCE,
+        REPRICE_SOURCE_TS,
+    );
+    let pricer = fx.load_pricer_bundle(&market);
+    let low_price = pricer.up_price(range_codec::strike_from_tick(DUST_LOWER_TICK, tick_size));
+    let risen_price = pricer.up_price(range_codec::strike_from_tick(DUST_HIGHER_TICK, tick_size));
+    let deep_price = pricer.up_price(range_codec::strike_from_tick(DEEP_ITM_TICK, tick_size));
+    assert_eq!(risen_price - low_price, DUST_RISE);
+    assert!(deep_price >= risen_price);
+
+    let liability =
+        fx.live_order_value_bundle(&market, id_open) + fx.live_order_value_bundle(&market, id_close)
+            + DUST_RISE_CHARGE;
+    let free_cash =
+        helpers::market(&market).cash_balance() - helpers::market(&market).inventory_impact_reserve();
+    assert_eq!(fx.current_nav_bundle(&market), free_cash - liability);
+    assert_flush_marks_liability(&mut fx, &mut market, liability);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 // === SVI sigma floor on the mandatory valuation path ===
@@ -1332,6 +1384,34 @@ fun seed_scenario_surface(
         ref_data::svi_m_magnitude(scenario),
         ref_data::svi_m_is_negative(scenario),
         source_timestamp_ms,
+    );
+}
+
+/// Run the staged flush over `market` as the fixture's flush operator (the admin)
+/// and assert the pool mark carries the market at free cash less `liability`. The
+/// pool mark composes it with the vault's ledger as
+/// `multi_market_pool_nav_is_idle_plus_sum_of_navs` pins: gross value less the
+/// protocol's share of realised profit.
+fun assert_flush_marks_liability(
+    fx: &mut helpers::Fixture,
+    market: &mut helpers::MarketBundle,
+    liability: u64,
+) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    fx.start_flush_bundle(market);
+    fx.value_expiry_bundle(market);
+    let pool_nav = fx.finish_flush_bundle(market);
+    let active =
+        helpers::market(market).cash_balance() - helpers::market(market).inventory_impact_reserve()
+            - liability;
+    let vault = helpers::vault(market);
+    let expected_exclusion = math::mul_down(
+        (vault.profit_basis_credits() + active).saturating_sub(vault.profit_basis_debits()),
+        config_constants::default_protocol_reserve_profit_share!(),
+    );
+    assert_eq!(
+        pool_nav,
+        vault.idle_balance() + active - expected_exclusion - vault.pending_protocol_profit(),
     );
 }
 
