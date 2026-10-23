@@ -7,7 +7,7 @@ module deepbook::order_query_tests;
 use deepbook::{
     balance_manager_tests::{
         USDC,
-        create_acct_and_share_with_funds as create_acct_and_share_with_funds
+        create_acct_and_share_with_funds as create_acct_and_share_with_funds,
     },
     constants,
     order_query::iter_orders,
