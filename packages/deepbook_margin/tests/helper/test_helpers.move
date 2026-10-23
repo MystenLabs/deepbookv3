@@ -7,6 +7,7 @@ module deepbook_margin::test_helpers;
 use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
 use deepbook_margin::{
     margin_manager::MarginApp,
+    margin_manager_upgraded,
     margin_pool::{Self, MarginPool},
     margin_registry::{
         Self,
@@ -17,7 +18,7 @@ use deepbook_margin::{
         MarginPoolCap,
     },
     oracle::{Self, PythConfig},
-    pool_proxy,
+    pool_proxy_upgraded,
     protocol_config::{Self, ProtocolConfig},
     test_constants::{Self, USDC, USDT, BTC, SUI}
 };
@@ -312,11 +313,11 @@ public fun initialize_pool_price<BaseAsset, QuoteAsset>(
     let pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
 
     // Build price info objects for base and quote
-    let base_price = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_price = build_price_info_for_type<QuoteAsset>(scenario, clock);
+    let base_price = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_price = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
 
     // Update the current price in the registry
-    pool_proxy::update_current_price<BaseAsset, QuoteAsset>(
+    pool_proxy_upgraded::update_current_price<BaseAsset, QuoteAsset>(
         margin_registry,
         &pool,
         &base_price,
@@ -1329,9 +1330,9 @@ public fun place_limit_order_v2_for_test<BaseAsset, QuoteAsset>(
     expire_timestamp: u64,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_limit_order_v2<BaseAsset, QuoteAsset>(
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_limit_order_v2<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
@@ -1369,9 +1370,9 @@ public fun place_market_order_v2_for_test<BaseAsset, QuoteAsset>(
     pay_with_deep: bool,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_market_order_v2<BaseAsset, QuoteAsset>(
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_market_order_v2<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
@@ -1409,9 +1410,9 @@ public fun place_reduce_only_limit_order_v2_for_test<BaseAsset, QuoteAsset>(
     expire_timestamp: u64,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
@@ -1449,9 +1450,9 @@ public fun place_reduce_only_market_order_v2_for_test<BaseAsset, QuoteAsset>(
     pay_with_deep: bool,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
@@ -1489,9 +1490,9 @@ public fun place_reduce_only_market_order_and_repay_loan_for_test<BaseAsset, Quo
     pay_with_deep: bool,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_reduce_only_market_order_and_repay_loan<
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_and_repay_loan<
         BaseAsset,
         QuoteAsset,
     >(
@@ -1529,9 +1530,9 @@ public fun place_market_order_and_repay_loan_for_test<BaseAsset, QuoteAsset>(
     pay_with_deep: bool,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
@@ -1569,9 +1570,9 @@ public fun place_reduce_only_limit_order_and_repay_loan_for_test<BaseAsset, Quot
     expire_timestamp: u64,
     clock: &Clock,
 ): deepbook::order_info::OrderInfo {
-    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
-    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_reduce_only_limit_order_and_repay_loan<
+    let base_oracle = build_price_info_for_type_upgraded<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type_upgraded<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_and_repay_loan<
         BaseAsset,
         QuoteAsset,
     >(
@@ -1604,13 +1605,14 @@ public fun execute_conditional_orders_v2_for_test<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
+    base_price_info_object: &PriceInfoObjectUpgraded,
+    quote_price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
     max_orders_to_execute: u64,
     clock: &Clock,
 ): vector<deepbook::order_info::OrderInfo> {
-    mm.execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
+    margin_manager_upgraded::execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
+        mm,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -1629,13 +1631,14 @@ public fun execute_conditional_orders_v3_for_test<BaseAsset, QuoteAsset>(
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
+    base_price_info_object: &PriceInfoObjectUpgraded,
+    quote_price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
     max_orders_to_execute: u64,
     clock: &Clock,
 ): vector<deepbook::order_info::OrderInfo> {
-    mm.execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
+    margin_manager_upgraded::execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
+        mm,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -1803,6 +1806,83 @@ public fun build_stale_usdt_price_info_object_upgraded(
         test_constants::pyth_decimals(),
         (clock.timestamp_ms() / 1000) - stale_seconds,
     )
+}
+
+/// Build a SUI price info object at a given price
+public fun build_sui_price_info_object_upgraded(
+    scenario: &mut Scenario,
+    price_usd: u64,
+    clock: &Clock,
+): PriceInfoObjectUpgraded {
+    build_pyth_upgraded_price_info_object(
+        scenario,
+        test_constants::sui_price_feed_id(),
+        price_usd * test_constants::pyth_multiplier(),
+        100000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+/// Build a DEEP price info object at $0.10
+public fun build_deep_price_info_object_upgraded(
+    scenario: &mut Scenario,
+    clock: &Clock,
+): PriceInfoObjectUpgraded {
+    build_pyth_upgraded_price_info_object(
+        scenario,
+        test_constants::deep_price_feed_id(),
+        10_000_000, // $0.10 in 8 decimals (0.10 * 10^8)
+        100000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+public fun build_demo_usdc_price_info_object_with_price_upgraded(
+    scenario: &mut Scenario,
+    price: u64,
+    clock: &Clock,
+): PriceInfoObjectUpgraded {
+    build_pyth_upgraded_price_info_object(
+        scenario,
+        test_constants::usdc_price_feed_id(),
+        price,
+        50000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+/// Build a price info object based on the asset type
+public fun build_price_info_for_type_upgraded<Asset>(
+    scenario: &mut Scenario,
+    clock: &Clock,
+): PriceInfoObjectUpgraded {
+    let type_name = std::type_name::with_defining_ids<Asset>();
+    let type_string = type_name.into_string().into_bytes();
+
+    // Match on common test asset types
+    let usdc = b"USDC";
+    let usdt = b"USDT";
+    let btc = b"BTC";
+    let sui = b"SUI";
+    let deep = b"DEEP";
+
+    if (contains_substring(&type_string, &usdc)) {
+        build_demo_usdc_price_info_object_upgraded(scenario, clock)
+    } else if (contains_substring(&type_string, &usdt)) {
+        build_demo_usdt_price_info_object_upgraded(scenario, clock)
+    } else if (contains_substring(&type_string, &btc)) {
+        build_btc_price_info_object_upgraded(scenario, 50000, clock) // $50,000
+    } else if (contains_substring(&type_string, &sui)) {
+        build_sui_price_info_object_upgraded(scenario, 1, clock) // $1
+    } else if (contains_substring(&type_string, &deep)) {
+        build_deep_price_info_object_upgraded(scenario, clock) // $0.10
+    } else {
+        // Default to $1 price for unknown assets
+        build_demo_usdc_price_info_object_upgraded(scenario, clock)
+    }
 }
 
 /// Fresh BTC feed carrying an arbitrarily wide confidence interval. The confidence

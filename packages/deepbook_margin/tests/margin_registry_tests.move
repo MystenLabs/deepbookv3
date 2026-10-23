@@ -485,7 +485,7 @@ fun test_new_pool_config_with_leverage_too_high() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun test_oracle_max_age_exceeded() {
     let (
         mut scenario,
@@ -508,7 +508,7 @@ fun test_oracle_max_age_exceeded() {
     // Create a price info object with timestamp that's older than 60 seconds
     let old_timestamp_seconds = (current_time_ms / 1000) - 65; // 65 seconds ago
 
-    let old_price_info = test_helpers::build_pyth_price_info_object(
+    let old_price_info = test_helpers::build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         1 * test_constants::pyth_multiplier(), // $1.00 price
@@ -520,7 +520,7 @@ fun test_oracle_max_age_exceeded() {
     // This should fail with Pyth error because price is older than 60 seconds
     // Staleness is enforced by the reader now, so the read is the failing step.
     let _usd_value = oracle::calculate_usd_price<USDC>(
-        oracle::read_price<USDC>(&old_price_info, &registry, &clock),
+        oracle::read_price_upgraded<USDC>(&old_price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -552,7 +552,7 @@ fun test_oracle_max_age_within_limit() {
     // Create a price info object with recent timestamp (30 seconds ago, within 60 second limit)
     let recent_timestamp_seconds = (current_time_ms / 1000) - 30; // 30 seconds ago
 
-    let recent_price_info = test_helpers::build_pyth_price_info_object(
+    let recent_price_info = test_helpers::build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         1 * test_constants::pyth_multiplier(), // $1.00 price
@@ -563,7 +563,7 @@ fun test_oracle_max_age_within_limit() {
 
     // This should succeed because price is within 60 second limit
     let usd_value = oracle::calculate_usd_price<USDC>(
-        oracle::read_price<USDC>(&recent_price_info, &registry, &clock),
+        oracle::read_price_upgraded<USDC>(&recent_price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
