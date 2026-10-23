@@ -152,10 +152,17 @@ public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Cl
     protocol_fees
 }
 
-/// Return the utilization rate of the margin pool.
+/// Return the utilization rate of the margin pool, capped at 100%. Borrow can exceed
+/// supply, for example once a liquidation default writes supply down
+/// (`decrease_supply_absolute`), possibly to zero while other borrows are outstanding. Reading that state as fully
+/// utilized keeps interest at the curve's 100% rate. An uncapped `borrow / supply` would
+/// charge interest that grows with the ratio, and past about 1.8e10 the ratio itself
+/// overflows u64 and aborts every entry that accrues.
 public(package) fun utilization_rate(self: &State): u64 {
-    if (self.total_supply == 0) {
+    if (self.total_borrow == 0) {
         0
+    } else if (self.total_borrow >= self.total_supply) {
+        constants::float_scaling()
     } else {
         math::div(self.total_borrow, self.total_supply)
     }
