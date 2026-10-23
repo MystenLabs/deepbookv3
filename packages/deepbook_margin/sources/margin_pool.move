@@ -577,11 +577,23 @@ public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.interest_rate(self.state.utilization_rate())
 }
 
+/// Return the rate suppliers earn after the protocol spread. Represented in 9 decimal places.
+/// Suppliers receive the net interest on all of the borrow, so once borrow reaches supply the
+/// rate scales with `borrow / supply` even though utilization is capped at 100%. Zero supply
+/// reads 0.
 public fun true_interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
-    math::mul(
-        math::mul(self.interest_rate(), self.state.utilization_rate()),
-        constants::float_scaling() - self.protocol_spread(),
-    )
+    let total_supply = self.state.total_supply();
+    let total_borrow = self.state.total_borrow();
+    let supplier_share = constants::float_scaling() - self.protocol_spread();
+    if (total_borrow < total_supply) {
+        math::mul(math::mul(self.interest_rate(), self.state.utilization_rate()), supplier_share)
+    } else if (total_supply == 0) {
+        0
+    } else {
+        let net_rate = math::mul(self.interest_rate(), supplier_share) as u128;
+        let rate = net_rate * (total_borrow as u128) / (total_supply as u128);
+        rate.min(std::u64::max_value!() as u128) as u64
+    }
 }
 
 /// Return the current user supply shares of the margin pool.

@@ -20,9 +20,17 @@ use sui::{clock::Clock, coin::Coin, test_scenario::{Self as test, Scenario, retu
 const SECOND_MS: u64 = 1000;
 const HOUR_MS: u64 = 60 * 60 * 1000;
 // Default test curve at 100% utilization: 5% base + 80% * 10% base slope + 20% * 200% excess
-// slope = 53%. Net of the 10% spread, suppliers earn 53% * 100% * 90% = 47.7%.
+// slope = 53%.
 const FULL_UTILIZATION_RATE: u64 = 530_000_000;
-const FULL_UTILIZATION_SUPPLIER_RATE: u64 = 477_000_000;
+// A flat 200% curve at the 20% maximum spread. One year on 80 USDC of borrow against 100 USDC of
+// supply: interest 160, fees 32, supply 100 + 128 = 228, borrow 80 + 160 = 240. Suppliers
+// then earn 200% * 80% of 240 on 228 = 384 / 228 = 168.4210526%, and a second year takes
+// supply to 228 + 384 = 612.
+const FLAT_RATE: u64 = 2_000_000_000;
+const FLAT_RATE_SUPPLY_AFTER_ONE_YEAR: u64 = 228_000_000;
+const FLAT_RATE_BORROW_AFTER_ONE_YEAR: u64 = 240_000_000;
+const FLAT_RATE_SUPPLIER_RATE_AFTER_ONE_YEAR: u64 = 1_684_210_526;
+const FLAT_RATE_SUPPLY_AFTER_TWO_YEARS: u64 = 612_000_000;
 // Mainnet USDC margin pool curve (read 2026-09-29): base rate 0, base slope 15%, optimal 80%,
 // excess slope 500%, protocol spread 20%, max utilization 90%. At 100% utilization:
 // 0 + 80% * 15% + 20% * 500% = 112%.
@@ -789,6 +797,7 @@ fun borrow_left_after_supply_write_off_accrues_at_the_full_utilization_rate() {
         &mut scenario,
     );
     assert_eq!(pool.interest_rate(), FULL_UTILIZATION_RATE);
+    assert_eq!(pool.true_interest_rate(), 0);
 
     // An hour later B repays one share, which commits the interest update.
     advance_time(&mut clock, HOUR_MS);
@@ -798,8 +807,54 @@ fun borrow_left_after_supply_write_off_accrues_at_the_full_utilization_rate() {
     assert!(pool.total_borrow() > pool.total_supply());
     assert_eq!(pool.borrow_shares(), shares_b - 1);
     assert_eq!(pool.interest_rate(), FULL_UTILIZATION_RATE);
-    assert_eq!(pool.true_interest_rate(), FULL_UTILIZATION_SUPPLIER_RATE);
 
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// Borrow above supply prices interest at the capped 100% utilization, but suppliers still
+// receive the net interest on all of the borrow, so their rate exceeds the borrow rate net of
+// the spread.
+#[test]
+fun true_interest_rate_counts_interest_on_borrow_above_supply() {
+    let margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        margin_constants::max_protocol_spread(),
+        test_constants::min_borrow(),
+    );
+    let flat_curve = protocol_config::new_interest_config(
+        FLAT_RATE,
+        0,
+        test_constants::optimal_utilization(),
+        0,
+    );
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test_with_config(
+        protocol_config::new_protocol_config(margin_pool_config, flat_curve),
+    );
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let m = test_constants::usdc_multiplier();
+
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        100 * m,
+        &clock,
+        scenario.ctx(),
+    );
+    let (borrowed_coin, _) = pool.borrow(80 * m, &clock, scenario.ctx());
+    destroy(borrowed_coin);
+    accrue_yearly(&mut pool, 1, &mut clock, &mut scenario);
+    assert_eq!(pool.total_supply(), FLAT_RATE_SUPPLY_AFTER_ONE_YEAR);
+    assert_eq!(pool.total_borrow(), FLAT_RATE_BORROW_AFTER_ONE_YEAR);
+    assert_eq!(pool.interest_rate(), FLAT_RATE);
+    assert_eq!(pool.true_interest_rate(), FLAT_RATE_SUPPLIER_RATE_AFTER_ONE_YEAR);
+
+    advance_time(&mut clock, margin_constants::year_ms());
+    assert_eq!(pool.total_supply_with_interest(&clock), FLAT_RATE_SUPPLY_AFTER_TWO_YEARS);
+
+    destroy(supplier_cap);
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
