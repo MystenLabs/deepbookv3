@@ -20,7 +20,7 @@ public struct State has drop, store {
     borrow_shares: u64,
     // Last timestamp whose elapsed time was applied to interest, or confirmed
     // idle (zero borrow). Short calls that truncate to zero interest against
-    // outstanding borrow do not advance this.
+    // outstanding borrow do not advance this. A new borrow always does.
     last_update_timestamp: u64,
     extra_fields: VecMap<String, u64>,
 }
@@ -98,6 +98,11 @@ public(package) fun increase_borrow(
     clock: &Clock,
 ): (u64, u64) {
     let protocol_fees = self.update(config, clock);
+    // `update` holds the timestamp while interest on the current borrow truncates to zero.
+    // Restart it before adding principal, so the new borrow isn't charged for the held window.
+    // The interest this drops is the old borrow's over that window, which `update` just
+    // computed as zero.
+    self.last_update_timestamp = clock.timestamp_ms();
     let ratio = self.borrow_ratio();
     let shares = math::div_round_up(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
@@ -130,7 +135,8 @@ public(package) fun decrease_borrow_shares(
 /// the elapsed interval. The year-fraction conversion floors short windows
 /// to zero; advancing the timestamp anyway would let frequent updates
 /// discard time. Idle pools (zero borrow) still advance so a later borrow
-/// is not charged for the idle window.
+/// is not charged for the idle window, and `increase_borrow` restarts a held
+/// timestamp for the same reason.
 public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;

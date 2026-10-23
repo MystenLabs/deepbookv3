@@ -41,6 +41,9 @@ const MAINNET_USDC_EXCESS_SLOPE: u64 = 5_000_000_000;
 const MAINNET_USDC_FULL_UTILIZATION_RATE: u64 = 1_120_000_000;
 // `min_liquidation_repay` in borrow shares, repaid with a 3% pool reward on top.
 const MIN_PARTIAL_LIQUIDATION_SHARES: u64 = 1_000;
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+// Borrower A's loan runs three days plus an odd remainder, so a full repay leaves dust.
+const ODD_REMAINDER_MS: u64 = 12_345;
 const POOL_REWARD_PERCENT: u64 = 3;
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
@@ -720,6 +723,22 @@ fun repay_liquidation_default_exceeding_supply_writes_supply_to_zero() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
+fun mainnet_usdc_protocol_config(): protocol_config::ProtocolConfig {
+    let margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        MAINNET_USDC_MAX_UTILIZATION_RATE,
+        MAINNET_USDC_PROTOCOL_SPREAD,
+        test_constants::min_borrow(),
+    );
+    let interest_config = protocol_config::new_interest_config(
+        0,
+        MAINNET_USDC_BASE_SLOPE,
+        test_constants::optimal_utilization(),
+        MAINNET_USDC_EXCESS_SLOPE,
+    );
+    protocol_config::new_protocol_config(margin_pool_config, interest_config)
+}
+
 // Yearly zero-share `repay_liquidation` calls run only the pool's interest update. With no
 // fee withdrawals, unwithdrawn protocol fees push `total_borrow` above `total_supply`.
 fun accrue_yearly(
@@ -855,6 +874,60 @@ fun true_interest_rate_counts_interest_on_borrow_above_supply() {
     assert_eq!(pool.total_supply_with_interest(&clock), FLAT_RATE_SUPPLY_AFTER_TWO_YEARS);
 
     destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// Under the Mainnet USDC curve (base rate 0), a full repay leaves dust in `total_borrow` with
+// no shares. The dust accrues nothing, so `update` holds the timestamp through 30 idle days,
+// across a small supply too. B's new 100k borrow must start its own clock: right after
+// borrowing B owes exactly the principal, and the supplier's claim doesn't move.
+#[test]
+fun new_borrow_after_idle_dust_is_not_charged_for_the_idle_window() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test_with_config(
+        mainnet_usdc_protocol_config(),
+    );
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let m = test_constants::usdc_multiplier();
+
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        200_000 * m,
+        &clock,
+        scenario.ctx(),
+    );
+    let (coin_a, shares_a) = pool.borrow(100_000 * m, &clock, scenario.ctx());
+    destroy(coin_a);
+    advance_time(&mut clock, 3 * DAY_MS + ODD_REMAINDER_MS);
+    let owed_a = pool.borrow_shares_to_amount(shares_a, &clock);
+    pool.repay(shares_a, mint_coin<USDC>(owed_a, scenario.ctx()), &clock);
+    assert_eq!(pool.borrow_shares(), 0);
+    assert!(pool.total_borrow() > 0);
+
+    let held_at = pool.last_update_timestamp();
+    advance_time(&mut clock, 15 * DAY_MS);
+    let late_supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        10 * m,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(pool.last_update_timestamp(), held_at);
+    advance_time(&mut clock, 15 * DAY_MS);
+
+    let supplier_claim = pool.user_supply_amount(object::id(&supplier_cap), &clock);
+    let borrowed = 100_000 * m;
+    let (coin_b, shares_b) = pool.borrow(borrowed, &clock, scenario.ctx());
+    destroy(coin_b);
+    assert_eq!(pool.last_update_timestamp(), clock.timestamp_ms());
+    assert_eq!(pool.borrow_shares_to_amount(shares_b, &clock), borrowed);
+    assert_eq!(pool.user_supply_amount(object::id(&supplier_cap), &clock), supplier_claim);
+
+    destroy(supplier_cap);
+    destroy(late_supplier_cap);
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -995,20 +1068,8 @@ fun borrow_past_supply_aborts_at_full_max_utilization() {
 // borrow accrues at 112%, so supply refills from interest and later updates stay bounded.
 #[test]
 fun mainnet_usdc_curve_write_off_accrues_at_the_full_utilization_rate() {
-    let margin_pool_config = protocol_config::new_margin_pool_config(
-        test_constants::supply_cap(),
-        MAINNET_USDC_MAX_UTILIZATION_RATE,
-        MAINNET_USDC_PROTOCOL_SPREAD,
-        test_constants::min_borrow(),
-    );
-    let interest_config = protocol_config::new_interest_config(
-        0,
-        MAINNET_USDC_BASE_SLOPE,
-        test_constants::optimal_utilization(),
-        MAINNET_USDC_EXCESS_SLOPE,
-    );
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test_with_config(
-        protocol_config::new_protocol_config(margin_pool_config, interest_config),
+        mainnet_usdc_protocol_config(),
     );
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
