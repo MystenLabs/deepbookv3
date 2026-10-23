@@ -620,8 +620,11 @@ public(package) fun borrow<Asset>(
         .state
         .increase_borrow(&self.config, amount, clock);
     self.protocol_fees.increase_fees_accrued(margin_pool_id, protocol_fees);
+    // Utilization reads at most 100%, so a `max_utilization_rate` of 100% alone would let
+    // borrow pass supply and lend out the vault cash that backs protocol fees.
     assert!(
-        self.state.utilization_rate() <= self.config.max_utilization_rate(),
+        self.state.total_borrow() <= self.state.total_supply() &&
+            self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
 

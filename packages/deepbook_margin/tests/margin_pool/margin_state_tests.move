@@ -20,6 +20,18 @@ const FIRST_QUANTUM_INTEREST: u64 = 50;
 const FIRST_QUANTUM_PROTOCOL_FEES: u64 = 5;
 const THIRTY_DAY_PLUS_HELD_INTEREST: u64 = 4_109_589_050;
 const THIRTY_DAY_PLUS_HELD_PROTOCOL_FEES: u64 = 410_958_905;
+// Test curve at 100% utilization: 5% base + 80% * 10% base slope + 20% * 200% excess slope.
+const FULL_UTILIZATION_RATE: u64 = 530_000_000;
+// One year at 53% on 500 tokens of borrow with zero supply, at the 10% protocol spread:
+// interest 265, fees 26.5, supply 0 + 265 - 26.5 = 238.5, borrow 500 + 265 = 765.
+const WRITE_OFF_YEAR_ONE_PROTOCOL_FEES: u64 = 26_500_000_000;
+const WRITE_OFF_YEAR_ONE_SUPPLY: u64 = 238_500_000_000;
+const WRITE_OFF_YEAR_ONE_BORROW: u64 = 765_000_000_000;
+// Borrow still exceeds supply, so year two is also 53%: interest 765 * 53% = 405.45,
+// fees 40.545, supply 238.5 + 405.45 - 40.545 = 603.405, borrow 765 + 405.45 = 1,170.45.
+const WRITE_OFF_YEAR_TWO_PROTOCOL_FEES: u64 = 40_545_000_000;
+const WRITE_OFF_YEAR_TWO_SUPPLY: u64 = 603_405_000_000;
+const WRITE_OFF_YEAR_TWO_BORROW: u64 = 1_170_450_000_000;
 
 #[test]
 fun margin_state_operations_work() {
@@ -343,6 +355,72 @@ fun decrease_supply_absolute_stops_at_zero() {
     state.decrease_supply_absolute(supplied);
     assert_eq!(state.total_supply(), 0);
     assert_eq!(state.supply_shares(), supplied);
+
+    destroy(clock);
+    test.end();
+}
+
+#[test]
+fun utilization_rate_reads_full_once_borrow_reaches_supply() {
+    let mut test = begin(test_constants::admin());
+    let clock = clock::create_for_testing(test.ctx());
+    let mut state = margin_state::default(&clock);
+    let config = protocol_config_tests::create_test_protocol_config();
+
+    // No borrow reads zero, with or without supply.
+    assert_eq!(state.utilization_rate(), 0);
+    let supplied = SUPPLY_TOKENS * constants::float_scaling();
+    let borrowed = BORROW_TOKENS * constants::float_scaling();
+    state.increase_supply(&config, supplied, &clock);
+    assert_eq!(state.utilization_rate(), 0);
+    state.increase_borrow(&config, borrowed, &clock);
+
+    // Borrow equal to supply is exactly 100%.
+    state.decrease_supply_absolute(supplied - borrowed);
+    assert_eq!(state.utilization_rate(), constants::float_scaling());
+
+    // One unit of supply against 500 tokens of borrow: borrow * 1e9 / supply = 5e20 is past
+    // u64, and it reads 100%.
+    state.decrease_supply_absolute(borrowed - 1);
+    assert_eq!(state.total_supply(), 1);
+    assert_eq!(state.utilization_rate(), constants::float_scaling());
+
+    // Supply written off to zero with borrow outstanding is fully utilized, not idle.
+    state.decrease_supply_absolute(1);
+    assert_eq!(state.total_supply(), 0);
+    assert_eq!(state.utilization_rate(), constants::float_scaling());
+    assert_eq!(config.interest_rate(state.utilization_rate()), FULL_UTILIZATION_RATE);
+
+    destroy(clock);
+    test.end();
+}
+
+#[test]
+fun update_after_supply_write_off_accrues_at_the_full_utilization_rate() {
+    let mut test = begin(test_constants::admin());
+    let mut clock = clock::create_for_testing(test.ctx());
+    let mut state = margin_state::default(&clock);
+    let config = protocol_config_tests::create_test_protocol_config();
+
+    let supplied = SUPPLY_TOKENS * constants::float_scaling();
+    let borrowed = BORROW_TOKENS * constants::float_scaling();
+    state.increase_supply(&config, supplied, &clock);
+    state.increase_borrow(&config, borrowed, &clock);
+    state.decrease_supply_absolute(supplied);
+    assert_eq!(state.total_supply(), 0);
+
+    clock.increment_for_testing(margin_constants::year_ms());
+    assert_eq!(state.update(&config, &clock), WRITE_OFF_YEAR_ONE_PROTOCOL_FEES);
+    assert_eq!(state.total_supply(), WRITE_OFF_YEAR_ONE_SUPPLY);
+    assert_eq!(state.total_borrow(), WRITE_OFF_YEAR_ONE_BORROW);
+    assert_eq!(state.last_update_timestamp(), clock.timestamp_ms());
+
+    clock.increment_for_testing(margin_constants::year_ms());
+    assert_eq!(state.update(&config, &clock), WRITE_OFF_YEAR_TWO_PROTOCOL_FEES);
+    assert_eq!(state.total_supply(), WRITE_OFF_YEAR_TWO_SUPPLY);
+    assert_eq!(state.total_borrow(), WRITE_OFF_YEAR_TWO_BORROW);
+    assert_eq!(state.supply_shares(), supplied);
+    assert_eq!(state.borrow_shares(), borrowed);
 
     destroy(clock);
     test.end();
