@@ -46,6 +46,8 @@ use sui::test_scenario::return_shared;
 use token::deep::DEEP;
 
 const DEBT_FREE_OWNER: address = @0xD;
+// An odd remainder on a loan's duration, so a full repay leaves dust in the pool's borrow.
+const ODD_REMAINDER_MS: u64 = 12_345;
 
 #[test]
 fun test_margin_manager_creation() {
@@ -5045,6 +5047,116 @@ fun supply_write_off_with_borrow_outstanding_keeps_managers_operable() {
 
     destroy_2!(btc_price_crash, usdc_price_fresh);
     return_shared_2!(mm2, btc_pool);
+    return_shared_2!(usdc_pool, pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// Manager A borrows 100k USDC for three days and repays everything, which leaves dust in the
+// USDC pool's borrow with no shares. The dust accrues nothing, so the pool's timestamp holds
+// through 30 idle days. Manager B then borrows 100k: right after borrowing it owes exactly the
+// principal, not 30 days of interest on it.
+#[test]
+fun new_borrow_after_idle_dust_owes_only_its_principal() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+    let m = test_constants::usdc_multiplier();
+    let borrowed = 100_000 * m;
+    let mm_a_id = new_btc_usdc_manager(&mut scenario, test_constants::user1(), registry_id, &clock);
+    let mm_b_id = new_btc_usdc_manager(&mut scenario, test_constants::user2(), registry_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared_by_id<Pool<BTC, USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let mut mm_a = scenario.take_shared_by_id<MarginManager<BTC, USDC>>(mm_a_id);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 80_000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    margin_manager_upgraded::deposit<BTC, USDC, BTC>(
+        &mut mm_a,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm_a,
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        borrowed,
+        &clock,
+        scenario.ctx(),
+    );
+    // Extra USDC so the full repay covers three days of interest.
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm_a,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(1_000 * m, scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(btc_price, usdc_price);
+
+    advance_time(&mut clock, 3 * margin_constants::day_ms() + ODD_REMAINDER_MS);
+    margin_manager::repay_quote<BTC, USDC>(
+        &mut mm_a,
+        &registry,
+        &mut usdc_pool,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(mm_a.borrowed_quote_shares(), 0);
+    assert_eq!(usdc_pool.borrow_shares(), 0);
+    assert!(usdc_pool.total_borrow() > 0);
+    let held_at = usdc_pool.last_update_timestamp();
+    return_shared(mm_a);
+
+    advance_time(&mut clock, 30 * margin_constants::day_ms());
+    scenario.next_tx(test_constants::user2());
+    let mut mm_b = scenario.take_shared_by_id<MarginManager<BTC, USDC>>(mm_b_id);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 80_000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    margin_manager_upgraded::deposit<BTC, USDC, BTC>(
+        &mut mm_b,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(usdc_pool.last_update_timestamp(), held_at);
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm_b,
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        borrowed,
+        &clock,
+        scenario.ctx(),
+    );
+    let (_, debt) = mm_b.calculate_debts<BTC, USDC, USDC>(&usdc_pool, &clock);
+    assert_eq!(debt, borrowed);
+
+    destroy_2!(btc_price, usdc_price);
+    return_shared(mm_b);
     return_shared_2!(usdc_pool, pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
