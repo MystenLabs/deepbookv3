@@ -3,7 +3,7 @@
 
 module deepbook::constants;
 
-const CURRENT_VERSION: u64 = 8; // Update version during upgrades
+const CURRENT_VERSION: u64 = 9; // Update version during upgrades
 const POOL_CREATION_FEE: u64 = 500 * 1_000_000; // 500 DEEP
 const FLOAT_SCALING: u64 = 1_000_000_000;
 const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -27,6 +27,7 @@ const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
 const MAX_Z_SCORE_THRESHOLD: u64 = 10_000_000_000; // 10 standard deviations
 const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
 const MAX_ADDITIONAL_TAKER_FEE: u64 = 2_000_000; // 20 bps
+const MAX_EWMA_GAS_PRICE: u64 = 100_000; // MIST. Must stay below ~135_818, see ewma::capped_gas_price
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -259,6 +260,10 @@ public fun max_z_score_threshold(): u64 {
 
 public fun max_additional_taker_fee(): u64 {
     MAX_ADDITIONAL_TAKER_FEE
+}
+
+public fun max_ewma_gas_price(): u64 {
+    MAX_EWMA_GAS_PRICE
 }
 
 public fun ewma_df_key(): vector<u8> {
