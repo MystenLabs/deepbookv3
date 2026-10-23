@@ -8,9 +8,11 @@ use deepbook::{constants, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_constants,
     margin_manager::{Self, MarginManager},
+    margin_manager_upgraded,
     margin_pool::{Self, MarginPool},
     margin_registry::{Self, MarginRegistry},
     pool_proxy,
+    pool_proxy_upgraded,
     test_constants::{Self, USDC, USDT},
     test_helpers::{
         Self,
@@ -27,11 +29,11 @@ use deepbook_margin::{
         destroy_2,
         return_shared_2,
         return_shared_3,
-        build_demo_usdc_price_info_object,
-        build_stale_usdc_price_info_object,
-        build_stale_usdt_price_info_object,
-        build_demo_usdt_price_info_object,
-        build_demo_usdc_price_info_object_with_price,
+        build_demo_usdc_price_info_object_upgraded,
+        build_stale_usdc_price_info_object_upgraded,
+        build_stale_usdt_price_info_object_upgraded,
+        build_demo_usdt_price_info_object_upgraded,
+        build_demo_usdc_price_info_object_with_price_upgraded,
         setup_orderbook_liquidity_stablecoin,
         setup_orderbook_liquidity_at_prices,
         setup_orderbook_liquidity_out_of_bounds_stablecoin,
@@ -70,11 +72,12 @@ fun test_place_limit_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit some collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -235,10 +238,11 @@ fun test_place_limit_order_pool_not_enabled() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let mut non_margin_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(non_margin_pool_id);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -306,10 +310,11 @@ fun test_place_market_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -452,10 +457,11 @@ fun test_place_market_order_pool_not_enabled() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let mut non_margin_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(non_margin_pool_id);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -519,11 +525,12 @@ fun test_place_reduce_only_limit_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDT as collateral
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -533,7 +540,8 @@ fun test_place_reduce_only_limit_order_ok() {
     );
 
     // Borrow USDC to establish a base debt
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -545,7 +553,8 @@ fun test_place_reduce_only_limit_order_ok() {
     );
 
     // Withdraw some USDC so we have debt but less assets (creating a net debt position)
-    let withdrawn_coin = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn_coin = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -624,11 +633,12 @@ fun test_place_reduce_only_limit_order_ok_ask() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDC as collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -638,7 +648,8 @@ fun test_place_reduce_only_limit_order_ok_ask() {
     );
 
     // Borrow USDT to establish a quote debt
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -650,7 +661,8 @@ fun test_place_reduce_only_limit_order_ok_ask() {
     );
 
     // Withdraw some USDT so we have debt but less assets (creating a net debt position)
-    let withdrawn_coin = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn_coin = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -729,10 +741,11 @@ fun reduce_only_limit_ask_above_net_debt_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -740,7 +753,8 @@ fun reduce_only_limit_ask_above_net_debt_ok() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -750,7 +764,8 @@ fun reduce_only_limit_ask_above_net_debt_ok() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn_coin = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn_coin = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -938,11 +953,12 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit some USDT to use as collateral
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -952,10 +968,11 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
     );
     destroy_2!(usdc_price, usdt_price);
 
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     // Borrow some USDT to establish relationship with quote pool
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1033,11 +1050,12 @@ fun test_place_reduce_only_limit_order_bid_requires_base_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // USDC collateral + USDT (quote) debt -> a long, no base debt.
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1045,7 +1063,8 @@ fun test_place_reduce_only_limit_order_bid_requires_base_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1117,11 +1136,12 @@ fun test_place_reduce_only_limit_order_ask_requires_quote_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // USDT collateral + USDC (base) debt -> a short, no quote debt.
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1129,7 +1149,8 @@ fun test_place_reduce_only_limit_order_ask_requires_quote_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -1193,11 +1214,12 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit some USDC to use as collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1206,7 +1228,8 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
         scenario.ctx(),
     );
     // Borrow some USDT
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1217,7 +1240,8 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
         scenario.ctx(),
     );
 
-    let coin = mm.withdraw<USDC, USDT, USDT>(
+    let coin = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool, // Pass quote_pool since we have USDT debt
@@ -1304,11 +1328,12 @@ fun test_place_reduce_only_market_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDT as collateral
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1317,7 +1342,8 @@ fun test_place_reduce_only_market_order_ok() {
         scenario.ctx(),
     );
     // Borrow USDC to establish a base debt
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -1329,7 +1355,8 @@ fun test_place_reduce_only_market_order_ok() {
     );
 
     // Withdraw some USDC so we have debt but less assets (creating a net debt position)
-    let withdrawn_coin = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn_coin = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -1407,11 +1434,12 @@ fun test_place_reduce_only_market_order_ok_ask() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDC as collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1421,7 +1449,8 @@ fun test_place_reduce_only_market_order_ok_ask() {
     );
 
     // Borrow USDT to establish a quote debt
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1433,7 +1462,8 @@ fun test_place_reduce_only_market_order_ok_ask() {
     );
 
     // Withdraw some USDT so we have debt but less assets (creating a net debt position)
-    let withdrawn_coin = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn_coin = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -1512,10 +1542,11 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1523,7 +1554,8 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -1533,7 +1565,8 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -1547,7 +1580,8 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
     destroy(withdrawn);
 
     let shares_before = mm.borrowed_base_shares();
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1576,7 +1610,8 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
     );
     destroy(order_info);
 
-    let rr_after = mm.risk_ratio(
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1634,10 +1669,11 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1645,7 +1681,8 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1655,7 +1692,8 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -1669,7 +1707,8 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
     destroy(withdrawn);
 
     let shares_before = mm.borrowed_quote_shares();
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1698,7 +1737,8 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
     );
     destroy(order_info);
 
-    let rr_after = mm.risk_ratio(
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1769,10 +1809,11 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1780,7 +1821,8 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1790,7 +1832,8 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -1805,12 +1848,12 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
     destroy(usdc_price);
 
     // Drift USDC to $0.60 and refresh the stored price the band keys off of.
-    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price_upgraded(
         &mut scenario,
         60_000_000,
         &clock,
     );
-    pool_proxy::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &usdc_drifted,
@@ -1820,7 +1863,8 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
 
     let pool_id_inner = pool.id();
     let shares_before = mm.borrowed_quote_shares();
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -1834,7 +1878,7 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
     assert!(rr_before < registry.min_borrow_risk_ratio(pool_id_inner));
     assert!(rr_before >= registry.liquidation_risk_ratio(pool_id_inner));
 
-    let order_info = pool_proxy::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -1852,7 +1896,8 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
     );
     destroy(order_info);
 
-    let rr_after = mm.risk_ratio(
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -1919,10 +1964,11 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -1930,7 +1976,8 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -1940,7 +1987,8 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -1954,12 +2002,12 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
     destroy(withdrawn);
     destroy(usdc_price);
 
-    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price_upgraded(
         &mut scenario,
         60_000_000,
         &clock,
     );
-    pool_proxy::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &usdc_drifted,
@@ -1979,7 +2027,8 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
     );
 
     let shares_before = mm.borrowed_quote_shares();
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -1991,7 +2040,7 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
     assert!(rr_before < registry.min_open_risk_ratio(pool_id_inner));
     assert!(rr_before >= registry.liquidation_risk_ratio(pool_id_inner));
 
-    let order_info = pool_proxy::place_market_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -2009,7 +2058,8 @@ fun place_market_order_and_repay_loan_partial_close_below_min_open_ok() {
     );
     destroy(order_info);
 
-    let rr_after = mm.risk_ratio(
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -2070,10 +2120,11 @@ fun reduce_only_and_repay_fully_closes_selling_above_net_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2081,7 +2132,8 @@ fun reduce_only_and_repay_fully_closes_selling_above_net_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -2091,7 +2143,8 @@ fun reduce_only_and_repay_fully_closes_selling_above_net_debt() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2176,10 +2229,11 @@ fun reduce_only_and_repay_bid_over_net_debt_fully_closes() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2187,7 +2241,8 @@ fun reduce_only_and_repay_bid_over_net_debt_fully_closes() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -2197,7 +2252,8 @@ fun reduce_only_and_repay_bid_over_net_debt_fully_closes() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2281,12 +2337,13 @@ fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // M1 short: deposit 3000 USDT, borrow 1000 USDC, withdraw it -> holds 3000
     // USDT, owes 1000 USDC (ratio 3.0).
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2294,7 +2351,8 @@ fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -2304,7 +2362,8 @@ fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2317,7 +2376,8 @@ fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
     );
     destroy(withdrawn);
 
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2385,9 +2445,10 @@ fun reduce_only_limit_resting_fill_at_band_edge_bounded_and_solvent() {
     );
     sui::transfer::public_transfer(m2, test_constants::user2());
 
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    let rr_after = mm.risk_ratio(
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2446,11 +2507,12 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // M1 short: 2200 USDT, owe 1000 USDC (ratio 2.2 at $1, so withdraw is allowed).
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2458,7 +2520,8 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -2468,7 +2531,8 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2483,12 +2547,12 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
     destroy(usdc_price);
 
     // Drift USDC up to $2.00 -> the short's ratio drops to 1.10 (at liquidation).
-    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price_upgraded(
         &mut scenario,
         200_000_000,
         &clock,
     );
-    pool_proxy::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &usdc_drifted,
@@ -2496,7 +2560,8 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
         &clock,
     );
 
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -2564,13 +2629,14 @@ fun resting_fill_from_danger_band_cannot_go_underwater() {
     );
     sui::transfer::public_transfer(m2, test_constants::user2());
 
-    let usdc_drifted2 = build_demo_usdc_price_info_object_with_price(
+    let usdc_drifted2 = build_demo_usdc_price_info_object_with_price_upgraded(
         &mut scenario,
         200_000_000,
         &clock,
     );
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    let rr_after = mm.risk_ratio(
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted2,
         &usdt_price,
@@ -2638,12 +2704,13 @@ fun reduce_only_limit_v2_ask_resting_fill_extraction_bounded_one_way() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // M1 long: deposit 3000 USDC, borrow 1000 USDT, withdraw it -> holds 3000 USDC,
     // owes 1000 USDT (ratio 3.0 at $1).
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2651,7 +2718,8 @@ fun reduce_only_limit_v2_ask_resting_fill_extraction_bounded_one_way() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -2661,7 +2729,8 @@ fun reduce_only_limit_v2_ask_resting_fill_extraction_bounded_one_way() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2674,7 +2743,8 @@ fun reduce_only_limit_v2_ask_resting_fill_extraction_bounded_one_way() {
     );
     destroy(withdrawn);
 
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2740,9 +2810,10 @@ fun reduce_only_limit_v2_ask_resting_fill_extraction_bounded_one_way() {
     );
     sui::transfer::public_transfer(m2, test_constants::user2());
 
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    let rr_after = mm.risk_ratio(
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2803,11 +2874,12 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // M1 short: 2200 USDT collateral, owe 1000 USDC (ratio 2.2 at $1).
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2815,7 +2887,8 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -2825,7 +2898,8 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2840,12 +2914,12 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
     destroy(usdc_price);
 
     // Drift USDC to $2.15 -> ratio ~2200/2.15/1000 = 1.023, below liquidation (1.10).
-    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price_upgraded(
         &mut scenario,
         215_000_000,
         &clock,
     );
-    pool_proxy::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &usdc_drifted,
@@ -2853,7 +2927,8 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
         &clock,
     );
 
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -2866,7 +2941,7 @@ fun reduce_only_limit_below_liquidation_placement_aborts() {
     assert!(rr_before < registry.liquidation_risk_ratio(pool.id()));
 
     // Placing a resting reduce-only bid within the +5% band now aborts at placement.
-    let order_info = pool_proxy::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -2922,10 +2997,11 @@ fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -2933,7 +3009,8 @@ fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -2943,7 +3020,8 @@ fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -2958,12 +3036,12 @@ fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
     destroy(usdc_price);
 
     // Drift USDC to $2.15 -> ratio ~1.023, below liquidation (1.10).
-    let usdc_drifted = build_demo_usdc_price_info_object_with_price(
+    let usdc_drifted = build_demo_usdc_price_info_object_with_price_upgraded(
         &mut scenario,
         215_000_000,
         &clock,
     );
-    pool_proxy::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &usdc_drifted,
@@ -2971,7 +3049,8 @@ fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
         &clock,
     );
 
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_drifted,
         &usdt_price,
@@ -2982,7 +3061,7 @@ fun reduce_only_limit_v2_below_liquidation_placement_aborts() {
     );
     assert!(rr_before < registry.liquidation_risk_ratio(pool.id()));
 
-    let order_info = pool_proxy::place_reduce_only_limit_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -3039,10 +3118,11 @@ fun market_and_repay_empty_book_aborts() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3050,7 +3130,8 @@ fun market_and_repay_empty_book_aborts() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -3117,10 +3198,11 @@ fun resting_order_by_itself_is_ratio_neutral() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3128,7 +3210,8 @@ fun resting_order_by_itself_is_ratio_neutral() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -3140,7 +3223,8 @@ fun resting_order_by_itself_is_ratio_neutral() {
     );
     // Withdraw the borrowed USDC so M1 is a real short (no idle USDC for the
     // and-repay to sweep; the placement is then a pure resting order).
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -3153,7 +3237,8 @@ fun resting_order_by_itself_is_ratio_neutral() {
     );
     destroy(withdrawn);
 
-    let rr_before = mm.risk_ratio(
+    let rr_before = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3186,7 +3271,8 @@ fun resting_order_by_itself_is_ratio_neutral() {
     );
     destroy(order_info);
 
-    let rr_after = mm.risk_ratio(
+    let rr_after = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3342,11 +3428,12 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit some USDT to use as collateral
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3356,10 +3443,11 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
     );
     destroy_2!(usdc_price, usdt_price);
 
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     // Borrow some USDT to establish relationship with quote pool
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -3433,11 +3521,12 @@ fun test_place_reduce_only_market_order_bid_requires_base_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // USDC collateral + USDT (quote) debt -> a long, no base debt.
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3445,7 +3534,8 @@ fun test_place_reduce_only_market_order_bid_requires_base_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -3508,10 +3598,11 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_ask() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3520,7 +3611,8 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_ask() {
         scenario.ctx(),
     );
 
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -3531,7 +3623,8 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_ask() {
         scenario.ctx(),
     );
 
-    let coin = mm.withdraw<USDC, USDT, USDT>(
+    let coin = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -3595,11 +3688,12 @@ fun test_stake_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit DEEP tokens
-    mm.deposit<USDC, USDT, DEEP>(
+    margin_manager_upgraded::deposit<USDC, USDT, DEEP>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3692,10 +3786,11 @@ fun test_modify_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3777,10 +3872,11 @@ fun test_cancel_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3860,10 +3956,11 @@ fun test_cancel_orders_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -3964,10 +4061,11 @@ fun test_cancel_all_orders_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4097,11 +4195,12 @@ fun test_submit_proposal_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit DEEP tokens
-    mm.deposit<USDC, USDT, DEEP>(
+    margin_manager_upgraded::deposit<USDC, USDT, DEEP>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4172,11 +4271,12 @@ fun test_vote_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit DEEP tokens
-    mm.deposit<USDC, USDT, DEEP>(
+    margin_manager_upgraded::deposit<USDC, USDT, DEEP>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4302,11 +4402,12 @@ fun test_withdraw_settled_amounts_permissionless_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDC
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4362,11 +4463,12 @@ fun test_withdraw_settled_amounts_permissionless_ok() {
 
     scenario.next_tx(test_constants::user2());
     let mut mm2 = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDT for user2
-    mm2.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm2,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4536,11 +4638,12 @@ fun test_limit_order_price_too_high() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4610,11 +4713,12 @@ fun test_limit_order_price_too_low() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4685,11 +4789,12 @@ fun test_limit_order_price_at_upper_bound_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -4762,11 +4867,12 @@ fun test_limit_order_price_at_lower_bound_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit collateral
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -5587,10 +5693,11 @@ fun test_tolerance_decrease_rejects_order_e2e() {
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -5697,10 +5804,11 @@ fun test_max_price_age_decrease_rejects_order_e2e() {
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -5774,10 +5882,11 @@ fun test_limit_order_price_just_above_upper_bound_fails() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -5846,10 +5955,11 @@ fun test_limit_order_price_just_below_lower_bound_fails() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -5918,11 +6028,12 @@ fun test_bid_order_allowed_at_any_price_below_oracle() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDT collateral for buying USDC
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -5996,11 +6107,12 @@ fun test_ask_order_allowed_at_any_price_above_oracle() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDC collateral for selling
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6078,11 +6190,12 @@ fun test_market_buy_order_above_oracle_within_bounds() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDT to buy USDC
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6154,11 +6267,12 @@ fun test_market_sell_order_below_oracle_within_bounds() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDC to sell
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6229,11 +6343,12 @@ fun test_market_buy_order_exceeds_upper_bound() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDT to buy USDC
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6301,11 +6416,12 @@ fun test_market_sell_order_below_lower_bound() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit USDC to sell
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6371,10 +6487,11 @@ fun test_market_buy_order_no_liquidity() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6440,10 +6557,11 @@ fun test_market_sell_order_no_liquidity() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6557,10 +6675,11 @@ fun test_limit_order_price_not_initialized() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6627,10 +6746,11 @@ fun test_limit_order_price_stale() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6708,13 +6828,14 @@ fun test_market_sell_min_size_input_fee_ok() {
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit enough USDC to sell min_size (no DEEP deposited - will use input fee).
     // When using input fee, fee is deducted from the sell amount, so we need slightly more.
     // Deposit min_size + 10% to cover the taker fee.
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -6791,13 +6912,14 @@ fun test_market_buy_min_size_input_fee_ok() {
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit quote (USDT) to buy base (USDC) - no DEEP deposited (will use input fee)
     // Need enough quote to cover min_size base + fees
     // At $1.01 price, min_size base costs ~10100 quote + fees
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7075,14 +7197,15 @@ fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // Deposit 100 USDT collateral + DEEP for fees, borrow 400 USDC.
     // Post-borrow: 100 USDT + 400 USDC = 500 USDC-equiv, debt 400 USDC,
     // risk_ratio = 500/400 = 1.25 (exactly at borrow floor). DEEP isn't summed
     // by `calculate_assets`, so it doesn't affect risk_ratio.
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7090,7 +7213,8 @@ fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_ok() {
         &clock,
         scenario.ctx(),
     );
-    mm.deposit<USDC, USDT, DEEP>(
+    margin_manager_upgraded::deposit<USDC, USDT, DEEP>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7098,7 +7222,8 @@ fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_ok() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -7135,9 +7260,10 @@ fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_ok() {
 
     // Post-trade risk_ratio = 499/400 = 1.2475: below the 1.25 borrow floor,
     // above the 1.175 open floor, so the opening order is accepted.
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    let rr = mm.risk_ratio(
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    let rr = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7199,10 +7325,11 @@ fun place_limit_order_v2_adverse_fill_aborts_with_strict_open_floor() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7210,7 +7337,8 @@ fun place_limit_order_v2_adverse_fill_aborts_with_strict_open_floor() {
         &clock,
         scenario.ctx(),
     );
-    mm.deposit<USDC, USDT, DEEP>(
+    margin_manager_upgraded::deposit<USDC, USDT, DEEP>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7218,7 +7346,8 @@ fun place_limit_order_v2_adverse_fill_aborts_with_strict_open_floor() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -7787,9 +7916,10 @@ fun place_limit_order_clamps_expire_timestamp() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    mm.deposit<USDC, USDT, USDC>(
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7863,9 +7993,10 @@ fun place_limit_order_v2_no_debt_at_oracle_price_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    mm.deposit<USDC, USDT, USDC>(
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7940,10 +8071,11 @@ fun place_market_order_v2_with_free_borrowed_funds_in_band_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7951,7 +8083,8 @@ fun place_market_order_v2_with_free_borrowed_funds_in_band_ok() {
         &clock,
         scenario.ctx(),
     );
-    mm.deposit<USDC, USDT, DEEP>(
+    margin_manager_upgraded::deposit<USDC, USDT, DEEP>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -7960,7 +8093,8 @@ fun place_market_order_v2_with_free_borrowed_funds_in_band_ok() {
         scenario.ctx(),
     );
     // Borrow 400 USDT: ratio = (100 + 400) / 400 = 1.25 at $1.
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -7990,9 +8124,10 @@ fun place_market_order_v2_with_free_borrowed_funds_in_band_ok() {
     destroy(order_info);
 
     // Post-trade risk_ratio = (200 + 299) / 400 = 1.2475: in the band, accepted.
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    let rr = mm.risk_ratio(
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
+    let rr = margin_manager_upgraded::risk_ratio(
+        &mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8048,10 +8183,11 @@ fun place_market_order_and_repay_loan_fully_closes_long() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8059,7 +8195,8 @@ fun place_market_order_and_repay_loan_fully_closes_long() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -8069,7 +8206,8 @@ fun place_market_order_and_repay_loan_fully_closes_long() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -8143,10 +8281,11 @@ fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8154,7 +8293,8 @@ fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -8166,7 +8306,8 @@ fun place_market_order_and_repay_loan_overbuys_short_past_debt() {
     );
     // Withdraw the borrowed USDC so the manager is a real short: owe 100 USDC,
     // hold 250 USDT (ratio 2.5, above min_withdraw 2.0).
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -8250,12 +8391,13 @@ fun place_market_order_and_repay_loan_worsening_aborts() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // M1 long: 1100 USDC collateral + 1000 USDT (quote) debt, holding the borrowed
     // USDT (ratio ~2.1).
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8263,7 +8405,8 @@ fun place_market_order_and_repay_loan_worsening_aborts() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -8330,10 +8473,11 @@ fun place_market_order_and_repay_loan_aborts_when_pool_disabled() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8341,7 +8485,8 @@ fun place_market_order_and_repay_loan_aborts_when_pool_disabled() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -8409,10 +8554,11 @@ fun reduce_only_bid_covers_sub_min_size_net_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8420,7 +8566,8 @@ fun reduce_only_bid_covers_sub_min_size_net_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -8431,7 +8578,8 @@ fun reduce_only_bid_covers_sub_min_size_net_debt() {
         scenario.ctx(),
     );
     // Withdraw only half a min_size of the borrowed USDC, leaving net short 5000.
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -8509,10 +8657,11 @@ fun reduce_only_and_repay_closes_non_lot_aligned_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8520,7 +8669,8 @@ fun reduce_only_and_repay_closes_non_lot_aligned_debt() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,
@@ -8532,7 +8682,8 @@ fun reduce_only_and_repay_closes_non_lot_aligned_debt() {
     );
     // Withdraw all but 500 raw, leaving net short = 30_000_000 - 500 = 29_999_500
     // (not a multiple of lot_size 1000).
-    let withdrawn = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -8613,10 +8764,11 @@ fun reduce_only_limit_and_repay_partial_taker_fill_repays() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8624,7 +8776,8 @@ fun reduce_only_limit_and_repay_partial_taker_fill_repays() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -8634,7 +8787,8 @@ fun reduce_only_limit_and_repay_partial_taker_fill_repays() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -8715,10 +8869,11 @@ fun reduce_only_limit_v2_taker_fill_aborts() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8726,7 +8881,8 @@ fun reduce_only_limit_v2_taker_fill_aborts() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_quote<USDC, USDT>(
+    margin_manager_upgraded::borrow_quote<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut quote_pool,
         &usdc_price,
@@ -8736,7 +8892,8 @@ fun reduce_only_limit_v2_taker_fill_aborts() {
         &clock,
         scenario.ctx(),
     );
-    let withdrawn = mm.withdraw<USDC, USDT, USDT>(
+    let withdrawn = margin_manager_upgraded::withdraw<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &base_pool,
         &quote_pool,
@@ -8805,10 +8962,10 @@ fun place_limit_order_v2_no_debt_tolerates_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    margin_manager::deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -8821,9 +8978,9 @@ fun place_limit_order_v2_no_debt_tolerates_stale_feed() {
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    let stale_usdc = build_stale_usdc_price_info_object(&mut scenario, &clock, 600);
-    let stale_usdt = build_stale_usdt_price_info_object(&mut scenario, &clock, 600);
-    let order_info = pool_proxy::place_limit_order_v2<USDC, USDT>(
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let stale_usdt = build_stale_usdt_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let order_info = pool_proxy_upgraded::place_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -8885,10 +9042,10 @@ fun place_market_order_v2_no_debt_tolerates_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    margin_manager::deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -8901,9 +9058,9 @@ fun place_market_order_v2_no_debt_tolerates_stale_feed() {
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    let stale_usdc = build_stale_usdc_price_info_object(&mut scenario, &clock, 600);
-    let stale_usdt = build_stale_usdt_price_info_object(&mut scenario, &clock, 600);
-    let order_info = pool_proxy::place_market_order_v2<USDC, USDT>(
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let stale_usdt = build_stale_usdt_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let order_info = pool_proxy_upgraded::place_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -8970,12 +9127,13 @@ fun reduce_only_market_buy_outside_the_oracle_band_aborts() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
     // USDT collateral plus a USDC (base) loan gives the short-side debt a reduce-only
     // bid requires.
-    mm.deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
+        &mut mm,
         &registry,
         &usdc_price,
         &usdt_price,
@@ -8983,7 +9141,8 @@ fun reduce_only_market_buy_outside_the_oracle_band_aborts() {
         &clock,
         scenario.ctx(),
     );
-    mm.borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
+        &mut mm,
         &registry,
         &mut base_pool,
         &usdc_price,

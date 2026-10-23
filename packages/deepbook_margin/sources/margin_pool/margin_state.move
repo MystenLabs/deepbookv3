@@ -18,6 +18,9 @@ public struct State has drop, store {
     total_borrow: u64,
     supply_shares: u64,
     borrow_shares: u64,
+    // Last timestamp whose elapsed time was applied to interest, or confirmed
+    // idle (zero borrow). Short calls that truncate to zero interest against
+    // outstanding borrow do not advance this. A new borrow always does.
     last_update_timestamp: u64,
     extra_fields: VecMap<String, u64>,
 }
@@ -77,8 +80,13 @@ public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
 
 /// Decrease the supply given an absolute amount. Used when the supply needs to be
 /// decreased without decreasing shares.
+/// Liquidation defaults written off here can exceed `total_supply`: borrowers accrue the
+/// protocol spread that suppliers never receive, so once unwithdrawn protocol fees exceed
+/// the vault's cash, a large enough default is more than suppliers are owed. Suppliers
+/// cannot lose more than everything, so the write-off stops at zero instead of aborting
+/// the liquidation.
 public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
-    self.total_supply = self.total_supply - amount;
+    self.total_supply = self.total_supply.saturating_sub(amount);
 }
 
 /// Increase the borrow given an amount. Return the individual borrow shares
@@ -90,6 +98,11 @@ public(package) fun increase_borrow(
     clock: &Clock,
 ): (u64, u64) {
     let protocol_fees = self.update(config, clock);
+    // `update` holds the timestamp while interest on the current borrow truncates to zero.
+    // Restart it before adding principal, so the new borrow isn't charged for the held window.
+    // The interest this drops is the old borrow's over that window, which `update` just
+    // computed as zero.
+    self.last_update_timestamp = clock.timestamp_ms();
     let ratio = self.borrow_ratio();
     let shares = math::div_round_up(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
@@ -117,6 +130,13 @@ public(package) fun decrease_borrow_shares(
 
 /// Update the supply and borrow with the interest and protocol fees.
 /// Returns the protocol fees accrued since last update.
+///
+/// Zero incremental interest against outstanding borrow does not consume
+/// the elapsed interval. The year-fraction conversion floors short windows
+/// to zero; advancing the timestamp anyway would let frequent updates
+/// discard time. Idle pools (zero borrow) still advance so a later borrow
+/// is not charged for the idle window, and `increase_borrow` restarts a held
+/// timestamp for the same reason.
 public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
@@ -126,6 +146,10 @@ public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Cl
         elapsed,
         self.total_borrow,
     );
+    if (interest == 0 && self.total_borrow > 0) {
+        return 0
+    };
+
     let protocol_fees = math::mul(interest, config.protocol_spread());
     self.total_supply = self.total_supply + interest - protocol_fees;
     self.total_borrow = self.total_borrow + interest;
@@ -134,10 +158,17 @@ public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Cl
     protocol_fees
 }
 
-/// Return the utilization rate of the margin pool.
+/// Return the utilization rate of the margin pool, capped at 100%. Borrow can exceed
+/// supply, for example once a liquidation default writes supply down
+/// (`decrease_supply_absolute`), possibly to zero while other borrows are outstanding. Reading that state as fully
+/// utilized keeps interest at the curve's 100% rate. An uncapped `borrow / supply` would
+/// charge interest that grows with the ratio, and past about 1.8e10 the ratio itself
+/// overflows u64 and aborts every entry that accrues.
 public(package) fun utilization_rate(self: &State): u64 {
-    if (self.total_supply == 0) {
+    if (self.total_borrow == 0) {
         0
+    } else if (self.total_borrow >= self.total_supply) {
+        constants::float_scaling()
     } else {
         math::div(self.total_borrow, self.total_supply)
     }

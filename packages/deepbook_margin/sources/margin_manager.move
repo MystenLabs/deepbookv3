@@ -26,13 +26,7 @@ use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::{
-        PythReading,
-        calculate_target_currency,
-        calculate_price,
-        read_price,
-        read_price_unsafe,
-    },
+    oracle::{PythReading, calculate_target_currency, calculate_price},
     tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
 };
 use pyth::price_info::PriceInfoObject;
@@ -72,6 +66,9 @@ const EDeprecatedUseV2: u64 = 20;
 /// `cancel_maker` can remove the manager's own resting orders and fill deeper
 /// into worse liquidity, so we re-check the *actual* executed price.
 const EFillOutsidePriceBounds: u64 = 21;
+/// A retired legacy-Pyth entry was called. Use the `margin_manager_upgraded`
+/// twin, which takes an upgraded-Core `PriceInfoObject`.
+const EDeprecatedUseUpgradedPyth: u64 = 22;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -173,42 +170,24 @@ public struct WithdrawCollateralEvent has copy, drop {
 }
 
 // === Functions - Take Profit Stop Loss ===
-/// Add a conditional order (take-profit / stop-loss). Specifies the condition
-/// under which it triggers and the pending order to place when it does.
+/// RETIRED. Use `margin_manager_upgraded::add_conditional_order`.
 ///
-/// Lifetime: the conditional order itself is never clamped — it rests in the
-/// queue until it triggers or is cancelled. A *market* pending order
-/// (`tpsl::new_pending_market_order`) has no expiry, so it is the "until
-/// cancelled" stop: it waits indefinitely and, when triggered, fires and
-/// deleverages via `execute_conditional_orders_v3` (so it can protect even in
-/// the danger band). A *limit* pending order is intentionally transient — when
-/// it triggers, the resting order it places is clamped to `max_order_ttl_ms`
-/// (default 3 days) by `clamp_expire_timestamp`, the same stale-price guard as
-/// any margin limit order. For a permanent stop, use a market pending order.
-/// Twin: `margin_manager_upgraded::add_conditional_order`. Edit both.
+/// Legacy-Pyth entry. See the module-level note in `margin_manager_upgraded` for
+/// why the whole legacy family aborts and what has to happen on chain for it to
+/// stop being reachable.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    conditional_order_id: u64,
-    condition: Condition,
-    pending_order: PendingOrder,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_price_info_object: &PriceInfoObject,
+    _quote_price_info_object: &PriceInfoObject,
+    _registry: &MarginRegistry,
+    _conditional_order_id: u64,
+    _condition: Condition,
+    _pending_order: PendingOrder,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    self.add_conditional_order_core(
-        pool,
-        read_price<BaseAsset>(base_price_info_object, registry, clock),
-        read_price<QuoteAsset>(quote_price_info_object, registry, clock),
-        registry,
-        conditional_order_id,
-        condition,
-        pending_order,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
 /// Cancel all conditional orders.
@@ -254,74 +233,41 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     abort EDeprecatedUseV2
 }
 
-/// Execute conditional orders and return the order infos.
-/// This is a permissionless function that can be called by anyone.
+/// RETIRED. Use `margin_manager_upgraded::execute_conditional_orders_v2`.
 ///
-/// v2 adds `base_margin_pool` + `quote_margin_pool` parameters and enforces
-/// a post-fill `risk_ratio >= min_borrow_risk_ratio` invariant inside the
-/// inner loop. If any single triggered fill would breach that floor, the
-/// entire txn aborts — no partial-state landing.
-/// Twin: `margin_manager_upgraded::execute_conditional_orders_v2`. Edit both.
+/// Legacy-Pyth entry. This one was the widest leg of the dual-feed window it
+/// closes: permissionless, needing no capital and no danger band.
 public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    max_orders_to_execute: u64,
-    clock: &Clock,
-    ctx: &TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _base_price_info_object: &PriceInfoObject,
+    _quote_price_info_object: &PriceInfoObject,
+    _registry: &MarginRegistry,
+    _max_orders_to_execute: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
 ): vector<OrderInfo> {
-    self.execute_conditional_orders_v2_core(
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        read_price<BaseAsset>(base_price_info_object, registry, clock),
-        read_price<QuoteAsset>(quote_price_info_object, registry, clock),
-        registry,
-        max_orders_to_execute,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Execute conditional orders, deleveraging on each market-type fill.
-/// Permissionless, like `execute_conditional_orders_v2`, with the same trigger
-/// and cancellation handling — but takes the margin pools as `&mut` and repays
-/// the loan with the market proceeds before gating on the net (post-repay)
-/// `risk_ratio` being at least the pre-fill ratio.
+/// RETIRED. Use `margin_manager_upgraded::execute_conditional_orders_v3`.
 ///
-/// This is what lets a stop-loss fire in the `liquidation..min_borrow` danger
-/// band: a swap alone only lowers the oracle-valued ratio (so the v2 borrow-floor
-/// gate rejects it), while repaying actually improves it. If a single triggered
-/// fill would worsen net solvency the whole txn aborts — no partial-state
-/// landing.
-/// Twin: `margin_manager_upgraded::execute_conditional_orders_v3`. Edit both.
+/// Legacy-Pyth entry. Permissionless and capital-free, like the v2 twin above.
 public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    max_orders_to_execute: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &mut MarginPool<BaseAsset>,
+    _quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    _base_price_info_object: &PriceInfoObject,
+    _quote_price_info_object: &PriceInfoObject,
+    _registry: &MarginRegistry,
+    _max_orders_to_execute: u64,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): vector<OrderInfo> {
-    self.execute_conditional_orders_v3_core(
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        read_price<BaseAsset>(base_price_info_object, registry, clock),
-        read_price<QuoteAsset>(quote_price_info_object, registry, clock),
-        registry,
-        max_orders_to_execute,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
 // === Public Functions - Margin Manager ===
@@ -438,133 +384,71 @@ public fun unset_referral<BaseAsset, QuoteAsset>(
 }
 
 // === Public Functions - Margin Manager ===
-/// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
-/// Twin: `margin_manager_upgraded::deposit`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::deposit`.
+///
+/// Legacy-Pyth entry.
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    coin: Coin<DepositAsset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _coin: Coin<DepositAsset>,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    let event_reading = if (!emits_collateral_event<BaseAsset, QuoteAsset, DepositAsset>()) {
-        option::none()
-    } else if (type_name::with_defining_ids<DepositAsset>() == type_name::with_defining_ids<BaseAsset>()) {
-        option::some(read_price<BaseAsset>(base_oracle, registry, clock))
-    } else {
-        option::some(read_price<QuoteAsset>(quote_oracle, registry, clock))
-    };
-
-    self.deposit_core(
-        registry,
-        event_reading,
-        coin,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
-/// The withdrawal is subject to the risk ratio limit.
-/// Twin: `margin_manager_upgraded::withdraw`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::withdraw`.
+///
+/// Legacy-Pyth entry.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    withdraw_amount: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _withdraw_amount: u64,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
-    let (risk_base_reading, risk_quote_reading) = if (
-        self.withdraw_needs_risk_check(base_margin_pool, quote_margin_pool)
-    ) {
-        (
-            option::some(read_price<BaseAsset>(base_oracle, registry, clock)),
-            option::some(read_price<QuoteAsset>(quote_oracle, registry, clock)),
-        )
-    } else {
-        (option::none(), option::none())
-    };
-    let (event_base_reading, event_quote_reading) = if (
-        emits_collateral_event<BaseAsset, QuoteAsset, WithdrawAsset>()
-    ) {
-        (
-            option::some(read_price_unsafe<BaseAsset>(base_oracle, registry)),
-            option::some(read_price_unsafe<QuoteAsset>(quote_oracle, registry)),
-        )
-    } else {
-        (option::none(), option::none())
-    };
-
-    self.withdraw_core(
-        registry,
-        base_margin_pool,
-        quote_margin_pool,
-        risk_base_reading,
-        risk_quote_reading,
-        event_base_reading,
-        event_quote_reading,
-        pool,
-        withdraw_amount,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Borrow the base asset using the margin manager.
-/// Twin: `margin_manager_upgraded::borrow_base`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::borrow_base`.
+///
+/// Legacy-Pyth entry.
 public fun borrow_base<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    loan_amount: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_margin_pool: &mut MarginPool<BaseAsset>,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _loan_amount: u64,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    self.borrow_base_core(
-        registry,
-        base_margin_pool,
-        read_price<BaseAsset>(base_oracle, registry, clock),
-        read_price<QuoteAsset>(quote_oracle, registry, clock),
-        pool,
-        loan_amount,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Borrow the quote asset using the margin manager.
-/// Twin: `margin_manager_upgraded::borrow_quote`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::borrow_quote`.
+///
+/// Legacy-Pyth entry.
 public fun borrow_quote<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    loan_amount: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _loan_amount: u64,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ) {
-    self.borrow_quote_core(
-        registry,
-        quote_margin_pool,
-        read_price<BaseAsset>(base_oracle, registry, clock),
-        read_price<QuoteAsset>(quote_oracle, registry, clock),
-        pool,
-        loan_amount,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
 /// Repay the base asset loan using the margin manager.
@@ -612,85 +496,55 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 }
 
 // === Public Functions - Liquidation - Receive Assets After Liquidation ===
-/// Twin: `margin_manager_upgraded::liquidate`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::liquidate`.
+///
+/// Legacy-Pyth entry.
 public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    margin_pool: &mut MarginPool<DebtAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_coin: Coin<DebtAsset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _margin_pool: &mut MarginPool<DebtAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _repay_coin: Coin<DebtAsset>,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
-    self.liquidate_core(
-        registry,
-        read_price<BaseAsset>(base_oracle, registry, clock),
-        read_price<QuoteAsset>(quote_oracle, registry, clock),
-        margin_pool,
-        pool,
-        repay_coin,
-        clock,
-        ctx,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-// Returns the risk ratio of the margin manager given the corresponding margin pools.
-/// Twin: `margin_manager_upgraded::risk_ratio`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::risk_ratio`.
+///
+/// Legacy-Pyth entry. Read-only, but retired with the rest of the family: an
+/// off-chain liquidator or UI reading a ratio off one feed while acting on the
+/// other is the same divergence, one step removed.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    clock: &Clock,
+    _self: &MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _clock: &Clock,
 ): u64 {
-    // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
-    // ratio is MAX regardless of price. Returning here keeps a stale feed from
-    // breaking a read-only query, as it did before Pyth's upgraded Core.
-    if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
-
-    self.risk_ratio_core(
-        registry,
-        read_price<BaseAsset>(base_oracle, registry, clock),
-        read_price<QuoteAsset>(quote_oracle, registry, clock),
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Returns the risk ratio without validating staleness, EWMA divergence or confidence - only the feed id is checked.
-/// Use for read-only queries where stale prices are acceptable.
-/// Twin: `margin_manager_upgraded::risk_ratio_unsafe`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::risk_ratio_unsafe`.
+///
+/// Legacy-Pyth entry.
 public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    clock: &Clock,
+    _self: &MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _clock: &Clock,
 ): u64 {
-    // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
-    // ratio is MAX regardless of price. Returning here keeps a stale feed from
-    // breaking a read-only query, as it did before Pyth's upgraded Core.
-    if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
-
-    self.risk_ratio_core(
-        registry,
-        read_price_unsafe<BaseAsset>(base_oracle, registry),
-        read_price_unsafe<QuoteAsset>(quote_oracle, registry),
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
 // === Public Functions - Read Only ===
@@ -762,46 +616,34 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     (base_debt, quote_debt)
 }
 
-/// Returns comprehensive state information for a margin manager.
-/// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset,
-///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
-///          quote_pyth_price, quote_pyth_decimals, current_price,
-///          lowest_trigger_above_price, highest_trigger_below_price)
-/// Twin: `margin_manager_upgraded::manager_state`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::manager_state`.
+///
+/// Legacy-Pyth entry.
 public fun manager_state<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    clock: &Clock,
+    _self: &MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _clock: &Clock,
 ): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8, u64, u64, u64) {
-    self.manager_state_core(
-        registry,
-        read_price_unsafe<BaseAsset>(base_oracle, registry),
-        read_price_unsafe<QuoteAsset>(quote_oracle, registry),
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
-/// Returns comprehensive state information for multiple margin managers.
-/// Same as manager_state but takes a vector and returns vectors of all values.
-/// All managers must be of the same type.
-/// Twin: `margin_manager_upgraded::manager_states`. Edit both.
+/// RETIRED. Use `margin_manager_upgraded::manager_states`.
+///
+/// Legacy-Pyth entry.
 public fun manager_states<BaseAsset, QuoteAsset>(
-    margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    clock: &Clock,
+    _margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _clock: &Clock,
 ): (
     vector<ID>,
     vector<ID>,
@@ -818,16 +660,7 @@ public fun manager_states<BaseAsset, QuoteAsset>(
     vector<u64>,
     vector<u64>,
 ) {
-    manager_states_core<BaseAsset, QuoteAsset>(
-        margin_managers,
-        registry,
-        read_price_unsafe<BaseAsset>(base_oracle, registry),
-        read_price_unsafe<QuoteAsset>(quote_oracle, registry),
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    )
+    abort EDeprecatedUseUpgradedPyth
 }
 
 public fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
@@ -1400,10 +1233,12 @@ fun collect_triggered_orders<BaseAsset, QuoteAsset>(
 }
 
 /// Places the triggered conditional orders, routing each to its outcome bucket
-/// (executed / expired / insufficient-funds / out-of-bounds). Shared by the v2
-/// and v3 executors; the solvency gate and any deleveraging are applied by the
-/// caller. Returns whether any *market* order executed (the v3 executor repays
-/// only then).
+/// (executed / expired / insufficient-funds / out-of-bounds / below-liquidation).
+/// A market order that fills only in part is reduced to its remainder and stays
+/// queued, outside every bucket. Every placed order is pushed to `order_infos`.
+/// Shared by the v2 and v3 executors; the solvency gate and any deleveraging are
+/// applied by the caller. Returns whether any *market* order filled (the v3
+/// executor repays only then).
 fun place_triggered_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1420,6 +1255,7 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): bool {
+    let manager_id = self.id();
     let mut market_filled = false;
     let mut i = 0;
     while (i < orders.length() && order_infos.length() < max_orders_to_execute) {
@@ -1522,6 +1358,7 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
                 ctx,
             );
 
+            let mut partially_filled = false;
             if (!pending_order.is_limit_order()) {
                 // Self-match-aware safety net: the price-bound pre-check above
                 // simulated the fill against the full book, but a market order
@@ -1539,11 +1376,27 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
                         (is_bid && actual_price <= upper_bound) || (!is_bid && actual_price >= lower_bound),
                         EFillOutsidePriceBounds,
                     );
+                    market_filled = true;
                 };
-                market_filled = true;
+                // A market order is immediate-or-cancel, so whatever the book didn't
+                // fill is dropped. Keep the conditional order queued with that remainder,
+                // unless it is too small to place as a market order.
+                let remaining = pending_order.quantity() - executed;
+                if (remaining > 0 && pool.check_market_order_params(remaining)) {
+                    self
+                        .take_profit_stop_loss
+                        .reduce_partially_executed_order(
+                            manager_id,
+                            pool.id(),
+                            conditional_order_id,
+                            executed,
+                            clock,
+                        );
+                    partially_filled = true;
+                };
             };
             order_infos.push_back(order_info);
-            executed_ids.push_back(conditional_order_id);
+            if (!partially_filled) executed_ids.push_back(conditional_order_id);
         } else {
             if (pending_order.is_limit_order()) {
                 let expire_timestamp = *pending_order.expire_timestamp().borrow();
@@ -1563,9 +1416,12 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
     market_filled
 }
 
-/// Emits the outcome events and reconciles the conditional-order queue:
-/// insufficient-funds, out-of-bounds, and expired orders are cancelled (with
-/// their event); executed orders are removed. Shared by the v2 and v3 executors.
+/// Emits the outcome events and reconciles the conditional-order queue: expired
+/// and below-liquidation orders are cancelled (with their event), and executed
+/// orders are removed. Insufficient-funds and out-of-bounds orders emit their
+/// event and stay queued. Both outcomes depend on the book, the stored price or
+/// the manager's balance at execution time, which can change or recover, so they
+/// are retried rather than treated as terminal. Shared by the v2 and v3 executors.
 fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool_id: ID,
@@ -1591,8 +1447,6 @@ fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
     });
 
     let mut cancelled_ids = expired_ids;
-    cancelled_ids.append(insufficient_funds_ids);
-    cancelled_ids.append(out_of_bounds_ids);
     cancelled_ids.append(below_liquidation_ids);
     cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
@@ -1650,8 +1504,9 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
         ctx,
     );
 
+    // Every placed order, including a partial fill that stays queued, can move the ratio.
     if (
-        !executed_ids.is_empty()
+        !order_infos.is_empty()
         && (self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0)
     ) {
         let risk_ratio_after = self.risk_ratio_core(
@@ -1761,7 +1616,8 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
         };
     };
 
-    if (has_debt && !executed_ids.is_empty()) {
+    // Every placed order, including a partial fill that stays queued, can move the ratio.
+    if (has_debt && !order_infos.is_empty()) {
         let risk_ratio_after = self.risk_ratio_core(
             registry,
             base_reading,
