@@ -12,9 +12,10 @@ paths:
 `scripts/` holds only the **protocol package-upgrade** transactions and a couple of SDK examples:
 
 - `scripts/transactions/mainPackageUpgrade.ts`, `marginPackageUpgrade.ts`, `vaultPackageUpgrade.ts`, `predictPackageUpgrade.ts`, `sessionsPackageUpgrade.ts` — run `sui client upgrade` and serialize an unsigned upgrade tx to `tx/tx-data.txt` for the multisig. One script per package; each has a matching `transaction_type` option in `.github/workflows/deepbookv3-build-tx.yml`.
+- `scripts/transactions/mainPackageUpgradeEnableVersion.ts` — the core upgrade from `mainPackageUpgrade.ts` plus steps 2–3 of the core sequence below (`enable_version` for the new `CURRENT_VERSION`, then `update_pool_allowed_versions` on every pool) in one transaction, simulated before it writes `tx/tx-data.txt`. Its `transaction_type` is `Upgrade Protocol and Enable Version`. It refuses to build unless the UpgradeCap and the core `DeepbookAdminCap` are at one address, every registered pool is among the pools it found by type, and the bytes leave 4 KiB under `max_tx_size_bytes` for the multisig signature.
 - `scripts/transactions/serializeUnsignedUpgrade.ts` — shared `GAS_OBJECT` check and `execFileSync` argv invocation for those upgrade scripts.
 - `scripts/transactions/createPermissionlessPool.ts`, `deepbookMarketMaker.ts` — SDK usage examples.
-- `scripts/config/constants.ts` — the DeepBook core `upgradeCapID`.
+- `scripts/config/constants.ts` — the DeepBook core `upgradeCapID`, plus the core `adminCapID` and `registryID` that `mainPackageUpgradeEnableVersion.ts` spends.
 - `scripts/tx/` — output directory for serialized transaction bytes.
 
 The **mainnet multisig admin scripts** (create/disable pools, fund vaults, transfer funds, pool params, margin-pool ops, version enable/disable, MVR/package-registry setup) moved to the private **deepbook-services** repo under `multisig-txs/`, where reads go over gRPC. Build those there, not here.
@@ -39,7 +40,7 @@ Full sequence:
 2. `registry::enable_version(registry, N, admin_cap)` for the new `CURRENT_VERSION`.
 3. `pool::update_pool_allowed_versions(pool, registry)` for **every** pool — pools cache `allowed_versions` and never re-read the Registry, so an unrefreshed pool still rejects the new version. Permissionless, no admin cap.
 
-Steps 2–3 are multisig admin actions, now built from **deepbook-services** `multisig-txs/`: `enableVersion.ts` + `updateAllPoolAllowedVersions.ts` on mainnet, `enableTestnetVersionsAndPools.ts` on testnet (it enumerates pools via GraphQL — there is no testnet `pool_created` indexer — and chunks them across txs, since a single PTB over all ~117 pools is both a size and shared-object-congestion risk).
+When the UpgradeCap and the core `DeepbookAdminCap` sit at the same multisig, `mainPackageUpgradeEnableVersion.ts` builds steps 1–3 as one transaction, so the new package works on every pool that existed at build time as soon as it lands. Pool creation is permissionless, and a pool created between the build and execution copies the Registry's old set, so re-run step 3 on such pools and check every pool after execution. Otherwise steps 2–3 are separate multisig admin actions, built from **deepbook-services** `multisig-txs/`: `enableVersion.ts` + `updateAllPoolAllowedVersions.ts` on mainnet, `enableTestnetVersionsAndPools.ts` on testnet (it enumerates pools via GraphQL — there is no testnet `pool_created` indexer — and chunks them across txs, since a single PTB over all ~117 pools is both a size and shared-object-congestion risk).
 
 `enable_version`, `update_allowed_versions`, and `update_pool_allowed_versions` are all explicitly gate-exempt ("This function does not have version restrictions"), so there is no chicken-and-egg deadlock — you can call them from the newly-published package immediately.
 
