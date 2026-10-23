@@ -63,7 +63,7 @@ stateDiagram-v2
 - **Settlement and payout** are the terminal, irreversible transition. Anyone may call Predict's `try_settle`, which records the settlement price. Then anyone may call the companion's `settle_step`, which refunds any order still waiting and pays every Open record its full `quantity` if it won and zero otherwise.
 - **Settled sweep** deactivates a settled market from the pool's active set, returns free LP cash to idle, and materializes terminal profit.
 
-Before package version 4, mints and live redeems executed immediately and kept positions in the account. Those entrypoints now abort, while `redeem_settled` still pays any position an immediate mint left in an account. See [delayed execution](./concepts/delayed-execution.md) and [markets and positions](./concepts/markets-and-positions.md).
+Before package version 4, mints and live redeems executed immediately and kept positions in the account. Those entrypoints now abort. A queued fill stays in its market and is paid at settlement, so `redeem_settled`, the settled redeem of an account position, serves only positions from before the cutover, and package version 5 retires it. See [delayed execution](./concepts/delayed-execution.md) and [markets and positions](./concepts/markets-and-positions.md).
 
 ## Liquidity is asynchronous
 
@@ -77,8 +77,8 @@ These properties are designed in and hold by construction; their boundaries are 
 
 - **Cash always backs payouts.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its inventory-impact escrow. Surplus above that line is the only cash the pool may sweep. An expiry can always pay its winners.
 - **Monetary math rounds in the protocol's favor.** Payouts, early sells, and the per-expiry backing reserve use reserve-favoring rounding, so sub-unit dust accrues to the protocol rather than against its solvency. Reserve and payout reads derive from the same quantity atom, so a payout can never exceed the cash reserved to back it.
-- **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, and only a privileged operator can start a flush. A supplier can never over-mint and dilute incumbents, and the mark cannot be timed against a manipulated oracle.
-- **Live valuation is exact.** Each market's `current_nav` is the payout tree's boundary-linear walk (`Σ quantity × P(range)`), with no per-order correction needed, since every position is worth exactly its quantity times its range probability. See [risks](./risks.md).
+- **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, up to fixed-point dust, and only a privileged operator can start a flush. A supplier cannot over-mint and dilute incumbents beyond that dust, and the mark cannot be timed against a manipulated oracle.
+- **Live valuation is exact, up to fixed-point dust.** Each market's `current_nav` is the payout tree's boundary-linear walk (`Σ quantity × P(range)`), with no per-order correction needed, since every position is worth exactly its quantity times its range probability. See [risks](./risks.md).
 
 ## Where to go next
 

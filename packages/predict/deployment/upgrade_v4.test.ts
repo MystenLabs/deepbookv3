@@ -144,14 +144,14 @@ test("the rollout plan is ordered, and the cutover and reopen wait for their fla
     assert.deepEqual(permittedSteps({ cutover: false, reopen: true }), [...UPGRADE_STEPS.slice(0, 6), "unpause_trading"]);
 });
 
-test("the precheck requires paused trading, no freeze, and both floors below the cutover", () => {
+test("the precheck requires paused trading, no freeze, and both floors below the watermarks the bump sets", () => {
     const state = { versionWatermark: "1", tradingPaused: true, frozen: false };
     assert.doesNotThrow(() => assertPrecheckState(state, "1"));
-    assert.doesNotThrow(() => assertPrecheckState({ ...state, versionWatermark: "3" }, "2"));
+    assert.doesNotThrow(() => assertPrecheckState({ ...state, versionWatermark: "4" }, "3"));
     assert.throws(() => assertPrecheckState({ ...state, tradingPaused: false }, "1"), /not paused/);
     assert.throws(() => assertPrecheckState({ ...state, frozen: true }, "1"), /frozen/);
-    assert.throws(() => assertPrecheckState({ ...state, versionWatermark: "4" }, "1"), /already 4/);
-    assert.throws(() => assertPrecheckState(state, "3"), /Sessions' watermark is already 3/);
+    assert.throws(() => assertPrecheckState({ ...state, versionWatermark: "5" }, "1"), /already 5/);
+    assert.throws(() => assertPrecheckState(state, "4"), /Sessions' watermark is already 4/);
 
     // Later runs: trading stays paused until the reopen step, recorded or emitted and executed.
     const journal = { transactions: {} as Record<string, string>, emitted: {} as Record<string, never>, status: "running" as const };
