@@ -66,6 +66,7 @@ use deepbook_indexer::handlers::conditional_order_added_handler::ConditionalOrde
 use deepbook_indexer::handlers::conditional_order_cancelled_handler::ConditionalOrderCancelledHandler;
 use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
 use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
+use deepbook_indexer::handlers::conditional_order_partially_executed_handler::ConditionalOrderPartiallyExecutedHandler;
 
 use deepbook_indexer::{DeepbookEnv, TESTNET_REMOTE_STORE_URL};
 use deepbook_schema::MIGRATIONS;
@@ -446,6 +447,12 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(
                         ConditionalOrderInsufficientFundsHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderPartiallyExecutedHandler::new(env),
                         Default::default(),
                     )
                     .await?;
