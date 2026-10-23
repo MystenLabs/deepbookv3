@@ -131,9 +131,9 @@ public fun default_svi_m(): u64 { 10 * math::float_scaling!() }
 /// Default SVI `sigma` for live oracle test fixtures: 1e-3 in 1e9 fixed point.
 public fun default_svi_sigma(): u64 { 1_000_000 }
 
-/// Mirrors `pricing.move`'s private SVI sigma floor (1e-5) for tests that
-/// intentionally seed envelope-edge surfaces.
-public fun pricing_min_svi_sigma(): u64 { 10_000 }
+/// Mirrors `deepbook_predict_math::math`'s private SVI sigma floor (1e-7) for tests
+/// that intentionally seed envelope-edge surfaces.
+public fun pricing_min_svi_sigma(): u64 { 100 }
 
 /// Mirrors `pricing.move`'s private SVI input ceiling for tests that intentionally
 /// seed envelope-edge surfaces.

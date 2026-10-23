@@ -27,7 +27,7 @@
 /// strikes hit the normal CDF/PDF clamps and are EXACT (tolerance = 2-unit cushion).
 ///
 /// Block Scholes SSVI slices whose `sigma` sits below 1e-3, and synthetic surfaces at
-/// the relaxed bounds (`sigma` at its 1e-5 floor, `a` past the former `|a| <= 100`
+/// the relaxed bounds (`sigma` at its 1e-7 floor, `a` past the former `|a| <= 100`
 /// cap), are checked against the generated `pricing_ssvi_reference_data` module
 /// (`tests/helper/reference/generate_ssvi_reference.py`) twice: at each slice's real
 /// forward, quoting the forward, where the contract's log-moneyness is exactly zero
@@ -50,6 +50,7 @@ use deepbook_predict::{
 use fixed_math::math;
 use std::unit_test::assert_eq;
 
+const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
 const SKEW_CLAMP_SVI_A: u64 = 1;
 const SKEW_CLAMP_SVI_B: u64 = 100_000_000_000;
 const SKEW_CLAMP_RHO_UNIT: u64 = 1_000_000_000;
@@ -179,6 +180,23 @@ fun short_dated_slice_with_the_smallest_sigma_prices_to_true_math() {
     run_ssvi_slice(ssvi::smallest_sigma_slice());
 }
 
+/// The SVI store's admin-set model chooses which signed surface Predict reads, not how it prices:
+/// the same slice signed under `SVI_REGIME` after the switch prices to the same true-math reference.
+#[test]
+fun short_dated_slice_signed_under_a_switched_model_prices_to_true_math() {
+    let s = ssvi::smallest_sigma_slice();
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.set_bs_svi_model_bundle(&mut oracle, SVI_REGIME_MODEL.to_string());
+    seed_ssvi_slice(&mut fx, &mut oracle, s, ssvi::spot(s), ssvi::forward(s));
+
+    assert_eq!(oracle.bs().svi().svi_model(), SVI_REGIME_MODEL.to_string());
+    assert_ssvi_points(&mut fx, &oracle, ssvi::points(s));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 /// `a` is negative and the rounded analytical minimum total variance is one raw
 /// unit, the smallest the load gate admits and the tightest margin in the backfill.
 #[test]
@@ -205,15 +223,15 @@ fun sub_hour_slice_the_1e9_root_mispriced_prices_to_true_math() {
     run_ssvi_slice(ssvi::sub_hour_root_miss_slice());
 }
 
-/// `sigma` exactly at the 1e-5 floor with the smile's vertex at the forward: the
+/// `sigma` exactly at the 1e-7 floor with the smile's vertex at the forward: the
 /// former 1e9 root was zero here, so the skew slope's division aborted.
 #[test]
 fun surface_at_the_sigma_floor_prices_at_its_vertex() {
     run_ssvi_slice(ssvi::floor_vertex_slice());
 }
 
-/// `k - m == -sigma` at the floor, so both squares under the root are a tenth of
-/// a raw unit at 1e9 and only the 1e18 input represents either; the former root
+/// `k - m == -sigma` at the floor, so both squares under the root are a
+/// hundred-thousandth of a raw unit at 1e9 and only the 1e18 input represents either; the former root
 /// was zero and the wing term went negative.
 #[test]
 fun surface_at_the_sigma_floor_prices_one_width_from_its_vertex() {

@@ -311,13 +311,13 @@ export const CADENCES: readonly CadenceSpec[] = [
 ] as const;
 
 // A fresh Sessions publish starts its watermark at `session_config::current_version!()`.
-export const EXPECTED_SESSIONS_VERSION_WATERMARK = "3";
+export const EXPECTED_SESSIONS_VERSION_WATERMARK = "4";
 
 // The OrderDesk as `desk`'s `init` creates it: the launch policy
 // (`delayed_execution_config::new`) and the floor at the companion's `current_version!()`.
 // The deployment sets no policy, so the audit requires exactly these values.
 export const EXPECTED_ORDER_DESK: OrderDeskRecord = {
-    versionWatermark: "1",
+    versionWatermark: "2",
     policy: {
         delayMs: "800",
         stallTimeoutMs: "5000",
@@ -363,7 +363,7 @@ export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     expiryFeeMaxMultiplier: "1000000000",
     // A fresh publish starts the watermark at `constants::current_version!()`,
     // which is past the delayed-execution cutover: only queued trading is open.
-    versionWatermark: "4",
+    versionWatermark: "5",
     tradingPaused: false,
     frozen: false,
     valuationInProgress: false,
