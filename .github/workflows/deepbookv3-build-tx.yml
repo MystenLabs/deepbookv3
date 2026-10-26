@@ -15,6 +15,7 @@ on:
           - Upgrade Protocol
           - Upgrade Protocol and Enable Version
           - Upgrade Margin Protocol
+          - Upgrade Margin Protocol and Enable Version
           - Upgrade Vault Protocol
           - Upgrade Predict Protocol
           - Upgrade Sessions Protocol
@@ -118,6 +119,20 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgrade.ts
+
+      # Upgrades margin and, in the same transaction, enables the new MARGIN_VERSION
+      # on the MarginRegistry. The margin UpgradeCap, the MarginAdminCap and the gas
+      # coin must share an owner, and the build must link the newest core package.
+      - name: Upgrade Margin Protocol and Enable Version
+        if: ${{ inputs.transaction_type == 'Upgrade Margin Protocol and Enable Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgradeEnableVersion.ts
 
       - name: Upgrade Vault Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Vault Protocol' }}
