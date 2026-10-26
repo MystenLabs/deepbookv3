@@ -13,9 +13,11 @@ paths:
 
 - `scripts/transactions/mainPackageUpgrade.ts`, `marginPackageUpgrade.ts`, `vaultPackageUpgrade.ts`, `predictPackageUpgrade.ts`, `sessionsPackageUpgrade.ts` — run `sui client upgrade` and serialize an unsigned upgrade tx to `tx/tx-data.txt` for the multisig. One script per package; each has a matching `transaction_type` option in `.github/workflows/deepbookv3-build-tx.yml`.
 - `scripts/transactions/mainPackageUpgradeEnableVersion.ts` — the core upgrade from `mainPackageUpgrade.ts` plus steps 2–3 of the core sequence below (`enable_version` for the new `CURRENT_VERSION`, then `update_pool_allowed_versions` on every pool) in one transaction, simulated before it writes `tx/tx-data.txt`. Its `transaction_type` is `Upgrade Protocol and Enable Version`. It refuses to build unless the UpgradeCap and the core `DeepbookAdminCap` are at one address, every registered pool is among the pools it found by type, and the bytes leave 4 KiB under `max_tx_size_bytes` for the multisig signature.
+- `scripts/transactions/marginPackageUpgradeEnableVersion.ts` — the margin upgrade plus `margin_registry::enable_version` for the new `MARGIN_VERSION` in one transaction, simulated before it writes `tx/tx-data.txt`. Its `transaction_type` is `Upgrade Margin Protocol and Enable Version`. It refuses to build unless the margin UpgradeCap and the `MarginAdminCap` are at one address, the build links the newest core package on chain, and the bytes leave 4 KiB under `max_tx_size_bytes`.
+- `scripts/transactions/upgradeAndEnableVersion.ts` — what the two enable-version scripts share: the checked `sui client upgrade` commands, the cap-owner check, the version read, and the size check, simulation and write.
 - `scripts/transactions/serializeUnsignedUpgrade.ts` — shared `GAS_OBJECT` check and `execFileSync` argv invocation for those upgrade scripts.
 - `scripts/transactions/createPermissionlessPool.ts`, `deepbookMarketMaker.ts` — SDK usage examples.
-- `scripts/config/constants.ts` — the DeepBook core `upgradeCapID`, plus the core `adminCapID` and `registryID` that `mainPackageUpgradeEnableVersion.ts` spends.
+- `scripts/config/constants.ts` — the DeepBook core `upgradeCapID`, the core `adminCapID` and `registryID` that `mainPackageUpgradeEnableVersion.ts` spends, and the margin `marginUpgradeCapID`, `marginAdminCapID` and `marginRegistryID` that `marginPackageUpgradeEnableVersion.ts` spends.
 - `scripts/tx/` — output directory for serialized transaction bytes.
 
 The **mainnet multisig admin scripts** (create/disable pools, fund vaults, transfer funds, pool params, margin-pool ops, version enable/disable, MVR/package-registry setup) moved to the private **deepbook-services** repo under `multisig-txs/`, where reads go over gRPC. Build those there, not here.
@@ -48,6 +50,11 @@ Gotchas:
 - `enable_version` asserts the version is **not** already present (`EVersionAlreadyEnabled`), so only pass missing versions. Read the live set first: `Registry.inner` is a `Versioned` whose UID is *not* a top-level object (GraphQL `object(address:)` returns null) — read it with `sui client dynamic-field <Registry.inner.id>` and decode the `Field<u64, RegistryInner>` BCS (`allowed_versions` is the first field; same for `PoolInner`).
 - Keep testnet's set equal to mainnet's. Enable the version the *previous* package reports too, or you brick the still-referenced old package. As of 2026-07, both are `{1,2,3,4,5,6,8}`.
 - **7 was never a `CURRENT_VERSION`** — the constant went 6 → 8 (`1ba89515` → `43c3416d`). `ee85e213` ("bump core to v7") was a *package* version, not the gate constant. Don't "fill the gap" by enabling 7; mainnet skips it on purpose.
+
+## Upgrading deepbook margin: enable `MARGIN_VERSION` in the same transaction
+Every gated margin entrypoint asserts that `margin_constants::MARGIN_VERSION` is in the `MarginRegistry`'s allowed set (`margin_registry::load_inner`), so a margin upgrade also needs `margin_registry::enable_version` for the new version. Margin pools and managers read the registry's set instead of caching it, so there is no sweep. `marginPackageUpgradeEnableVersion.ts` builds both as one transaction.
+
+Margin calls core through the core package it links, which `packages/deepbook/Published.toml` decides at build time. A margin package linked to an older core stops working once that core version is disabled, so record a core upgrade in `Published.toml` before building margin. The script refuses a build that doesn't link the newest core package.
 
 ## Move Abort Errors
 Format: `MoveAbort(MoveLocation { module: ModuleId { address: ..., name: "module_name" }, function: N, instruction: M }, ERROR_CODE)`
