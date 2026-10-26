@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync } from "fs";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction } from "@mysten/sui/transactions";
-import { toBase64 } from "@mysten/sui/utils";
+import { normalizeSuiAddress, toBase64 } from "@mysten/sui/utils";
 import { adminCapID, registryID, upgradeCapID } from "../config/constants.js";
 import { serializeUnsignedUpgrade } from "./serializeUnsignedUpgrade.js";
 
@@ -23,12 +23,22 @@ import { serializeUnsignedUpgrade } from "./serializeUnsignedUpgrade.js";
 //
 // One sender signs the whole transaction, so the UpgradeCap, the DeepbookAdminCap
 // and the gas coin must share an owner.
+//
+// The pool sweep covers the pools that exist when the transaction is built. Pool
+// creation is permissionless, and a pool created before the transaction executes
+// copies the Registry's set without the new version, so sweep and check every
+// pool again after execution.
 
 const network = "mainnet";
 
 // The fullnode the workflow's sui CLI env points at.
 const GRPC_URL = "https://fullnode.mainnet.sui.io:443";
 const GRAPHQL_URL = "https://graphql.mainnet.sui.io/graphql";
+
+// Sui caps the signed transaction, signatures included, at max_tx_size_bytes, and
+// a simulation does not count the multisig signature. A 4-of-9 multisig signature
+// is under 1 KiB.
+const SIGNATURE_RESERVE_BYTES = 4 * 1024;
 
 const client = new SuiGrpcClient({ network, baseUrl: GRPC_URL });
 
@@ -90,6 +100,33 @@ const readRegistryInner = async (registryId: string): Promise<any> => {
     );
   }
   return (await readJson(dynamicFields[0].fieldId))?.value;
+};
+
+// The pool ID of every entry in the Registry's `pools` Bag.
+const listRegisteredPoolIds = async (bagId: string): Promise<string[]> => {
+  const fieldIds: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await client.core.listDynamicFields({
+      parentId: bagId,
+      cursor,
+    });
+    fieldIds.push(...page.dynamicFields.map((field) => field.fieldId));
+    cursor = page.hasNextPage ? page.cursor : null;
+  } while (cursor);
+
+  const ids: string[] = [];
+  for (let i = 0; i < fieldIds.length; i += 50) {
+    const { objects } = await client.core.getObjects({
+      objectIds: fieldIds.slice(i, i + 50),
+      include: { json: true },
+    });
+    for (const object of objects) {
+      if (object instanceof Error) throw object;
+      ids.push(normalizeSuiAddress((object.json as any).value));
+    }
+  }
+  return ids;
 };
 
 // Split the type arguments of `Pool<Base, Quote>`, respecting nested generics.
@@ -204,17 +241,26 @@ const mainPackageUpgradeEnableVersion = async () => {
   ).object.type;
   const originalId = registryType.split("::")[0];
   const pools = await listPools(originalId);
-  // A lower bound on the enumeration: every registered pool is a Pool object.
-  const registered = Number(inner?.pools?.size ?? 0);
-  if (pools.length < registered) {
+  // Every registered pool must be in the enumeration. Comparing counts is not
+  // enough, since the unregistered pools could hide a registered one it missed.
+  const registered = await listRegisteredPoolIds(inner?.pools?.id);
+  if (registered.length !== Number(inner?.pools?.size)) {
     throw new Error(
-      `found ${pools.length} pools but the Registry lists ${registered}. ` +
-        `The pool enumeration is incomplete`,
+      `read ${registered.length} Registry pool entries, but its Bag holds ` +
+        `${inner?.pools?.size}`,
+    );
+  }
+  const found = new Set(pools.map((pool) => normalizeSuiAddress(pool.id)));
+  const missing = registered.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `the pool enumeration misses ${missing.length} registered pool(s): ` +
+        missing.join(", "),
     );
   }
   console.log(
     `updating allowed versions on ${pools.length} pools ` +
-      `(${registered} registered)`,
+      `(all ${registered.length} registered pools among them)`,
   );
   for (const pool of pools) {
     tx.moveCall({
@@ -230,6 +276,21 @@ const mainPackageUpgradeEnableVersion = async () => {
   tx.setGasBudget(3_000_000_000);
 
   const bytes = await tx.build({ client });
+  const maxTxBytes = Number(
+    (
+      await gql(
+        `{ protocolConfigs { config(key: "max_tx_size_bytes") { value } } }`,
+      )
+    ).protocolConfigs.config.value,
+  );
+  if (bytes.length + SIGNATURE_RESERVE_BYTES > maxTxBytes) {
+    throw new Error(
+      `the transaction is ${bytes.length} bytes, too close to the ` +
+        `${maxTxBytes}-byte limit to leave room for the multisig signature`,
+    );
+  }
+  console.log(`transaction size: ${bytes.length} of ${maxTxBytes} bytes`);
+
   const simulation = await client.core.simulateTransaction({
     transaction: bytes,
     include: { effects: true },
@@ -250,6 +311,12 @@ const mainPackageUpgradeEnableVersion = async () => {
 
   writeFileSync(txFilePath, toBase64(bytes));
   console.log("Upgrade and enable-version transaction saved to tx-data.txt");
+  console.log(
+    `REQUIRED after execution: a pool created before this transaction ` +
+      `executes is not in it and does not allow ${version}. Run ` +
+      `pool::update_pool_allowed_versions on every such pool, then check that ` +
+      `every pool allows ${version}.`,
+  );
 };
 
 mainPackageUpgradeEnableVersion().catch((error: any) => {
