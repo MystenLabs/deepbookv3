@@ -74,6 +74,17 @@ public struct ConditionalOrderExecuted has copy, drop {
     timestamp: u64,
 }
 
+/// Emitted when a triggered market order fills only in part. The order stays queued, and
+/// `conditional_order` carries its unfilled quantity.
+public struct ConditionalOrderPartiallyExecuted has copy, drop {
+    manager_id: ID,
+    pool_id: ID,
+    conditional_order_id: u64,
+    conditional_order: ConditionalOrder,
+    executed_quantity: u64,
+    timestamp: u64,
+}
+
 public struct ConditionalOrderInsufficientFunds has copy, drop {
     manager_id: ID,
     conditional_order_id: u64,
@@ -448,6 +459,30 @@ public(package) fun remove_executed_conditional_orders(
     });
 }
 
+/// Reduces a partially filled order by `executed_quantity` and leaves it queued. Its trigger
+/// doesn't change, so neither does its place in the sorted vectors.
+public(package) fun reduce_partially_executed_order(
+    self: &mut TakeProfitStopLoss,
+    manager_id: ID,
+    pool_id: ID,
+    conditional_order_id: u64,
+    executed_quantity: u64,
+    clock: &Clock,
+) {
+    let conditional_order = self.borrow_order_mut(conditional_order_id);
+    let pending_order = &mut conditional_order.pending_order;
+    pending_order.quantity = pending_order.quantity - executed_quantity;
+
+    event::emit(ConditionalOrderPartiallyExecuted {
+        manager_id,
+        pool_id,
+        conditional_order_id,
+        conditional_order: *conditional_order,
+        executed_quantity,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
 public(package) fun emit_insufficient_funds_event(
     self: &TakeProfitStopLoss,
     manager_id: ID,
@@ -510,6 +545,23 @@ public(package) fun trigger_below(self: &TakeProfitStopLoss): &vector<Conditiona
 /// Returns reference to trigger_above vector (sorted low to high by trigger price)
 public(package) fun trigger_above(self: &TakeProfitStopLoss): &vector<ConditionalOrder> {
     &self.trigger_above
+}
+
+/// Borrow an order by ID from either vector. Aborts if neither holds it.
+fun borrow_order_mut(
+    self: &mut TakeProfitStopLoss,
+    conditional_order_id: u64,
+): &mut ConditionalOrder {
+    let below = self
+        .trigger_below
+        .find_index!(|order| order.conditional_order_id == conditional_order_id);
+    if (below.is_some()) return &mut self.trigger_below[below.destroy_some()];
+
+    let above = self
+        .trigger_above
+        .find_index!(|order| order.conditional_order_id == conditional_order_id);
+    assert!(above.is_some(), EConditionalOrderNotFound);
+    &mut self.trigger_above[above.destroy_some()]
 }
 
 /// Find and remove an order by ID from either vector
