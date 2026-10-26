@@ -18,6 +18,9 @@ on:
           - Upgrade Margin Protocol and Enable Version
           - Upgrade Vault Protocol
           - Upgrade Predict Protocol
+          - Upgrade Propbook Protocol
+          - Upgrade Predict Math Protocol
+          - Upgrade Predict Orders Protocol
           - Upgrade Sessions Protocol
       sui_tools_image:
         description: "image reference of sui_tools"
@@ -155,6 +158,45 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/predictPackageUpgrade.ts
+
+      # Upgrade only: no version enable or watermark change. Predict, predict_orders and
+      # sessions link propbook, so commit its publication record before building them.
+      - name: Upgrade Propbook Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Propbook Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/propbookPackageUpgrade.ts
+
+      # Upgrade only. Predict and predict_orders link predict_math, so commit its
+      # publication record before building them.
+      - name: Upgrade Predict Math Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Predict Math Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/predictMathPackageUpgrade.ts
+
+      # Upgrade only. predict_orders links the predict, predict_math and propbook packages
+      # their Published.toml files record, so commit those records before building this one.
+      - name: Upgrade Predict Orders Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Predict Orders Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/predictOrdersPackageUpgrade.ts
 
       # Sessions links against the Predict package that packages/predict/Published.toml
       # records, so upgrade Predict and commit that record before building this one.
