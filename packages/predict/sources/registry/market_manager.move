@@ -68,8 +68,9 @@ public struct DeployableMarket has copy, drop {
 
 /// Stored deployment policy and watermarks for one Propbook underlying.
 public struct UnderlyingMarketConfig has copy, drop, store {
-    /// Deployment config indexed by cadence ID. Rows past its length (cadences added
-    /// after the underlying was registered) are disabled until the admin sets them.
+    /// Deployment config indexed by cadence ID. Rows past its length are disabled; the
+    /// vector grows past the six built-ins only when an added cadence is set or
+    /// created, because package versions before the cadence table abort on longer rows.
     cadences: vector<CadenceConfig>,
     /// Highest deployed expiry timestamp indexed by cadence ID; missing rows are 0.
     last_deployed_expiries: vector<u64>,
@@ -281,11 +282,7 @@ public(package) fun init_cash(deployable: &DeployableMarket): u64 {
     deployable.cadence.initial_expiry_cash
 }
 
-public(package) fun register_underlying(
-    manager: &mut MarketManager,
-    periods: &vector<u64>,
-    propbook_underlying_id: u32,
-) {
+public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {
     assert!(
         !manager.underlying_configs.contains(propbook_underlying_id),
         EUnderlyingAlreadyRegistered,
@@ -295,16 +292,14 @@ public(package) fun register_underlying(
         .add(
             propbook_underlying_id,
             UnderlyingMarketConfig {
-                cadences: vector::tabulate!(periods.length(), |_| cad_disabled()),
-                last_deployed_expiries: vector::tabulate!(periods.length(), |_| 0),
+                cadences: vector::tabulate!(base_periods().length(), |_| cad_disabled()),
+                last_deployed_expiries: vector::tabulate!(base_periods().length(), |_| 0),
             },
         );
 }
 
 /// Set one underlying's terms for one cadence. The sum of the underlying's enabled
-/// windows may not exceed `constants::max_live_expiry_markets`: each enabled cadence
-/// keeps at most `window_size` markets live, and the pool refuses to register a live
-/// market past that cap.
+/// windows may not rise above `constants::max_live_expiry_markets` (see `win_sum_ok`).
 public(package) fun set_template_cadence_config(
     manager: &mut MarketManager,
     periods: &vector<u64>,
@@ -326,11 +321,10 @@ public(package) fun set_template_cadence_config(
     chk_cadence(&config);
     let cadence_index = cad_index(periods, cadence_id);
     let underlying = manager.und_cfg_mut(propbook_underlying_id);
-    underlying.pad_rows(periods.length());
+    let old_sum = underlying.win_sum();
+    underlying.pad_rows(cadence_index + 1);
     *&mut underlying.cadences[cadence_index] = config;
-    let mut window_sum = 0;
-    underlying.cadences.do_ref!(|cadence| window_sum = window_sum + cadence.window_size);
-    assert!(window_sum <= constants::max_live_expiry_markets!(), ECadenceWindowBudgetExceeded);
+    assert!(win_sum_ok(old_sum, underlying.win_sum()), ECadenceWindowBudgetExceeded);
 }
 
 public(package) fun note_expiry(
@@ -353,8 +347,18 @@ public(package) fun note_expiry(
     assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
     manager.market_ids.add(key, expiry_market_id);
     let underlying = manager.und_cfg_mut(propbook_underlying_id);
-    underlying.pad_rows(periods.length());
+    underlying.pad_rows(cadence_index + 1);
     *&mut underlying.last_deployed_expiries[cadence_index] = expiry;
+}
+
+/// Whether an underlying's enabled-window sum may move from `old_sum` to `new_sum`:
+/// it stays within `constants::max_live_expiry_markets` or does not grow. Each enabled
+/// cadence keeps at most `window_size` markets live and the pool refuses to register
+/// a live market past the cap, so this bounds steady-state creation; it does not count
+/// markets an earlier, larger window already created. A sum already over the cap (set
+/// before this check existed) may only shrink or stay.
+public(package) fun win_sum_ok(old_sum: u64, new_sum: u64): bool {
+    new_sum <= constants::max_live_expiry_markets!() || new_sum <= old_sum
 }
 
 // === Private Functions ===
@@ -398,8 +402,14 @@ fun mark_at(underlying: &UnderlyingMarketConfig, cadence_index: u64): u64 {
     } else 0
 }
 
+fun win_sum(underlying: &UnderlyingMarketConfig): u64 {
+    let mut sum = 0;
+    underlying.cadences.do_ref!(|cadence| sum = sum + cadence.window_size);
+    sum
+}
+
 /// Extend an underlying's rows to `count` cadences, new rows disabled with a zero
-/// watermark. Rows written before a cadence was added are shorter than the table.
+/// watermark.
 fun pad_rows(underlying: &mut UnderlyingMarketConfig, count: u64) {
     while (underlying.cadences.length() < count) underlying.cadences.push_back(cad_disabled());
     while (underlying.last_deployed_expiries.length() < count) {
@@ -461,4 +471,13 @@ fun rank_overlap(
         cadence_index = cadence_index + 1;
     };
     false
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+/// Stored row count for one underlying. Package versions before the cadence table
+/// abort on rows past the six built-ins, so tests pin when rows grow.
+public fun stored_rows_for_testing(manager: &MarketManager, propbook_underlying_id: u32): u64 {
+    manager.und_config(propbook_underlying_id).cadences.length()
 }

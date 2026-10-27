@@ -694,7 +694,7 @@ fun record_expiry_creation_duplicate_expiry_aborts() {
     let periods = market_manager::base_periods();
     let expiry = constants::one_week_ms!();
 
-    manager.register_underlying(&periods, test_constants::propbook_underlying_id());
+    manager.register_underlying(test_constants::propbook_underlying_id());
     manager.note_expiry(
         &periods,
         test_constants::propbook_underlying_id(),

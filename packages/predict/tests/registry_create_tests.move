@@ -5,7 +5,7 @@
 module deepbook_predict::registry_create_tests;
 
 use deepbook_predict::{config_constants, config_events::CadenceAdded, market_manager, test_helpers};
-use std::unit_test::assert_eq;
+use std::unit_test::{assert_eq, destroy};
 use sui::event;
 
 const UNDERLYING_BTC: u32 = 100;
@@ -52,6 +52,10 @@ const FIRST_ADDED_CADENCE_ID: u8 = 6;
 const WINDOW_SIZE_TEN: u64 = 10;
 const WINDOW_SIZE_FOUR: u64 = 4;
 const WINDOW_SIZE_ONE: u64 = 1;
+// Window sums for `win_sum_ok`: the cap is 24 live markets.
+const WINDOW_CAP: u64 = 24;
+const LEGACY_OVER_CAP_SUM: u64 = 40;
+const REDUCED_OVER_CAP_SUM: u64 = 30;
 
 const EUnexpectedSuccess: u64 = 999;
 
@@ -788,6 +792,77 @@ fun set_cadence_config_window_budget_is_per_underlying() {
     assert_eq!(eth_one_minute.cadence_window_size(), WINDOW_SIZE_TEN);
 
     test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+// === stored rows and old package versions ===
+
+#[test]
+fun builtin_terms_after_add_cadence_keep_six_stored_rows() {
+    let mut ctx = tx_context::dummy();
+    let mut manager = market_manager::new(&mut ctx);
+    let mut periods = market_manager::base_periods();
+    manager.register_underlying(UNDERLYING_BTC);
+    let fifteen = market_manager::add_period(&mut periods, FIFTEEN_MINUTES_MS);
+
+    // Writing a built-in cadence leaves the rows at six, so package versions from
+    // before the cadence table keep creating built-in markets.
+    set_manager_window(
+        &mut manager,
+        &periods,
+        market_manager::cadence_one_minute!(),
+        WINDOW_SIZE_TWO,
+    );
+    assert_eq!(manager.stored_rows_for_testing(UNDERLYING_BTC), BUILTIN_CADENCE_COUNT);
+
+    // Enabling the added cadence is what extends them.
+    set_manager_window(&mut manager, &periods, fifteen, WINDOW_SIZE_TWO);
+    assert_eq!(manager.stored_rows_for_testing(UNDERLYING_BTC), BUILTIN_CADENCE_COUNT + 1);
+
+    destroy(manager);
+}
+
+#[test]
+fun register_underlying_after_add_cadence_stores_six_rows() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+    let mut ctx = tx_context::dummy();
+    let mut manager = market_manager::new(&mut ctx);
+
+    manager.register_underlying(UNDERLYING_BTC);
+
+    assert_eq!(manager.stored_rows_for_testing(UNDERLYING_BTC), BUILTIN_CADENCE_COUNT);
+    destroy(manager);
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+// === window budget predicate ===
+
+#[test]
+fun window_budget_allows_sums_up_to_the_cap_and_any_non_increase() {
+    assert!(market_manager::win_sum_ok(DISABLED_VALUE, WINDOW_CAP));
+    assert!(!market_manager::win_sum_ok(WINDOW_CAP, WINDOW_CAP + 1));
+    // A sum set over the cap before the check existed may shrink or stay, but not grow.
+    assert!(market_manager::win_sum_ok(LEGACY_OVER_CAP_SUM, REDUCED_OVER_CAP_SUM));
+    assert!(market_manager::win_sum_ok(LEGACY_OVER_CAP_SUM, LEGACY_OVER_CAP_SUM));
+    assert!(!market_manager::win_sum_ok(REDUCED_OVER_CAP_SUM, REDUCED_OVER_CAP_SUM + 1));
+}
+
+fun set_manager_window(
+    manager: &mut market_manager::MarketManager,
+    periods: &vector<u64>,
+    cadence_id: u8,
+    window_size: u64,
+) {
+    manager.set_template_cadence_config(
+        periods,
+        UNDERLYING_BTC,
+        cadence_id,
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        window_size,
+    );
 }
 
 fun set_btc_window(

@@ -235,8 +235,7 @@ public fun register_underlying(
     propbook_underlying_id: u32,
 ) {
     config.chk_version();
-    let periods = registry.cad_periods();
-    registry.market_manager.register_underlying(&periods, propbook_underlying_id);
+    registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
 /// Append a cadence with period `period_ms` to the cadence table and return its ID.
