@@ -302,7 +302,7 @@ sui move build --path packages/account --warnings-are-errors
 
 ## Tests
 
-Account has dedicated unit tests in `tests/account_tests.move`. The current Sui
+Account has dedicated unit tests in `tests/account_tests.move` and property-based random tests in `tests/random_tests.move` (see [`tests/README.md`](tests/README.md)). The current Sui
 framework lock exposes the empty-root accumulator test constructor, so stored
 balance deposit/withdraw custody tests run in-package.
 
