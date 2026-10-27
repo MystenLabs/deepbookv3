@@ -4,8 +4,9 @@
 #[test_only]
 module deepbook_predict::registry_create_tests;
 
-use deepbook_predict::{config_constants, market_manager, test_helpers};
+use deepbook_predict::{config_constants, config_events::CadenceAdded, market_manager, test_helpers};
 use std::unit_test::assert_eq;
+use sui::event;
 
 const UNDERLYING_BTC: u32 = 100;
 const UNDERLYING_ETH: u32 = 200;
@@ -31,6 +32,26 @@ const BELOW_EXPIRY_CASH_FLOOR: u64 = 999_999_999;
 const MINIMUM_EXPIRY_CASH: u64 = 1_000_000_000;
 const SMALL_EXPIRY_CASH: u64 = 2_000_000_000;
 const BELOW_INITIAL_EXPIRY_CASH: u64 = BTC_INITIAL_EXPIRY_CASH - 1;
+
+// Cadence periods in milliseconds, written out by hand (1 minute = 60,000 ms) so the
+// expected table does not reuse the contract's time constants.
+const ONE_MINUTE_MS: u64 = 60_000;
+const FIVE_MINUTES_MS: u64 = 300_000;
+const FIFTEEN_MINUTES_MS: u64 = 900_000;
+const ONE_HOUR_MS: u64 = 3_600_000;
+const ONE_DAY_MS: u64 = 86_400_000;
+const ONE_WEEK_MS: u64 = 604_800_000;
+const THIRTY_DAYS_MS: u64 = 2_592_000_000;
+// 365 days, the longest period `add_cadence` accepts.
+const ONE_YEAR_MS: u64 = 31_536_000_000;
+// 90 seconds: not a whole number of minutes.
+const NINETY_SECONDS_MS: u64 = 90_000;
+const BUILTIN_CADENCE_COUNT: u64 = 6;
+const MAX_CADENCES: u64 = 16;
+const FIRST_ADDED_CADENCE_ID: u8 = 6;
+const WINDOW_SIZE_TEN: u64 = 10;
+const WINDOW_SIZE_FOUR: u64 = 4;
+const WINDOW_SIZE_ONE: u64 = 1;
 
 const EUnexpectedSuccess: u64 = 999;
 
@@ -436,4 +457,367 @@ fun cadence_configs_unregistered_underlying_aborts() {
 
     let _configs = reg.cadence_configs(UNDERLYING_BTC);
     abort EUnexpectedSuccess
+}
+
+// === cadence table ===
+
+#[test]
+fun cadence_periods_start_with_the_six_builtins() {
+    let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    assert_eq!(
+        reg.cadence_periods(),
+        vector[
+            ONE_MINUTE_MS,
+            FIVE_MINUTES_MS,
+            ONE_HOUR_MS,
+            ONE_DAY_MS,
+            ONE_WEEK_MS,
+            THIRTY_DAYS_MS,
+        ],
+    );
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun add_cadence_appends_period_and_emits_event() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    let cadence_id = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+
+    assert_eq!(cadence_id, FIRST_ADDED_CADENCE_ID);
+    let periods = reg.cadence_periods();
+    assert_eq!(periods.length(), BUILTIN_CADENCE_COUNT + 1);
+    assert_eq!(periods[FIRST_ADDED_CADENCE_ID as u64], FIFTEEN_MINUTES_MS);
+    assert_eq!(periods[market_manager::cadence_five_minute!() as u64], FIVE_MINUTES_MS);
+    assert_eq!(event::events_by_type<CadenceAdded>().length(), 1);
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun add_cadence_extends_rows_of_an_existing_underlying_as_disabled() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+
+    let cadence_id = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+
+    let configs = reg.cadence_configs(UNDERLYING_BTC);
+    assert_eq!(configs.length(), BUILTIN_CADENCE_COUNT + 1);
+    configs.do_ref!(|cadence| assert_all_zero_disabled(cadence));
+    assert_all_zero_disabled(&reg.cadence_config(UNDERLYING_BTC, cadence_id));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun register_underlying_after_add_cadence_covers_the_whole_table() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+
+    let configs = reg.cadence_configs(UNDERLYING_BTC);
+    assert_eq!(configs.length(), BUILTIN_CADENCE_COUNT + 1);
+    configs.do_ref!(|cadence| assert_all_zero_disabled(cadence));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun set_cadence_config_on_added_cadence_round_trips() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    let cadence_id = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        cadence_id,
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_TWO,
+    );
+
+    let fifteen = &reg.cadence_configs(UNDERLYING_BTC)[cadence_id as u64];
+    assert!(fifteen.cadence_enabled());
+    assert_eq!(fifteen.cadence_tick_size(), BTC_TICK_SIZE);
+    assert_eq!(fifteen.cadence_admission_tick_size(), BTC_ADMISSION_TICK_SIZE);
+    assert_eq!(fifteen.cadence_max_expiry_allocation(), BTC_MAX_EXPIRY_ALLOCATION);
+    assert_eq!(fifteen.cadence_initial_expiry_cash(), BTC_INITIAL_EXPIRY_CASH);
+    assert_eq!(fifteen.cadence_window_size(), WINDOW_SIZE_TWO);
+    assert_all_zero_disabled(
+        &reg.cadence_config(UNDERLYING_BTC, market_manager::cadence_five_minute!()),
+    );
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = market_manager::EInvalidCadence)]
+fun set_cadence_config_id_past_the_table_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    let cadence_id = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        cadence_id + 1,
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_TWO,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun add_cadence_accepts_one_minute_multiples_up_to_one_year() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.add_cadence(&config, &admin_cap, 2 * ONE_MINUTE_MS);
+    reg.add_cadence(&config, &admin_cap, ONE_YEAR_MS);
+
+    let periods = reg.cadence_periods();
+    assert_eq!(periods[BUILTIN_CADENCE_COUNT], 2 * ONE_MINUTE_MS);
+    assert_eq!(periods[BUILTIN_CADENCE_COUNT + 1], ONE_YEAR_MS);
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = market_manager::EInvalidCadencePeriod)]
+fun add_cadence_zero_period_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.add_cadence(&config, &admin_cap, DISABLED_VALUE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_manager::EInvalidCadencePeriod)]
+fun add_cadence_period_off_the_minute_grid_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.add_cadence(&config, &admin_cap, NINETY_SECONDS_MS);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_manager::EInvalidCadencePeriod)]
+fun add_cadence_period_above_one_year_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.add_cadence(&config, &admin_cap, ONE_YEAR_MS + ONE_MINUTE_MS);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_manager::ECadencePeriodExists)]
+fun add_cadence_builtin_period_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.add_cadence(&config, &admin_cap, FIVE_MINUTES_MS);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_manager::ECadencePeriodExists)]
+fun add_cadence_same_period_twice_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+    reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun add_cadence_fills_the_table_to_sixteen() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    add_ten_cadences(&mut reg, &config, &admin_cap);
+
+    let periods = reg.cadence_periods();
+    assert_eq!(periods.length(), MAX_CADENCES);
+    assert_eq!(periods[MAX_CADENCES - 1], 12 * ONE_MINUTE_MS);
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = market_manager::ECadenceTableFull)]
+fun add_cadence_past_sixteen_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    add_ten_cadences(&mut reg, &config, &admin_cap);
+
+    reg.add_cadence(&config, &admin_cap, 13 * ONE_MINUTE_MS);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun set_cadence_config_windows_may_sum_to_the_live_market_cap() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+
+    // 10 + 10 + 4 = 24, the pool's live-market cap.
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_minute!(),
+        WINDOW_SIZE_TEN,
+    );
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_five_minute!(),
+        WINDOW_SIZE_TEN,
+    );
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_hour!(),
+        WINDOW_SIZE_FOUR,
+    );
+    // Re-setting a cadence replaces its window rather than adding to it.
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_hour!(),
+        WINDOW_SIZE_FOUR,
+    );
+
+    let configs = reg.cadence_configs(UNDERLYING_BTC);
+    assert_eq!(
+        configs[market_manager::cadence_one_minute!() as u64].cadence_window_size(),
+        WINDOW_SIZE_TEN,
+    );
+    assert_eq!(
+        configs[market_manager::cadence_five_minute!() as u64].cadence_window_size(),
+        WINDOW_SIZE_TEN,
+    );
+    assert_eq!(
+        configs[market_manager::cadence_one_hour!() as u64].cadence_window_size(),
+        WINDOW_SIZE_FOUR,
+    );
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = market_manager::ECadenceWindowBudgetExceeded)]
+fun set_cadence_config_windows_past_the_live_market_cap_abort() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_minute!(),
+        WINDOW_SIZE_TEN,
+    );
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_five_minute!(),
+        WINDOW_SIZE_TEN,
+    );
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_hour!(),
+        WINDOW_SIZE_FOUR,
+    );
+
+    // 24 + 1 = 25.
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_day!(),
+        WINDOW_SIZE_ONE,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun set_cadence_config_window_budget_is_per_underlying() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_ETH);
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_minute!(),
+        WINDOW_SIZE_TEN,
+    );
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_five_minute!(),
+        WINDOW_SIZE_TEN,
+    );
+    set_btc_window(
+        &mut reg,
+        &config,
+        &admin_cap,
+        market_manager::cadence_one_hour!(),
+        WINDOW_SIZE_FOUR,
+    );
+
+    // ETH's own sum starts at zero, so a full window on ETH is accepted.
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_ETH,
+        market_manager::cadence_one_minute!(),
+        ETH_TICK_SIZE,
+        ETH_ADMISSION_TICK_SIZE,
+        ETH_MAX_EXPIRY_ALLOCATION,
+        ETH_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_TEN,
+    );
+
+    let eth_one_minute = reg.cadence_config(UNDERLYING_ETH, market_manager::cadence_one_minute!());
+    assert_eq!(eth_one_minute.cadence_window_size(), WINDOW_SIZE_TEN);
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+fun set_btc_window(
+    reg: &mut deepbook_predict::registry::Registry,
+    config: &deepbook_predict::protocol_config::ProtocolConfig,
+    admin_cap: &deepbook_predict::admin::AdminCap,
+    cadence_id: u8,
+    window_size: u64,
+) {
+    reg.set_template_cadence_config(
+        config,
+        admin_cap,
+        UNDERLYING_BTC,
+        cadence_id,
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        window_size,
+    );
+}
+
+/// Add ten cadences, 2 to 12 minutes without the built-in 5 minutes, taking IDs
+/// 6 to 15 and filling the 16-entry table.
+fun add_ten_cadences(
+    reg: &mut deepbook_predict::registry::Registry,
+    config: &deepbook_predict::protocol_config::ProtocolConfig,
+    admin_cap: &deepbook_predict::admin::AdminCap,
+) {
+    vector[2, 3, 4, 6, 7, 8, 9, 10, 11, 12].do!(|minutes| {
+        reg.add_cadence(config, admin_cap, minutes * ONE_MINUTE_MS);
+    });
 }

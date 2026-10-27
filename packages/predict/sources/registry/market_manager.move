@@ -3,9 +3,11 @@
 
 /// Market identity and deployment cadence manager for Predict.
 ///
-/// `Registry` owns this state and delegates market admission to it. Fixed
-/// cadence IDs, periods, and rank order are upgrade-required. Underlying rows,
-/// cadence deployment terms, and per-underlying watermarks are stored here.
+/// `Registry` owns this state and delegates market admission to it. Cadence periods
+/// live in the registry's admin-extended cadence table and are passed in, indexed by
+/// cadence ID; underlying rows, cadence deployment terms, and per-underlying
+/// watermarks are stored here. When two enabled cadences can create the same expiry,
+/// the one with the longer period owns it.
 module deepbook_predict::market_manager;
 
 use deepbook_predict::{config_constants, constants};
@@ -22,6 +24,10 @@ const EInvalidDeploymentExpiry: u64 = 6;
 const EInvalidCadenceConfig: u64 = 7;
 const EPythFeedNotBoundToUnderlying: u64 = 8;
 const EBlockScholesStoresNotBoundToUnderlying: u64 = 9;
+const ECadenceTableFull: u64 = 10;
+const EInvalidCadencePeriod: u64 = 11;
+const ECadencePeriodExists: u64 = 12;
+const ECadenceWindowBudgetExceeded: u64 = 13;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size, allocation cap, and initial cash target are
@@ -62,31 +68,35 @@ public struct DeployableMarket has copy, drop {
 
 /// Stored deployment policy and watermarks for one Propbook underlying.
 public struct UnderlyingMarketConfig has copy, drop, store {
-    /// Deployment config indexed by cadence ID.
+    /// Deployment config indexed by cadence ID. Rows past its length (cadences added
+    /// after the underlying was registered) are disabled until the admin sets them.
     cadences: vector<CadenceConfig>,
-    /// Highest deployed expiry timestamp indexed by cadence ID.
+    /// Highest deployed expiry timestamp indexed by cadence ID; missing rows are 0.
     last_deployed_expiries: vector<u64>,
 }
 
 // === Public Macros ===
 
-/// Cadence ID for one-minute markets.
+/// Built-in cadence ID for one-minute markets.
 public macro fun cadence_one_minute(): u8 { 0 }
 
-/// Cadence ID for five-minute markets.
+/// Built-in cadence ID for five-minute markets.
 public macro fun cadence_five_minute(): u8 { 1 }
 
-/// Cadence ID for one-hour markets.
+/// Built-in cadence ID for one-hour markets.
 public macro fun cadence_one_hour(): u8 { 2 }
 
-/// Cadence ID for one-day markets.
+/// Built-in cadence ID for one-day markets.
 public macro fun cadence_one_day(): u8 { 3 }
 
-/// Cadence ID for one-week markets.
+/// Built-in cadence ID for one-week markets.
 public macro fun cadence_one_week(): u8 { 4 }
 
-/// Cadence ID for one-month markets.
+/// Built-in cadence ID for one-month (30-day) markets.
 public macro fun cadence_one_month(): u8 { 5 }
+
+/// Most cadences the table holds, bounding the slot-rule scan in `next_deploy`.
+macro fun max_cadences(): u64 { 16 }
 
 // === Public Functions ===
 
@@ -145,43 +155,47 @@ public(package) fun expiry_market_id(
 /// Return the stored deployment policy for one underlying/cadence.
 public(package) fun cadence_config(
     manager: &MarketManager,
+    periods: &vector<u64>,
     propbook_underlying_id: u32,
     cadence_id: u8,
 ): CadenceConfig {
-    let cadence_index = cad_index(cadence_id);
-    let cadence = &manager.und_config(propbook_underlying_id).cadences[cadence_index];
-    *cadence
+    let cadence_index = cad_index(periods, cadence_id);
+    manager.und_config(propbook_underlying_id).cad_at(cadence_index)
 }
 
-/// Return every stored deployment policy for one underlying, indexed by cadence ID.
+/// Return every deployment policy for one underlying, one entry per cadence in
+/// `periods` and indexed by cadence ID.
 public(package) fun cadence_configs(
     manager: &MarketManager,
+    periods: &vector<u64>,
     propbook_underlying_id: u32,
 ): vector<CadenceConfig> {
-    manager.und_config(propbook_underlying_id).cadences
+    let underlying = manager.und_config(propbook_underlying_id);
+    vector::tabulate!(periods.length(), |cadence_index| underlying.cad_at(cadence_index))
 }
 
 /// Return the next expiry and snapshotted cadence terms for an underlying/cadence.
 ///
 /// The candidate is the greater of the next watermark slot and the first future
-/// slot after the current clock time. Reserved higher-rank cadence slots and
+/// slot after the current clock time. Slots owned by a longer enabled cadence and
 /// already-created markets are skipped, and the selected expiry must still fit
 /// inside the cadence window.
 public(package) fun next_deploy(
     manager: &MarketManager,
+    periods: &vector<u64>,
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     cadence_id: u8,
     clock: &Clock,
 ): DeployableMarket {
-    let cadence_index = cad_index(cadence_id);
+    let cadence_index = cad_index(periods, cadence_id);
     let underlying = manager.und_config(propbook_underlying_id);
-    let cadence = &underlying.cadences[cadence_index];
+    let cadence = underlying.cad_at(cadence_index);
     assert!(cadence.window_size > 0, ECadenceDisabled);
 
     let now_ms = clock.timestamp_ms();
-    let period_ms = cad_period(cadence_id);
-    let watermark_candidate = underlying.last_deployed_expiries[cadence_index] + period_ms;
+    let period_ms = periods[cadence_index];
+    let watermark_candidate = underlying.mark_at(cadence_index) + period_ms;
     let next_future_candidate = ((now_ms / period_ms) + 1) * period_ms;
     let mut expiry = watermark_candidate.max(next_future_candidate);
     let window_end = now_ms + cadence.window_size * period_ms;
@@ -189,7 +203,7 @@ public(package) fun next_deploy(
     while (expiry <= window_end) {
         let key = MarketKey { propbook_underlying_id, expiry };
         if (
-            rank_overlap(underlying, cadence_id, expiry)
+            rank_overlap(underlying, periods, period_ms, expiry)
                 || manager.market_ids.contains(key)
         ) {
             expiry = expiry + period_ms;
@@ -207,10 +221,7 @@ public(package) fun next_deploy(
                 EBlockScholesStoresNotBoundToUnderlying,
             );
 
-            return DeployableMarket {
-                expiry,
-                cadence: *cadence,
-            }
+            return DeployableMarket { expiry, cadence }
         }
     };
 
@@ -229,21 +240,37 @@ public(package) fun admission_tick_size(deployable: &DeployableMarket): u64 {
     deployable.cadence.admission_tick_size
 }
 
-public(package) fun cad_period(cadence_id: u8): u64 {
-    if (cadence_id == cadence_one_minute!()) {
-        constants::one_minute_ms!()
-    } else if (cadence_id == cadence_five_minute!()) {
-        constants::five_minutes_ms!()
-    } else if (cadence_id == cadence_one_hour!()) {
-        constants::one_hour_ms!()
-    } else if (cadence_id == cadence_one_day!()) {
-        constants::one_day_ms!()
-    } else if (cadence_id == cadence_one_week!()) {
-        constants::one_week_ms!()
-    } else {
-        assert!(cadence_id == cadence_one_month!(), EInvalidCadence);
-        constants::one_month_ms!()
-    }
+public(package) fun cad_period(periods: &vector<u64>, cadence_id: u8): u64 {
+    periods[cad_index(periods, cadence_id)]
+}
+
+/// The cadence table every registry starts with: the six built-in cadences'
+/// periods, indexed by their built-in IDs.
+public(package) fun base_periods(): vector<u64> {
+    vector[
+        constants::one_minute_ms!(),
+        constants::five_minutes_ms!(),
+        constants::one_hour_ms!(),
+        constants::one_day_ms!(),
+        constants::one_week_ms!(),
+        constants::one_month_ms!(),
+    ]
+}
+
+/// Append a cadence period to the table and return its cadence ID. The period must
+/// be a positive whole number of resolution periods (the settlement grid), at most
+/// one year, and not already in the table, and the table must have room.
+public(package) fun add_period(periods: &mut vector<u64>, period_ms: u64): u8 {
+    assert!(
+        period_ms > 0
+            && period_ms % constants::resolution_period_ms!() == 0
+            && period_ms <= constants::one_year_ms!(),
+        EInvalidCadencePeriod,
+    );
+    assert!(!periods.contains(&period_ms), ECadencePeriodExists);
+    assert!(periods.length() < max_cadences!(), ECadenceTableFull);
+    periods.push_back(period_ms);
+    (periods.length() - 1) as u8
 }
 
 public(package) fun max_alloc(deployable: &DeployableMarket): u64 {
@@ -254,7 +281,11 @@ public(package) fun init_cash(deployable: &DeployableMarket): u64 {
     deployable.cadence.initial_expiry_cash
 }
 
-public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {
+public(package) fun register_underlying(
+    manager: &mut MarketManager,
+    periods: &vector<u64>,
+    propbook_underlying_id: u32,
+) {
     assert!(
         !manager.underlying_configs.contains(propbook_underlying_id),
         EUnderlyingAlreadyRegistered,
@@ -264,14 +295,19 @@ public(package) fun register_underlying(manager: &mut MarketManager, propbook_un
         .add(
             propbook_underlying_id,
             UnderlyingMarketConfig {
-                cadences: off_cadences(),
-                last_deployed_expiries: vector[0, 0, 0, 0, 0, 0],
+                cadences: vector::tabulate!(periods.length(), |_| cad_disabled()),
+                last_deployed_expiries: vector::tabulate!(periods.length(), |_| 0),
             },
         );
 }
 
+/// Set one underlying's terms for one cadence. The sum of the underlying's enabled
+/// windows may not exceed `constants::max_live_expiry_markets`: each enabled cadence
+/// keeps at most `window_size` markets live, and the pool refuses to register a live
+/// market past that cap.
 public(package) fun set_template_cadence_config(
     manager: &mut MarketManager,
+    periods: &vector<u64>,
     propbook_underlying_id: u32,
     cadence_id: u8,
     tick_size: u64,
@@ -288,35 +324,37 @@ public(package) fun set_template_cadence_config(
         window_size,
     };
     chk_cadence(&config);
-    let cadence_index = cad_index(cadence_id);
-    let cadence = &mut manager.und_cfg_mut(propbook_underlying_id).cadences[cadence_index];
-    *cadence = config;
+    let cadence_index = cad_index(periods, cadence_id);
+    let underlying = manager.und_cfg_mut(propbook_underlying_id);
+    underlying.pad_rows(periods.length());
+    *&mut underlying.cadences[cadence_index] = config;
+    let mut window_sum = 0;
+    underlying.cadences.do_ref!(|cadence| window_sum = window_sum + cadence.window_size);
+    assert!(window_sum <= constants::max_live_expiry_markets!(), ECadenceWindowBudgetExceeded);
 }
 
 public(package) fun note_expiry(
     manager: &mut MarketManager,
+    periods: &vector<u64>,
     propbook_underlying_id: u32,
     cadence_id: u8,
     expiry: u64,
     expiry_market_id: ID,
 ) {
-    let cadence_index = cad_index(cadence_id);
-    let period_ms = cad_period(cadence_id);
+    let cadence_index = cad_index(periods, cadence_id);
     // Preserve grid alignment and monotonic cadence watermarks at persistence.
-    assert!(expiry % period_ms == 0, EInvalidDeploymentExpiry);
+    assert!(expiry % periods[cadence_index] == 0, EInvalidDeploymentExpiry);
     assert!(
-        expiry > manager
-            .und_config(propbook_underlying_id)
-            .last_deployed_expiries[cadence_index],
+        expiry > manager.und_config(propbook_underlying_id).mark_at(cadence_index),
         EInvalidDeploymentExpiry,
     );
 
     let key = MarketKey { propbook_underlying_id, expiry };
     assert!(!manager.market_ids.contains(key), EMarketAlreadyCreated);
     manager.market_ids.add(key, expiry_market_id);
-    let watermark =
-        &mut manager.und_cfg_mut(propbook_underlying_id).last_deployed_expiries[cadence_index];
-    *watermark = expiry;
+    let underlying = manager.und_cfg_mut(propbook_underlying_id);
+    underlying.pad_rows(periods.length());
+    *&mut underlying.last_deployed_expiries[cadence_index] = expiry;
 }
 
 // === Private Functions ===
@@ -344,20 +382,29 @@ fun cad_disabled(): CadenceConfig {
     }
 }
 
-fun off_cadences(): vector<CadenceConfig> {
-    vector[
-        cad_disabled(),
-        cad_disabled(),
-        cad_disabled(),
-        cad_disabled(),
-        cad_disabled(),
-        cad_disabled(),
-    ]
+fun cad_index(periods: &vector<u64>, cadence_id: u8): u64 {
+    assert!((cadence_id as u64) < periods.length(), EInvalidCadence);
+    (cadence_id as u64)
 }
 
-fun cad_index(cadence_id: u8): u64 {
-    assert!(cadence_id <= cadence_one_month!(), EInvalidCadence);
-    (cadence_id as u64)
+fun cad_at(underlying: &UnderlyingMarketConfig, cadence_index: u64): CadenceConfig {
+    if (cadence_index < underlying.cadences.length()) underlying.cadences[cadence_index]
+    else cad_disabled()
+}
+
+fun mark_at(underlying: &UnderlyingMarketConfig, cadence_index: u64): u64 {
+    if (cadence_index < underlying.last_deployed_expiries.length()) {
+        underlying.last_deployed_expiries[cadence_index]
+    } else 0
+}
+
+/// Extend an underlying's rows to `count` cadences, new rows disabled with a zero
+/// watermark. Rows written before a cadence was added are shorter than the table.
+fun pad_rows(underlying: &mut UnderlyingMarketConfig, count: u64) {
+    while (underlying.cadences.length() < count) underlying.cadences.push_back(cad_disabled());
+    while (underlying.last_deployed_expiries.length() < count) {
+        underlying.last_deployed_expiries.push_back(0)
+    };
 }
 
 fun chk_cadence(config: &CadenceConfig) {
@@ -393,17 +440,25 @@ fun chk_cadence(config: &CadenceConfig) {
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 
-fun rank_overlap(underlying: &UnderlyingMarketConfig, cadence_id: u8, expiry: u64): bool {
-    let mut higher_cadence_id = cadence_id + 1;
-    while ((higher_cadence_id as u64) < underlying.cadences.length()) {
-        let higher_cadence = &underlying.cadences[cad_index(higher_cadence_id)];
+/// Whether an enabled cadence with a period longer than `period_ms` owns `expiry`,
+/// i.e. its period divides it. Rows past the underlying's stored length are disabled.
+fun rank_overlap(
+    underlying: &UnderlyingMarketConfig,
+    periods: &vector<u64>,
+    period_ms: u64,
+    expiry: u64,
+): bool {
+    let mut cadence_index = 0;
+    while (cadence_index < underlying.cadences.length()) {
+        let other_period_ms = periods[cadence_index];
         if (
-            higher_cadence.window_size > 0
-                && expiry % cad_period(higher_cadence_id) == 0
+            other_period_ms > period_ms
+                && underlying.cadences[cadence_index].window_size > 0
+                && expiry % other_period_ms == 0
         ) {
             return true
         };
-        higher_cadence_id = higher_cadence_id + 1;
+        cadence_index = cadence_index + 1;
     };
     false
 }
