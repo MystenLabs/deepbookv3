@@ -9,14 +9,16 @@ The protocol does not run a single continuous market. Instead, the `Registry` mi
 The `Registry` enforces uniqueness, admin approval, and cadence policy:
 
 - A Propbook underlying must be **admin-approved** before Predict can build markets on it: `register_underlying` records approval for that `propbook_underlying_id`. The `propbook` feed objects themselves are created permissionlessly in `propbook`; Propbook owns source IDs and canonical source-to-underlying bindings.
-- Admin configures each underlying's cadence with `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size`. A zeroed cadence is disabled; an enabled cadence creates the next missing expiry inside its window and snapshots the configured tick/allocation/cash-target terms into that market. When the market is registered with the pool, PLP caps the number of active pre-expiry markets that can require live NAV valuation in one flush.
+- Cadences are market lengths in the registry's cadence table, read with `cadence_periods`. The table starts with six built-in cadences (1 minute, 5 minutes, 1 hour, 1 day, 1 week, 30 days, IDs 0 to 5), and `add_cadence` appends another length, such as 15 or 20 minutes, without an upgrade. A length is a whole number of minutes up to one year, appears once, and never changes; the table holds at most 16 cadences.
+- Admin configures each underlying's cadence with `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and `window_size`. A zeroed cadence is disabled; an enabled cadence creates the next missing expiry inside its window and snapshots the configured tick/allocation/cash-target terms into that market. An underlying's enabled windows may sum to at most the pool's live-market cap, because each enabled cadence keeps up to `window_size` markets live; when a market is registered with the pool, PLP caps the number of active pre-expiry markets that can require live NAV valuation in one flush.
+- **A longer cadence owns a shared expiry.** Expiries sit on each cadence's grid of multiples of its period. When two enabled cadences on an underlying could create the same expiry, the cadence with the longer period owns it and the shorter one skips it, even while the owner has not created it yet. With 1-minute, 5-minute, and 15-minute cadences enabled, quarter hours go to 15 minutes, other 5-minute marks to 5 minutes, and every other minute to 1 minute.
 - **One `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair.** `create_and_share_expiry_market` aborts if the registry already holds a market for that underlying and expiry.
 
 ### How a market is created
 
-`create_and_share_expiry_market` performs the full setup atomically:
+`create_and_share_expiry_market` performs the full setup atomically. `create_and_share_expiry_market_at` does the same with one more input, the expiry the caller expects, and aborts unless the market manager selects exactly that expiry; a keeper that plans expiries off chain uses it so a stale view of the cadence table fails instead of creating an unplanned market.
 
-1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the registry's allowlist, the running package version must be allowed, global trading must be enabled, the underlying must be registered in Predict, and the requested cadence must be enabled. The market manager then scans forward from the cadence watermark/current-clock candidate, skips slots reserved for enabled higher-rank cadences, and requires the selected expiry to remain inside the cadence window and not already exist.
+1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the registry's allowlist, the running package version must be allowed, global trading must be enabled, the underlying must be registered in Predict, and the requested cadence must be enabled. The market manager then scans forward from the cadence watermark/current-clock candidate, skips slots owned by an enabled cadence with a longer period, and requires the selected expiry to remain inside the cadence window and not already exist.
 2. **Require current Propbook coverage.** The caller also passes Propbook's `OracleRegistry`; the registry asserts that Propbook has current canonical bindings for Pyth spot, BS spot, and the selected expiry's BS forward/SVI feeds for the supplied `propbook_underlying_id`. The market does **not** store those oracle object IDs.
 3. **Compute expiry and snapshot config.** The market manager picks the next missing expiry from the cadence watermark and current clock, then the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, stores `propbook_underlying_id`, and snapshots the cadence `tick_size`. Pool accounting snapshots the cadence `max_expiry_allocation` and `initial_expiry_cash`; the market also freezes `max_expiry_allocation` as the inventory-impact scale. Creation needs **no live spot** — strikes are absolute ticks, so there is no grid to center on a price.
 4. **Create, share, and register.** The `ExpiryMarket` is shared, registered with the pool vault as an active-expiry accounting row, and indexed by expiry in the registry.
@@ -25,9 +27,10 @@ The new `ExpiryMarket` starts with **zero USDC cash** and is **not mintable** un
 
 ```mermaid
 flowchart TD
+  Z["Admin (optional): add_cadence(period_ms)"] --> B
   A["Admin: register_underlying(underlying)"] --> B["Admin: set_template_cadence_config(underlying, tick_size, admission_tick_size, allocation, initial_cash, window)"]
   B --> C["create_and_share_expiry_market(propbook_registry, underlying, cadence_id, clock, ...)"]
-  C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>cadence enabled,<br/>skip higher-rank reserved slots,<br/>selected expiry in window,<br/>underlying registered,<br/>Propbook bindings exist,<br/>market not already created"}
+  C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>cadence enabled,<br/>skip slots a longer cadence owns,<br/>selected expiry in window,<br/>underlying registered,<br/>Propbook bindings exist,<br/>market not already created"}
   D -->|pass| E["compute next expiry<br/>snapshot config + cadence terms<br/>(no live spot read)"]
   E --> F["share ExpiryMarket with propbook_underlying_id"]
   F --> G["PoolVault.register_expiry (accounting row)"]
