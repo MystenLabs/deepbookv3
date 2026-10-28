@@ -116,7 +116,7 @@ The `AdminCap` can:
 - set the mint-admission entry-probability band and minimum net premium that gate which positions may be minted;
 - set the freshness thresholds that gate Pyth spot, Block Scholes spot/forward, and Block Scholes SVI. A Block Scholes threshold set too tight stops admission and valuation, and a Pyth threshold set too tight moves valuation and the mint quotes onto the Block Scholes forward.
 - select which source builds the live forward (`use_pyth_spot_for_forward`): the Pyth spot carrying the Block Scholes basis, or the Block Scholes forward directly. This moves every live quote and NAV mark protocol-wide in one transaction, in either direction, and is bounded by no cross-source deviation guard — see the oracle-trust section above. It cannot be changed mid-valuation, and it does not affect settlement;
-- set future-market cadence terms, including tick size, allocation cap, and deployment window;
+- add market lengths to the cadence table and set future-market cadence terms, including tick size, allocation cap, and deployment window. A longer cadence takes over expiries a shorter one used to fill, so adding one changes which lengths are listed when;
 - mint and revoke `PauseCap`s, advance the package-version watermark (`bump_version_watermark` — monotonic, no disable or re-enable), and register Propbook underlyings Predict can build markets on;
 - engage or lift the trading pause and the protocol-wide emergency freeze; `set_frozen` is deliberately ungated, so an engaged freeze is always liftable without a package upgrade;
 - mint and revoke the `MarketLifecycleCap`s that gate market creation and the `PoolValuationCap`s that gate starting a flush;
