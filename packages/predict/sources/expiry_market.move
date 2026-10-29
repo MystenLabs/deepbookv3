@@ -197,7 +197,8 @@ public struct RedeemQuote has copy, drop {
 /// order_fee + subsidy_reserved`. The receipt cannot gain a field, so an order
 /// admitted with a builder keeps its capped fee per contract in the field its
 /// stage never uses (`min_proceeds` for a mint, `max_premium` for a sell); the
-/// open stage zeroes both.
+/// open stage zeroes both. A change that starts reading either field in that
+/// stage must move the fee first.
 public struct OrderReceipt has store {
     expiry_market_id: ID,
     stage: u8,
@@ -1175,8 +1176,8 @@ public fun admit_mint_with_builder<W: drop>(
 
 /// Admit an early sell of `close_quantity` of an open receipt's position: the
 /// receipt moves to the sell stage in place, with the sell's request, the
-/// account's current owner and builder code, a fresh volatility snapshot, τ, the
-/// deadline, and no price. The companion escrows `order_fee` and owns the
+/// account's current owner and no builder code, a fresh volatility snapshot, τ,
+/// the deadline, and no price. The companion escrows `order_fee` and owns the
 /// minimum-sell checks.
 ///
 /// Open during the trading pause and a market mint pause. Aborts unless `W` is
@@ -1392,7 +1393,6 @@ public fun try_fill<W: drop>(
         escrow.value() >= receipt.budget + receipt.order_fee + receipt.subsidy_reserved,
         EEscrowMismatch,
     );
-    let bfee = receipt.builder_fee_per_contract();
     let now = clock.timestamp_ms();
     // Admission put the deadline at least `deadline_expiry_margin_ms` before
     // expiry and settlement needs `now >= expiry`, so this also refuses an
@@ -1418,7 +1418,6 @@ public fun try_fill<W: drop>(
                     &mut receipt,
                     pricer.borrow(),
                     &mut escrow,
-                    bfee,
                     deny_list,
                     now,
                     ctx,
@@ -1446,7 +1445,6 @@ public fun try_fill<W: drop>(
                     &mut receipt,
                     pricer.borrow(),
                     &mut escrow,
-                    bfee,
                     deny_list,
                     now,
                     ctx,
@@ -2685,7 +2683,6 @@ fun fill_mint(
     receipt: &mut OrderReceipt,
     pricer: &Pricer,
     escrow: &mut Balance<USDC>,
-    bfee: u64,
     deny_list: &DenyList,
     now_ms: u64,
     ctx: &TxContext,
@@ -2701,7 +2698,7 @@ fun fill_mint(
         receipt.min_quantity,
         receipt.budget,
         receipt.max_probability,
-        bfee,
+        receipt.builder_fee_per_contract(),
         receipt.subsidy_rate,
         receipt.subsidy_reserved,
         tick_ms,
@@ -2777,7 +2774,6 @@ fun fill_close(
     receipt: &mut OrderReceipt,
     pricer: &Pricer,
     escrow: &mut Balance<USDC>,
-    bfee: u64,
     deny_list: &DenyList,
     now_ms: u64,
     ctx: &TxContext,
@@ -2790,7 +2786,7 @@ fun fill_close(
         close_quantity,
         receipt.min_probability,
         receipt.min_proceeds,
-        bfee,
+        receipt.builder_fee_per_contract(),
         receipt.tick_ms,
     );
     if (reason != 0) return (reason, false, quote);
@@ -2989,8 +2985,8 @@ fun drop_receipt(receipt: OrderReceipt) {
     let OrderReceipt { .. } = receipt;
 }
 
-/// The account's party snapshot for a receipt, with the builder code the
-/// caller already read for the dry run.
+/// The account's party snapshot for a receipt, with the builder code the trade
+/// names, or none.
 fun parties(account: &Account, builder_code_id: Option<ID>): OrderParties {
     OrderParties {
         account_id: account.account_id(),

@@ -100,6 +100,13 @@ public struct SessionBuilderApproved has copy, drop {
     max_fee_per_contract: u64,
 }
 
+/// A session's builder approval was removed: by `revoke_session`, or by a new
+/// grant for an address whose approval outlived its session.
+public struct SessionBuilderCleared has copy, drop {
+    account_id: ID,
+    session: address,
+}
+
 // === Public Functions ===
 
 /// Return a known session's expiration timestamp for SDK and devInspect reads.
@@ -164,6 +171,7 @@ public fun authorize_session(
         );
         if (builders.approvals.contains(&session)) {
             let (_, _) = builders.approvals.remove(&session);
+            event::emit(SessionBuilderCleared { account_id, session });
         };
     };
     event::emit(SessionAuthorized { account_id, session, expires_at_ms });
@@ -219,16 +227,17 @@ public fun approve_session_builder(
 /// may call this function.
 public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
+    let account_id = account.account_id();
     if (account.has_data<SessionBuildersApp>()) {
         let builders = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
             permit<SessionBuildersApp>(),
         );
         if (builders.approvals.contains(&session)) {
             let (_, _) = builders.approvals.remove(&session);
+            event::emit(SessionBuilderCleared { account_id, session });
         };
     };
     if (!account.has_data<SessionsApp>()) return;
-    let account_id = account.account_id();
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
     if (!data.sessions.contains(&session)) return;
     let (_, expires_at_ms) = data.sessions.remove(&session);

@@ -35,10 +35,11 @@ use deepbook_sessions::{
     session_config::{Self as session_config, SessionsConfig},
     sessions::{Self as sessions, SessionsApp}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::{bcs, unit_test::{assert_eq, destroy}};
 use sui::{
     accumulator::AccumulatorRoot,
     deny_list,
+    event,
     test_scenario::{most_recent_id_shared, return_shared}
 };
 use usdc::usdc::USDC;
@@ -117,6 +118,12 @@ const BUILDER_FEE_ON_MINT: u64 = 50_000;
 const CODE_A_INDEX: u64 = 0;
 const CODE_B_INDEX: u64 = 1;
 const ONE_ORDER: u64 = 1;
+
+/// Mirrors `sessions::SessionBuilderCleared` for a byte-for-byte event check.
+public struct ExpectedSessionBuilderCleared has copy, drop {
+    account_id: ID,
+    session: address,
+}
 
 public struct QueueSessionFixture {
     predict: Fixture,
@@ -525,7 +532,9 @@ fun revoking_clears_the_builder_and_reauthorizing_keeps_it() {
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     assert!(session_builder(&mut fixture).is_some());
 
+    let account_id = account_id(&mut fixture);
     revoke_session(&mut fixture);
+    assert_one_cleared(account_id);
     assert!(session_builder(&mut fixture).is_none());
     finish(fixture);
 }
@@ -548,7 +557,9 @@ fun a_new_grant_clears_an_approval_the_old_revoke_left_behind() {
     end_tx(tx);
     assert!(session_builder(&mut fixture).is_some());
 
+    let account_id = account_id(&mut fixture);
     authorize_session(&mut fixture, SESSION_DURATION_MS);
+    assert_one_cleared(account_id);
     assert!(session_builder(&mut fixture).is_none());
     finish(fixture);
 }
@@ -913,6 +924,24 @@ fun session_builder(fixture: &mut QueueSessionFixture): Option<sessions::Session
     let approval = sessions::session_builder(&tx.wrapper, SESSION);
     end_tx(tx);
     approval
+}
+
+/// The owner's canonical Account ID, read in its own transaction.
+fun account_id(fixture: &mut QueueSessionFixture): ID {
+    let owner = fixture.owner;
+    let tx = begin_tx(fixture, owner, owner);
+    let account_id = tx.wrapper.load_account().account_id();
+    end_tx(tx);
+    account_id
+}
+
+/// The last transaction emitted exactly one `SessionBuilderCleared`, for
+/// `SESSION` on `account_id`.
+fun assert_one_cleared(account_id: ID) {
+    let events = event::events_by_type<sessions::SessionBuilderCleared>();
+    assert_eq!(events.length(), 1);
+    let expected = ExpectedSessionBuilderCleared { account_id, session: SESSION };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
 }
 
 /// A keeper commits τ's update and resolves the one waiting order.
