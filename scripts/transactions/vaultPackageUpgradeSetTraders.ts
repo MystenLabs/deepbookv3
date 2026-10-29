@@ -31,18 +31,32 @@ import {
 // The upgrade links the core and margin packages their Published.toml records
 // name, so this refuses to build unless both are the newest on chain.
 
-// The vault's current traders, from its AuthorizedTradersKey dynamic field.
+// The vault's current traders, from its AuthorizedTradersKey dynamic field. The
+// field's JSON is { name, value: VecSet<address> }, so the addresses are
+// value.contents. Every page is read, because missing the field would skip the
+// deauthorizations. A vault that never had a trader has no field, and
+// authorize_trader creates it.
 const readVaultTraders = async (vaultId: string): Promise<string[]> => {
-  const { dynamicFields } = await client.core.listDynamicFields({
-    parentId: vaultId,
-  });
-  const field = dynamicFields.find((f: any) =>
-    f.name.type.endsWith("::liquidation_vault::AuthorizedTradersKey"),
-  );
-  if (!field) return [];
-  const contents: string[] = (await readJson(field.fieldId))?.value?.contents;
-  if (!contents) throw new Error(`cannot read the trader list on ${vaultId}`);
-  return contents.map((address) => normalizeSuiAddress(address));
+  let cursor: string | null = null;
+  do {
+    const page = await client.core.listDynamicFields({
+      parentId: vaultId,
+      cursor,
+    });
+    const field = page.dynamicFields.find((f) =>
+      f.name.type.endsWith("::liquidation_vault::AuthorizedTradersKey"),
+    );
+    if (field) {
+      const contents: string[] = (await readJson(field.fieldId))?.value
+        ?.contents;
+      if (!contents) {
+        throw new Error(`cannot read the trader list on ${vaultId}`);
+      }
+      return contents.map((address) => normalizeSuiAddress(address));
+    }
+    cursor = page.hasNextPage ? page.cursor : null;
+  } while (cursor);
+  return [];
 };
 
 const vaultPackageUpgradeSetTraders = async () => {
@@ -51,9 +65,18 @@ const vaultPackageUpgradeSetTraders = async () => {
   const txFilePath = `${currentDir}/tx/tx-data.txt`;
 
   const vaultId = liquidationVaultID[network];
-  const target = liquidationVaultTraders[network].map((address) =>
-    normalizeSuiAddress(address),
-  );
+  const target = [
+    ...new Set(
+      liquidationVaultTraders[network].map((address) =>
+        normalizeSuiAddress(address),
+      ),
+    ),
+  ];
+  if (target.length === 0) {
+    throw new Error(
+      "liquidationVaultTraders is empty, so this would deauthorize every trader",
+    );
+  }
   const current = await readVaultTraders(vaultId);
   const toAuthorize = target.filter((address) => !current.includes(address));
   const toDeauthorize = current.filter((address) => !target.includes(address));
@@ -66,7 +89,9 @@ const vaultPackageUpgradeSetTraders = async () => {
     liquidationUpgradeCapID[network],
   );
 
-  // Each UpgradeCap always points at the newest package it controls.
+  // Only core and margin are checked, because their old versions get disabled,
+  // which stops a package that links them. Each UpgradeCap always points at the
+  // newest package it controls.
   for (const [name, capId, record] of [
     ["core", upgradeCapID[network], "packages/deepbook/Published.toml"],
     [

@@ -152,7 +152,9 @@ jobs:
       # Upgrades margin_liquidation and, in the same transaction, sets the LiquidationVault's
       # authorized traders to liquidationVaultTraders in scripts/config/constants.ts. The
       # liquidation UpgradeCap, the LiquidationAdminCap and the gas coin must share an owner,
-      # and the build must link the newest core and margin packages.
+      # and the build must link the newest core and margin packages. That check only sees
+      # packages already on chain, so build this after any pending core or margin upgrade
+      # has executed and its Published.toml record has merged.
       - name: Upgrade Vault Protocol and Set Traders
         if: ${{ inputs.transaction_type == 'Upgrade Vault Protocol and Set Traders' }}
         env:
