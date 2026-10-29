@@ -144,6 +144,14 @@ public struct CadenceConfigUpdated has copy, drop, store {
     window_size: u64,
 }
 
+/// Emitted when an admin appends a cadence to the registry's cadence table. The new
+/// cadence is disabled on every underlying until a `CadenceConfigUpdated` enables it.
+public struct CadenceAdded has copy, drop, store {
+    registry_id: ID,
+    cadence_id: u8,
+    period_ms: u64,
+}
+
 /// Emitted when minting pause state changes for one expiry market.
 public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
     expiry_market_id: ID,
@@ -325,6 +333,10 @@ public(package) fun cadence_upd(
         initial_expiry_cash,
         window_size,
     });
+}
+
+public(package) fun cadence_add(registry_id: ID, cadence_id: u8, period_ms: u64) {
+    event::emit(CadenceAdded { registry_id, cadence_id, period_ms });
 }
 
 public(package) fun mkt_paused(expiry_market_id: ID, paused: bool) {

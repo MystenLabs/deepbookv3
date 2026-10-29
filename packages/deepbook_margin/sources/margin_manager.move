@@ -1233,10 +1233,12 @@ fun collect_triggered_orders<BaseAsset, QuoteAsset>(
 }
 
 /// Places the triggered conditional orders, routing each to its outcome bucket
-/// (executed / expired / insufficient-funds / out-of-bounds). Shared by the v2
-/// and v3 executors; the solvency gate and any deleveraging are applied by the
-/// caller. Returns whether any *market* order executed (the v3 executor repays
-/// only then).
+/// (executed / expired / insufficient-funds / out-of-bounds / below-liquidation).
+/// A market order that fills only in part is reduced to its remainder and stays
+/// queued, outside every bucket. Every placed order is pushed to `order_infos`.
+/// Shared by the v2 and v3 executors; the solvency gate and any deleveraging are
+/// applied by the caller. Returns whether any *market* order filled (the v3
+/// executor repays only then).
 fun place_triggered_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1253,6 +1255,7 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): bool {
+    let manager_id = self.id();
     let mut market_filled = false;
     let mut i = 0;
     while (i < orders.length() && order_infos.length() < max_orders_to_execute) {
@@ -1355,6 +1358,7 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
                 ctx,
             );
 
+            let mut partially_filled = false;
             if (!pending_order.is_limit_order()) {
                 // Self-match-aware safety net: the price-bound pre-check above
                 // simulated the fill against the full book, but a market order
@@ -1372,11 +1376,27 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
                         (is_bid && actual_price <= upper_bound) || (!is_bid && actual_price >= lower_bound),
                         EFillOutsidePriceBounds,
                     );
+                    market_filled = true;
                 };
-                market_filled = true;
+                // A market order is immediate-or-cancel, so whatever the book didn't
+                // fill is dropped. Keep the conditional order queued with that remainder,
+                // unless it is too small to place as a market order.
+                let remaining = pending_order.quantity() - executed;
+                if (remaining > 0 && pool.check_market_order_params(remaining)) {
+                    self
+                        .take_profit_stop_loss
+                        .reduce_partially_executed_order(
+                            manager_id,
+                            pool.id(),
+                            conditional_order_id,
+                            executed,
+                            clock,
+                        );
+                    partially_filled = true;
+                };
             };
             order_infos.push_back(order_info);
-            executed_ids.push_back(conditional_order_id);
+            if (!partially_filled) executed_ids.push_back(conditional_order_id);
         } else {
             if (pending_order.is_limit_order()) {
                 let expire_timestamp = *pending_order.expire_timestamp().borrow();
@@ -1396,9 +1416,12 @@ fun place_triggered_orders<BaseAsset, QuoteAsset>(
     market_filled
 }
 
-/// Emits the outcome events and reconciles the conditional-order queue:
-/// insufficient-funds, out-of-bounds, and expired orders are cancelled (with
-/// their event); executed orders are removed. Shared by the v2 and v3 executors.
+/// Emits the outcome events and reconciles the conditional-order queue: expired
+/// and below-liquidation orders are cancelled (with their event), and executed
+/// orders are removed. Insufficient-funds and out-of-bounds orders emit their
+/// event and stay queued. Both outcomes depend on the book, the stored price or
+/// the manager's balance at execution time, which can change or recover, so they
+/// are retried rather than treated as terminal. Shared by the v2 and v3 executors.
 fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool_id: ID,
@@ -1424,8 +1447,6 @@ fun finalize_conditional_execution<BaseAsset, QuoteAsset>(
     });
 
     let mut cancelled_ids = expired_ids;
-    cancelled_ids.append(insufficient_funds_ids);
-    cancelled_ids.append(out_of_bounds_ids);
     cancelled_ids.append(below_liquidation_ids);
     cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
@@ -1483,8 +1504,9 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
         ctx,
     );
 
+    // Every placed order, including a partial fill that stays queued, can move the ratio.
     if (
-        !executed_ids.is_empty()
+        !order_infos.is_empty()
         && (self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0)
     ) {
         let risk_ratio_after = self.risk_ratio_core(
@@ -1594,7 +1616,8 @@ fun process_collected_orders_v3<BaseAsset, QuoteAsset>(
         };
     };
 
-    if (has_debt && !executed_ids.is_empty()) {
+    // Every placed order, including a partial fill that stays queued, can move the ratio.
+    if (has_debt && !order_infos.is_empty()) {
         let risk_ratio_after = self.risk_ratio_core(
             registry,
             base_reading,

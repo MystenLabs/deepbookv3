@@ -45,11 +45,11 @@ const KEEPER: address = @0x4EE9;
 const SESSION_DURATION_MS: u64 = 60_000;
 // The fixture clock starts at 120_000, so the grant expires at 120_000 + 60_000.
 const SESSION_EXPIRES_AT_MS: u64 = 180_000;
-// Mainnet Sessions runs version 2, so its live watermark is 2 until this
+// Mainnet Sessions runs version 3, so its live watermark is 3 until this
 // upgrade's bump.
-const MAINNET_WATERMARK: u64 = 2;
-// One past this package's version 3: a watermark that retires it.
-const RETIRING_WATERMARK: u64 = 4;
+const MAINNET_WATERMARK: u64 = 3;
+// One past this package's version 4: a watermark that retires it.
+const RETIRING_WATERMARK: u64 = 5;
 
 // Spec default order fee, 0.02 USDC.
 const ORDER_FEE: u64 = 20_000;
@@ -269,9 +269,9 @@ fun retired_package_version_cannot_sell() {
 }
 
 #[test]
-fun session_enqueues_while_the_mainnet_watermark_still_names_version_two() {
+fun session_enqueues_while_the_mainnet_watermark_still_names_version_three() {
     // Between this upgrade and its bump the shared config still holds Mainnet's
-    // watermark 2, and the version 3 wrappers must already serve.
+    // watermark 3, and the version 4 wrappers must already serve.
     let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;

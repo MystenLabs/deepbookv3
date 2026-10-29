@@ -40,6 +40,16 @@ use sui::{clock::{Self, Clock}, object, test_scenario::{Self, Scenario, return_s
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
 const START_OF_TIME_MS: u64 = 0;
 const WINDOW_SIZE_THREE: u64 = 3;
+const WINDOW_SIZE_TWO: u64 = 2;
+// Periods and clock times in milliseconds, written out by hand (1 minute = 60,000 ms).
+const ONE_MINUTE_MS: u64 = 60_000;
+const TWO_MINUTES_MS: u64 = 120_000;
+const TEN_MINUTES_MS: u64 = 600_000;
+const FIFTEEN_MINUTES_MS: u64 = 900_000;
+const TWENTY_MINUTES_MS: u64 = 1_200_000;
+const FIFTY_MINUTES_MS: u64 = 3_000_000;
+const SIXTY_MINUTES_MS: u64 = 3_600_000;
+const SEVENTY_FIVE_MINUTES_MS: u64 = 4_500_000;
 
 // === builder_code owner guard ===
 
@@ -448,20 +458,252 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
     scenario.end();
 }
 
+// === admin-added cadences ===
+
+#[test]
+fun create_five_minute_skips_quarter_hours_owned_by_added_fifteen() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        mut clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+    enable_cadence(&mut reg, &config, &admin_cap, market_manager::cadence_five_minute!());
+    let fifteen = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+    enable_cadence(&mut reg, &config, &admin_cap, fifteen);
+    clock.set_for_testing(TEN_MINUTES_MS);
+
+    // 5m at 10:00 with window 2 may list up to 20:00. Its first slot, 15:00, is a
+    // multiple of the enabled 15m period, so 5m skips it and lists 20:00.
+    let five_id = create_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        market_manager::cadence_five_minute!(),
+        &clock,
+        &mut scenario,
+    );
+    // 15m lists the quarter-hour 5m left open.
+    let fifteen_id = create_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        fifteen,
+        &clock,
+        &mut scenario,
+    );
+
+    assert_market_id(&reg, TWENTY_MINUTES_MS, five_id);
+    assert_market_id(&reg, FIFTEEN_MINUTES_MS, fifteen_id);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun create_added_fifteen_yields_the_hour_to_one_hour() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        mut clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+    enable_cadence(&mut reg, &config, &admin_cap, market_manager::cadence_one_hour!());
+    let fifteen = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+    enable_cadence(&mut reg, &config, &admin_cap, fifteen);
+    clock.set_for_testing(FIFTY_MINUTES_MS);
+
+    // 15m at 50:00 with window 2 may list up to 80:00. 60:00 belongs to the enabled
+    // 1h cadence, so 15m lists 75:00.
+    let fifteen_id = create_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        fifteen,
+        &clock,
+        &mut scenario,
+    );
+    let hour_id = create_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        market_manager::cadence_one_hour!(),
+        &clock,
+        &mut scenario,
+    );
+
+    assert_market_id(&reg, SEVENTY_FIVE_MINUTES_MS, fifteen_id);
+    assert_market_id(&reg, SIXTY_MINUTES_MS, hour_id);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun create_added_twenty_takes_the_shared_hour_from_added_fifteen() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        mut clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+    let fifteen = reg.add_cadence(&config, &admin_cap, FIFTEEN_MINUTES_MS);
+    let twenty = reg.add_cadence(&config, &admin_cap, TWENTY_MINUTES_MS);
+    enable_cadence(&mut reg, &config, &admin_cap, fifteen);
+    enable_cadence(&mut reg, &config, &admin_cap, twenty);
+    clock.set_for_testing(FIFTY_MINUTES_MS);
+
+    // Neither period divides the other, but both divide 60:00; the longer one (20m)
+    // owns it, so 15m lists 75:00 and 20m lists 60:00.
+    let fifteen_id = create_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        fifteen,
+        &clock,
+        &mut scenario,
+    );
+    let twenty_id = create_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        twenty,
+        &clock,
+        &mut scenario,
+    );
+
+    assert_market_id(&reg, SEVENTY_FIVE_MINUTES_MS, fifteen_id);
+    assert_market_id(&reg, SIXTY_MINUTES_MS, twenty_id);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun create_expiry_market_at_expected_expiry_creates() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // At 0:00 the next 1m slot is 1:00.
+    let market_id = reg.create_and_share_expiry_market_at(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        ONE_MINUTE_MS,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert_market_id(&reg, ONE_MINUTE_MS, market_id);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EUnexpectedExpiry)]
+fun create_expiry_market_at_other_expiry_aborts() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // The contract's next 1m slot is 1:00, not the 2:00 the caller expects.
+    reg.create_and_share_expiry_market_at(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        TWO_MINUTES_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = market_manager::EMarketAlreadyCreated)]
 fun record_expiry_creation_duplicate_expiry_aborts() {
     let mut scenario = test_scenario::begin(test_constants::admin());
     let mut manager = market_manager::new(scenario.ctx());
+    let periods = market_manager::base_periods();
     let expiry = constants::one_week_ms!();
 
     manager.register_underlying(test_constants::propbook_underlying_id());
     manager.note_expiry(
+        &periods,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_day!(),
         expiry,
         object::id_from_address(@0xCAFE),
     );
     manager.note_expiry(
+        &periods,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_week!(),
         expiry,
@@ -687,6 +929,47 @@ fun create_one_minute_market(
         clock,
         scenario.ctx(),
     )
+}
+
+fun create_market(
+    reg: &mut Registry,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    lifecycle_cap: &MarketLifecycleCap,
+    cadence_id: u8,
+    clock: &Clock,
+    scenario: &mut Scenario,
+): ID {
+    reg.create_and_share_expiry_market(
+        vault,
+        config,
+        oracle_registry,
+        lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        cadence_id,
+        clock,
+        scenario.ctx(),
+    )
+}
+
+fun enable_cadence(
+    reg: &mut Registry,
+    config: &ProtocolConfig,
+    admin_cap: &AdminCap,
+    cadence_id: u8,
+) {
+    reg.set_template_cadence_config(
+        config,
+        admin_cap,
+        test_constants::propbook_underlying_id(),
+        cadence_id,
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
+        WINDOW_SIZE_TWO,
+    );
 }
 
 fun assert_market_id(reg: &Registry, expiry: u64, expected_id: ID) {

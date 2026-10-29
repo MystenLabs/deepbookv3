@@ -5,7 +5,7 @@ SVI bounds they need, emitted as `pricing_ssvi_reference_data.move`.
 Block Scholes SSVI surfaces narrow `sigma` toward expiry: in the SSVI backfill
 below, 83% of slices within a minute of expiry sit under the former 1e-3 sigma
 floor, and a few short-end slices carry a slightly negative `a`. These slices
-exercise the pricing-safe envelope's 1e-5 floor, its lack of any bound on `a`
+exercise the pricing-safe envelope's 1e-7 floor, its lack of any bound on `a`
 beyond total variance, and the smile root `sqrt((k - m)^2 + sigma^2)`, which the
 contract takes from an exact 1e18 input so a small `sigma` survives squaring. Run:
 
@@ -29,12 +29,12 @@ Source: the Block Scholes SSVI params backfill
       missed by the most (about 562_500 units, 0.056 percentage points);
   [3] the same selection as [2] among slices one to five minutes from expiry;
   [4] the same selection as [2] among slices five minutes to one hour from expiry.
-Slices [5]-[7] are synthetic: slice [0] with `sigma` at the 1e-5 floor and the
+Slices [5]-[7] are synthetic: slice [0] with `sigma` at the 1e-7 floor and the
 smile's vertex placed relative to the forward:
   [5] `m = 0`, the forward is the vertex; the former 1e9 root was zero there and
       the skew slope's division aborted;
   [6] `m = sigma`, one smile width away, where both squares under the root are a
-      tenth of a raw unit at 1e9; the former root was zero and the wing term went
+      hundred-thousandth of a raw unit at 1e9; the former root was zero and the wing term went
       negative (`ECannotBeNegative`);
   [7] `m = -10 sigma`, in the wing, where `(k - m)^2` dominates; the former root
       priced it about 1.1M units off.
@@ -156,7 +156,7 @@ SOURCE_SLICES = [
         sigma=0.0004988234851400063,
     ),
 ]
-SIGMA_FLOOR = 1e-05
+SIGMA_FLOOR = 1e-07
 FORMER_A_CAP = 100.0
 SYNTHETIC_SLICES = [
     dict(SOURCE_SLICES[0], key="floor_vertex",
