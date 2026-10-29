@@ -17,6 +17,7 @@ on:
           - Upgrade Margin Protocol
           - Upgrade Margin Protocol and Enable Version
           - Upgrade Vault Protocol
+          - Upgrade Vault Protocol and Set Traders
           - Upgrade Predict Protocol
           - Upgrade Propbook Protocol
           - Upgrade Predict Math Protocol
@@ -147,6 +148,21 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgrade.ts
+
+      # Upgrades margin_liquidation and, in the same transaction, sets the LiquidationVault's
+      # authorized traders to liquidationVaultTraders in scripts/config/constants.ts. The
+      # liquidation UpgradeCap, the LiquidationAdminCap and the gas coin must share an owner,
+      # and the build must link the newest core and margin packages.
+      - name: Upgrade Vault Protocol and Set Traders
+        if: ${{ inputs.transaction_type == 'Upgrade Vault Protocol and Set Traders' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgradeSetTraders.ts
 
       - name: Upgrade Predict Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Predict Protocol' }}
