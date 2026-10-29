@@ -14,13 +14,14 @@ use super::handlers;
 use crate::server::AppState;
 
 pub fn admin_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
-    // Authenticated routes
+    // Authenticated routes. axum 0.7 captures path parameters with `:name`; `{name}`
+    // (the 0.8 syntax) is a literal segment there and never matches a real id.
     let protected = Router::new()
         .route("/pools", post(handlers::create_pool))
-        .route("/pools/{pool_id}", put(handlers::update_pool))
-        .route("/pools/{pool_id}", delete(handlers::delete_pool))
+        .route("/pools/:pool_id", put(handlers::update_pool))
+        .route("/pools/:pool_id", delete(handlers::delete_pool))
         .route("/assets", post(handlers::create_asset))
-        .route("/assets/{asset_type}", delete(handlers::delete_asset))
+        .route("/assets/:asset_type", delete(handlers::delete_asset))
         .layer(from_fn_with_state(state, require_admin_auth));
 
     // Health check is unauthenticated for load balancer probes
