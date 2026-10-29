@@ -39,6 +39,9 @@ const PLP_WITHDRAW_FEE_RATE: u64 = 3_000_000;
 
 const FEE_INCENTIVE_SUBSIDY_RATE: u64 = 500_000_000;
 const DISABLED_FEE_INCENTIVE_SUBSIDY_RATE: u64 = 0;
+/// A builder fee cap of 2c per contract, then builder fees switched off.
+const BUILDER_FEE_CAP: u64 = 20_000_000;
+const DISABLED_BUILDER_FEE_CAP: u64 = 0;
 
 const DEFAULT_FEE_INCENTIVE_LIVE_TARGET_RATE: u64 = 20_000_000;
 const RAISED_FEE_INCENTIVE_LIFETIME_CAP_RATE: u64 = 250_000_000;
@@ -81,6 +84,11 @@ public struct ExpectedPlpFeeRatesUpdated has copy, drop {
 public struct ExpectedSettledRedeemKeeperUpdated has copy, drop {
     keeper: address,
     allowed: bool,
+}
+
+public struct ExpectedBuilderFeeCapUpdated has copy, drop {
+    builder_fee_cap: u64,
+    onchain_timestamp_ms: u64,
 }
 
 public struct ExpectedFeeIncentiveSubsidyRateUpdated has copy, drop {
@@ -262,6 +270,37 @@ fun settled_redeem_keeper_changes_emit_keeper_and_membership() {
     };
     assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&removed));
 
+    destroy(admin_cap);
+    return_shared(registry);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Both the first set (which creates the dynamic field) and a later overwrite emit
+/// the post-state cap.
+#[test]
+fun builder_fee_cap_setter_emits_post_state() {
+    let (mut scenario, registry, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(EVENT_TIMESTAMP_MS);
+
+    config.set_builder_fee_cap(&admin_cap, BUILDER_FEE_CAP, &clock);
+    config.set_builder_fee_cap(&admin_cap, DISABLED_BUILDER_FEE_CAP, &clock);
+
+    let events = event::events_by_type<config_events::BuilderFeeCapUpdated>();
+    assert_eq!(events.length(), TWO_EVENTS);
+    let created = ExpectedBuilderFeeCapUpdated {
+        builder_fee_cap: BUILDER_FEE_CAP,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[FIRST_EVENT_INDEX]), bcs::to_bytes(&created));
+    let overwritten = ExpectedBuilderFeeCapUpdated {
+        builder_fee_cap: DISABLED_BUILDER_FEE_CAP,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&overwritten));
+
+    clock.destroy_for_testing();
     destroy(admin_cap);
     return_shared(registry);
     return_shared(config);

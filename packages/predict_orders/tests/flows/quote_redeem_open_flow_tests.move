@@ -29,7 +29,9 @@ const MAX_COST: u64 = 3_000_000;
 const REDEEM_VALUE: u64 = 1_999_974;
 /// 0.005 * 4m, below the redeem value it is capped at.
 const TRADING_FEE: u64 = 20_000;
-/// min(0.1 * 20_000, 0.005 * 4m) = min(2_000, 20_000).
+/// A sell's builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, and that
+/// fee on 4m: 4m * 0.0005.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
 const BUILDER_FEE: u64 = 2_000;
 const BUILDER_CODE_INDEX: u64 = 0;
 const TAU: u64 = 121_000;
@@ -60,13 +62,24 @@ fun quote_redeem_open_prices_the_close_before_the_order_fee() {
     q.finish();
 }
 
+/// A code attached to the account adds no builder fee to the plain quote; the
+/// builder-fee quote charges the fee the sell names.
 #[test]
-fun quote_redeem_open_charges_the_account_builder_fee() {
+fun quote_redeem_open_with_builder_fee_charges_the_named_fee() {
     let (mut q, _) = fixture::new().link_builder_code(BUILDER_CODE_INDEX);
     fill_one_mint(&mut q);
 
-    let quote = quote_now(&mut q, OPEN_RECORD, QUANTITY);
+    let plain = quote_now(&mut q, OPEN_RECORD, QUANTITY);
+    assert_eq!(plain.redeem_builder_fee(), 0);
+    assert_eq!(plain.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE);
 
+    let pricer = q.load_pricer();
+    let quote = q.quote_redeem_open_with_builder_fee(
+        &pricer,
+        OPEN_RECORD,
+        QUANTITY,
+        BUILDER_FEE_PER_CONTRACT,
+    );
     assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
     assert_eq!(quote.redeem_builder_fee(), BUILDER_FEE);
     assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE - BUILDER_FEE);
@@ -156,7 +169,7 @@ fun fill_one_mint(q: &mut QueueTest) {
 }
 
 /// Quote a close from `record_id` against a live pricer loaded at the fixture
-/// clock, with the account's builder code.
+/// clock, with no builder fee.
 fun quote_now(q: &mut QueueTest, record_id: u64, close_quantity: u64): RedeemQuote {
     let pricer = q.load_pricer();
     q.quote_redeem_open(&pricer, record_id, close_quantity)

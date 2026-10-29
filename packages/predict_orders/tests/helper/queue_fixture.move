@@ -17,6 +17,7 @@ module deepbook_predict_orders::queue_fixture;
 
 use account::account::{Self, AccountWrapper};
 use deepbook_predict::{
+    builder_code::BuilderCode,
     expiry_market::{ExpiryMarket, RedeemQuote},
     flow_test_helpers::{Self as helpers, Fixture, Trader, MarketBundle, AccountBundle},
     plp::SnapshotStage,
@@ -236,6 +237,25 @@ public fun link_builder_code(q: QueueTest, code_index: u64): (QueueTest, ID) {
     let code_id = fx.create_and_link_builder_code(code_index, &trader);
     fx.scenario_mut().next_tx(trader.owner());
     (take(fx, expiry_id, trader, ids), code_id)
+}
+
+/// Create a builder code owned by the current trader, without attaching it,
+/// then continue in the trader's next transaction. Returns the code's ID.
+public fun new_builder_code(q: QueueTest, code_index: u64): (QueueTest, ID) {
+    let (mut fx, expiry_id, trader, ids) = q.put_back();
+    let code_id = fx.create_builder_code(code_index, &trader);
+    fx.scenario_mut().next_tx(trader.owner());
+    (take(fx, expiry_id, trader, ids), code_id)
+}
+
+/// Set the builder fee cap through the real admin path.
+public fun set_builder_fee_cap(q: &mut QueueTest, cap: u64) {
+    q.fx.set_builder_fee_cap_bundle(&mut q.market, cap);
+}
+
+/// The builder fee per contract the queue saved for `record_id`.
+public fun saved_builder_fee(q: &QueueTest, record_id: u64): u64 {
+    q.queue.builder_fee_per_contract(record_id)
 }
 
 /// Continue in a new transaction holding `expiry_id`'s market in place of the
@@ -677,6 +697,126 @@ public fun enqueue_sell(
     )
 }
 
+/// An exact-quantity mint over `(strike, +inf]` with no probability cap that
+/// names the shared code `code_id` and `fee_per_contract`.
+public fun enqueue_atm_with_builder(
+    q: &mut QueueTest,
+    quantity: u64,
+    max_cost: u64,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let QueueTest { fx, market, account, desk, queue, .. } = q;
+    let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, root) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let auth = account::generate_auth(ctx);
+    let record_id = queue.enqueue_exact_quantity_with_builder(
+        expiry_market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        quantity,
+        max_cost,
+        std::u64::max_value!(),
+        root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+/// An all-in-budget mint over `(strike, +inf]` that names the shared code
+/// `code_id` and `fee_per_contract`.
+public fun enqueue_cost_with_builder(
+    q: &mut QueueTest,
+    max_cost: u64,
+    min_quantity: u64,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let QueueTest { fx, market, account, desk, queue, .. } = q;
+    let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, root) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let auth = account::generate_auth(ctx);
+    let record_id = queue.enqueue_exact_cost_with_builder(
+        expiry_market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        max_cost,
+        min_quantity,
+        root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+/// A sell of `record_id` that names the shared code `code_id` and
+/// `fee_per_contract`.
+public fun enqueue_sell_with_builder(
+    q: &mut QueueTest,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let QueueTest { fx, market, account, desk, queue, .. } = q;
+    let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, root) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let auth = account::generate_auth(ctx);
+    let sell_id = queue.enqueue_redeem_open_with_builder(
+        expiry_market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    sell_id
+}
+
 // === Seams ===
 
 /// Mark an unfinished record RefundDue with `reason`, a status nothing sets at
@@ -780,6 +920,26 @@ public fun quote_redeem_open(
         pricer,
         record_id,
         close_quantity,
+        fx.clock(),
+    )
+}
+
+/// `quote_redeem_open_with_builder_fee` at the fixture clock.
+public fun quote_redeem_open_with_builder_fee(
+    q: &mut QueueTest,
+    pricer: &Pricer,
+    record_id: u64,
+    close_quantity: u64,
+    fee_per_contract: u64,
+): RedeemQuote {
+    let QueueTest { fx, market, queue, .. } = q;
+    queue.quote_redeem_open_with_builder_fee(
+        helpers::market(market),
+        helpers::config(market),
+        pricer,
+        record_id,
+        close_quantity,
+        fee_per_contract,
         fx.clock(),
     )
 }

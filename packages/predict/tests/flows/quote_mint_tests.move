@@ -4,9 +4,11 @@
 /// Flow coverage for the public mint quote surface: a quote's `all_in_cost` is
 /// the exact account debit of a same-state mint (quotes and settlement consume
 /// one shared computation) — pinned with every fee component at zero AND with
-/// each component nonzero (sponsor subsidy, builder fee, EWMA congestion
-/// penalty); the account-aware quote diverges from the anonymous
-/// quote in the right direction per component; quotes share the mint path's
+/// each component nonzero (sponsor subsidy, EWMA congestion penalty); a builder
+/// fee the trade names adds exactly `quantity * fee`, capped at the builder fee
+/// cap, and a code attached to the account adds nothing; the account-aware quote
+/// diverges from the anonymous quote in the right direction per component;
+/// quotes share the mint path's
 /// gates, admission aborts, and maximum-payout bound; and the settlement readers
 /// answer without aborting on a live market.
 #[test_only]
@@ -54,9 +56,14 @@ const ABOVE_MAX_PAYOUT_MIN_FEE_RATE: u64 = 500_006_750;
 /// 1_000_000 and the trader saves exactly that off the all-in cost.
 const SUBSIDY_AT_RATE_CAP: u64 = 1_000_000;
 
-/// Builder fee for the ATM mint: min(builder_fee_multiplier (0.1) *
-/// MIN_TRADING_FEE, max_builder_fee_rate (0.005) * quantity (1e9)) =
-/// min(500_000, 5_000_000) = 500_000, paid on top of the anonymous cost.
+/// A trade's builder fee of 0.0005 per $1 contract, in FLOAT_SCALING.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
+/// A builder fee cap of 0.0002 per contract, below that fee.
+const LOW_BUILDER_FEE_CAP: u64 = 200_000;
+/// The capped fee on the ATM mint: quantity (1e9) * 0.0002.
+const CAPPED_BUILDER_FEE_ATM: u64 = 200_000;
+/// Builder fee for the ATM mint: quantity (1e9) * 0.0005 = 500_000, paid on
+/// top of the anonymous cost.
 const BUILDER_FEE_ATM: u64 = 500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
 
@@ -285,18 +292,16 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
 }
 
 #[test]
-fun builder_code_raises_account_quote_and_mint_debits_exactly() {
+fun a_named_builder_fee_raises_the_quote_and_an_attached_code_does_not() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );
     fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
     fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
 
-    // The builder fee is account attribution: the anonymous quote stays at the
-    // no-builder cost, the account quote is higher by exactly the builder fee.
     let anonymous = fx.quote_mint_bundle(
         &market,
         helpers::strike_tick(),
@@ -308,6 +313,8 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
     assert_eq!(anonymous.builder_fee(), 0);
     assert_eq!(anonymous.all_in_cost(), premium + MIN_TRADING_FEE);
 
+    // A code attached to the account is not a fee: the account quote stays at
+    // the no-builder cost.
     let for_account = fx.quote_mint_for_account_bundle(
         &market,
         &account,
@@ -315,24 +322,50 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    assert_eq!(for_account.builder_fee(), BUILDER_FEE_ATM);
-    let with_builder = premium + MIN_TRADING_FEE + BUILDER_FEE_ATM;
-    assert_eq!(for_account.all_in_cost(), with_builder);
+    assert_eq!(for_account.builder_fee(), 0);
+    assert_eq!(for_account.all_in_cost(), premium + MIN_TRADING_FEE);
 
-    let order = fx.mint_exact_quantity_bundle(
-        &mut market,
-        &mut account,
+    // A fee the trade names adds exactly quantity * fee.
+    let with_fee = fx.quote_mint_with_builder_fee_bundle(
+        &market,
+        &account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        for_account.all_in_cost(),
-        std::u64::max_value!(),
+        BUILDER_FEE_PER_CONTRACT,
     );
+    assert_eq!(with_fee.premium(), premium);
+    assert_eq!(with_fee.builder_fee(), BUILDER_FEE_ATM);
+    assert_eq!(with_fee.all_in_cost(), premium + MIN_TRADING_FEE + BUILDER_FEE_ATM);
 
-    assert!(helpers::has_position_bundle(&account, expiry_id, order));
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun a_named_builder_fee_above_the_cap_is_quoted_at_the_cap() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.set_builder_fee_cap_bundle(&mut market, LOW_BUILDER_FEE_CAP);
+    let account = fx.take_account_bundle(&trader);
+
+    let with_fee = fx.quote_mint_with_builder_fee_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        BUILDER_FEE_PER_CONTRACT,
+    );
+    assert_eq!(with_fee.builder_fee(), CAPPED_BUILDER_FEE_ATM);
     assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        test_constants::mint_deposit() - with_builder,
+        with_fee.all_in_cost(),
+        with_fee.premium() + MIN_TRADING_FEE + CAPPED_BUILDER_FEE_ATM,
     );
 
     helpers::return_account_bundle(account);

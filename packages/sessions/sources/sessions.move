@@ -4,12 +4,18 @@
 /// Owns time-limited trading session grants attached to canonical Accounts.
 /// Account owners grant and revoke sessions; an active session can only generate
 /// app auth inside the Predict and DeepBook spot wrappers exposed here.
+///
+/// A session-key trade that names a Predict builder code pays that builder a fee
+/// the session holder picks, so the owner approves one code and a maximum fee per
+/// session (`approve_session_builder`), and the `_with_builder` wrappers accept
+/// only that code at or below that fee.
 module deepbook_sessions::sessions;
 
 use account::{account::{Self, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook::{order_info::OrderInfo, pool::Pool, registry::Registry};
 use deepbook_core_account::deepbook_core_account;
 use deepbook_predict::{
+    builder_code::BuilderCode,
     expiry_market::ExpiryMarket,
     pricing::Pricer,
     protocol_config::ProtocolConfig
@@ -29,6 +35,8 @@ use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, Vec
 const EInvalidSessionDuration: u64 = 0;
 const ESessionNotAuthorized: u64 = 1;
 const ESessionLimitExceeded: u64 = 2;
+const EBuilderNotApproved: u64 = 3;
+const EBuilderFeeAboveApproved: u64 = 4;
 
 // === Constants ===
 
@@ -60,6 +68,31 @@ public struct SessionRevoked has copy, drop {
     expires_at_ms: u64,
 }
 
+/// Data-slot witness for the builder approvals. `SessionsData` was published
+/// without them, so they live in a slot of their own.
+public struct SessionBuildersApp has drop {}
+
+/// Each session's approved builder, keyed by session address. An entry exists
+/// only for a session in `SessionsData`, and `revoke_session` removes it.
+public struct SessionBuilders has store {
+    approvals: VecMap<address, SessionBuilder>,
+}
+
+/// The builder code a session's trades may name and the most they may charge per
+/// contract, in FLOAT_SCALING of a Predict contract's $1 payout.
+public struct SessionBuilder has copy, drop, store {
+    code_id: ID,
+    max_fee_per_contract: u64,
+}
+
+/// A session's builder was approved or replaced.
+public struct SessionBuilderApproved has copy, drop {
+    account_id: ID,
+    session: address,
+    code_id: ID,
+    max_fee_per_contract: u64,
+}
+
 // === Public Functions ===
 
 /// Return a known session's expiration timestamp for SDK and devInspect reads.
@@ -68,6 +101,24 @@ public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Op
     if (!account.has_data<SessionsApp>()) return option::none();
     let data = account.borrow_data<SessionsApp, SessionsData>();
     data.sessions.try_get(&session)
+}
+
+/// Return a session's approved builder, or `none`, for SDK and devInspect reads.
+public fun session_builder(wrapper: &AccountWrapper, session: address): Option<SessionBuilder> {
+    let account = wrapper.load_account();
+    if (!account.has_data<SessionBuildersApp>()) return option::none();
+    let data = account.borrow_data<SessionBuildersApp, SessionBuilders>();
+    data.approvals.try_get(&session)
+}
+
+/// Return the builder code an approval allows, for SDK and devInspect reads.
+public fun approved_code_id(builder: &SessionBuilder): ID {
+    builder.code_id
+}
+
+/// Return the most an approval allows per contract, for SDK and devInspect reads.
+public fun approved_max_fee_per_contract(builder: &SessionBuilder): u64 {
+    builder.max_fee_per_contract
 }
 
 /// Authorize `session` from execution time for at most 30 days.
@@ -98,9 +149,58 @@ public fun authorize_session(
     event::emit(SessionAuthorized { account_id, session, expires_at_ms });
 }
 
-/// Revoke `session` if it is present. Only the Account owner may call this function.
+/// Approve the builder code `session`'s trades may name, and the most they may
+/// charge per contract (`max_fee_per_contract`, in FLOAT_SCALING of the $1
+/// payout), replacing any earlier approval. Only the Account owner may call this,
+/// and only for a session already authorized (`ESessionNotAuthorized`), so an app
+/// calls it right after `authorize_session` in the same transaction. The
+/// approval lasts until `revoke_session`; re-authorizing the session keeps it.
+public fun approve_session_builder(
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    session: address,
+    code_id: ID,
+    max_fee_per_contract: u64,
+    ctx: &mut TxContext,
+) {
+    sessions_config.assert_version();
+    let account = wrapper.load_account_mut(account::generate_auth(ctx));
+    assert!(
+        account.has_data<SessionsApp>()
+            && account.borrow_data<SessionsApp, SessionsData>().sessions.contains(&session),
+        ESessionNotAuthorized,
+    );
+    let account_id = account.account_id();
+    if (!account.has_data<SessionBuildersApp>()) {
+        account.attach(
+            permit<SessionBuildersApp>(),
+            SessionBuilders { approvals: vec_map::empty() },
+        );
+    };
+    let data = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
+        permit<SessionBuildersApp>(),
+    );
+    let approval = SessionBuilder { code_id, max_fee_per_contract };
+    if (data.approvals.contains(&session)) {
+        *data.approvals.get_mut(&session) = approval;
+    } else {
+        data.approvals.insert(session, approval);
+    };
+    event::emit(SessionBuilderApproved { account_id, session, code_id, max_fee_per_contract });
+}
+
+/// Revoke `session` and its builder approval if present. Only the Account owner
+/// may call this function.
 public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
+    if (account.has_data<SessionBuildersApp>()) {
+        let builders = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
+            permit<SessionBuildersApp>(),
+        );
+        if (builders.approvals.contains(&session)) {
+            let (_, _) = builders.approvals.remove(&session);
+        };
+    };
     if (!account.has_data<SessionsApp>()) return;
     let account_id = account.account_id();
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
@@ -433,6 +533,58 @@ public fun enqueue_exact_quantity(
     )
 }
 
+/// `enqueue_exact_quantity` for a session-key mint that names a builder: `code` and
+/// `builder_fee_per_contract` must be the session's approved code and at most its
+/// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
+/// session checks. Returns the new queue record ID.
+public fun enqueue_exact_quantity_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    queue.enqueue_exact_quantity_with_builder(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        code,
+        builder_fee_per_contract,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
+        root,
+        clock,
+        ctx,
+    )
+}
+
 /// Queue a premium-budget Predict mint in `market`'s order-flow queue for an
 /// Account with an active session. Returns the queue record ID.
 public fun enqueue_exact_amount(
@@ -467,6 +619,58 @@ public fun enqueue_exact_amount(
         pyth,
         bs_values,
         bs_svi,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        max_cost,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `enqueue_exact_amount` for a session-key mint that names a builder: `code` and
+/// `builder_fee_per_contract` must be the session's approved code and at most its
+/// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
+/// session checks. Returns the new queue record ID.
+public fun enqueue_exact_amount_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    queue.enqueue_exact_amount_with_builder(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        code,
+        builder_fee_per_contract,
         lower_tick,
         higher_tick,
         max_premium,
@@ -521,6 +725,56 @@ public fun enqueue_exact_cost(
     )
 }
 
+/// `enqueue_exact_cost` for a session-key mint that names a builder: `code` and
+/// `builder_fee_per_contract` must be the session's approved code and at most its
+/// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
+/// session checks. Returns the new queue record ID.
+public fun enqueue_exact_cost_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    queue.enqueue_exact_cost_with_builder(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        code,
+        builder_fee_per_contract,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        root,
+        clock,
+        ctx,
+    )
+}
+
 /// Queue an early sell of an Open order-flow queue record for an Account with
 /// an active session. Returns the new queue record ID.
 public fun enqueue_redeem_open(
@@ -564,6 +818,56 @@ public fun enqueue_redeem_open(
     )
 }
 
+/// `enqueue_redeem_open` for a session-key sell that names a builder: `code` and
+/// `builder_fee_per_contract` must be the session's approved code and at most its
+/// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
+/// session checks. Returns the new queue record ID.
+public fun enqueue_redeem_open_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    queue.enqueue_redeem_open_with_builder(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        code,
+        builder_fee_per_contract,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
+}
+
 // === Private Functions ===
 
 fun generate_auth_as_session(
@@ -578,4 +882,12 @@ fun generate_auth_as_session(
     assert!(expiration.is_some(), ESessionNotAuthorized);
     assert!(clock.timestamp_ms() < *expiration.borrow(), ESessionNotAuthorized);
     account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
+}
+
+/// The approval checks for a session-key trade that names a builder: `session`
+/// has an approval for `code`, and `fee` is at or below its maximum.
+fun chk_builder(wrapper: &AccountWrapper, session: address, code: &BuilderCode, fee: u64) {
+    let approval = session_builder(wrapper, session);
+    assert!(approval.is_some() && approval.borrow().code_id == code.id(), EBuilderNotApproved);
+    assert!(fee <= approval.borrow().max_fee_per_contract, EBuilderFeeAboveApproved);
 }

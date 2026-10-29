@@ -36,8 +36,8 @@ module deepbook_predict_orders::queue;
 use account::account::{AccountWrapper, Auth};
 use deepbook_predict::{
     admin::AdminCap,
+    builder_code::{Self, BuilderCode, BuilderFee},
     expiry_market::{ExpiryMarket, OrderReceipt, RedeemQuote},
-    predict_account,
     pricing::Pricer,
     protocol_config::ProtocolConfig
 };
@@ -61,9 +61,15 @@ use sui::{
     clock::Clock,
     coin,
     deny_list::DenyList,
-    derived_object
+    derived_object,
+    dynamic_field as df
 };
 use usdc::usdc::USDC;
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::exists as UID.exists_;
+use fun df::remove as UID.remove;
 
 const EWrongDesk: u64 = 0;
 const EWrongMarket: u64 = 1;
@@ -110,6 +116,13 @@ public struct MarketQueue has key {
     /// Set by the `settle_step` call that emits `MarketPayoutsCompleted`.
     payouts_completed: bool,
 }
+
+/// Dynamic-field key on a `MarketQueue` for the builder fee per contract a record's
+/// order pays at its fill: the capped fee Predict's builder admission returned, in
+/// FLOAT_SCALING of the $1 payout. Added after deploy, so it lives off the record's
+/// layout. Saved only for a nonzero fee and removed when the record's receipt
+/// leaves for a fill or a release, so an absent field reads as `0`.
+public struct BuilderFeeKey(u64) has copy, drop, store;
 
 #[test_only]
 /// Stands in for one verified Lazer update in `commit_for_testing`, since a
@@ -201,17 +214,27 @@ public fun oldest_unfinished_tau_ms(queue: &MarketQueue): Option<u64> {
     queue.book.oldest_unfinished_tau()
 }
 
+/// Return the builder fee per contract `record_id`'s order pays at its fill, in
+/// FLOAT_SCALING of the $1 payout: the capped fee Predict's admission returned, or
+/// `0` for an order that names no builder or once its receipt has left for a
+/// fill or a release. For SDK and devInspect reads of a waiting order.
+public fun builder_fee_per_contract(queue: &MarketQueue, record_id: u64): u64 {
+    let key = BuilderFeeKey(record_id);
+    if (queue.id.exists_(key)) *queue.id.borrow(key) else 0
+}
+
 /// Quote an early sell of `close_quantity` from the Open record `record_id` at a
-/// live `Pricer`, with the wrapper account's builder code, through Predict's
-/// `quote_close`: the close a queued sell fills, with the trading fee at the
-/// clock instead of a committed tick. `proceeds` is before the order fee.
-/// Changes nothing. Aborts `ERecordNotOpen` for a missing or non-Open record,
-/// and otherwise as `quote_close` does. Does not check that the account owns
-/// the record. For SDK and devInspect pricing before `enqueue_redeem_open`.
+/// live `Pricer` through Predict's `quote_close`: the close a queued sell fills,
+/// with the trading fee at the clock instead of a committed tick. No builder fee,
+/// matching `enqueue_redeem_open`; `quote_redeem_open_with_builder_fee` quotes a
+/// sell that names a builder. `proceeds` is before the order fee. Changes nothing.
+/// Aborts `ERecordNotOpen` for a missing or non-Open record, and otherwise as
+/// `quote_close` does. Does not check that the account owns the record. For SDK
+/// and devInspect pricing before `enqueue_redeem_open`.
 public fun quote_redeem_open(
     queue: &MarketQueue,
     market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
+    _wrapper: &AccountWrapper,
     pricer: &Pricer,
     record_id: u64,
     close_quantity: u64,
@@ -219,11 +242,33 @@ public fun quote_redeem_open(
 ): RedeemQuote {
     assert!(queue.expiry_market_id == market.id(), EWrongMarket);
     queue.assert_open(record_id);
-    market.quote_close(
+    market.quote_close(pricer, queue.book.receipt(record_id), close_quantity, option::none(), clock)
+}
+
+/// `quote_redeem_open` for a sell that names a builder, through Predict's
+/// `quote_close_with_builder_fee`: charges `builder_fee_per_contract`, in
+/// FLOAT_SCALING of the $1 payout, capped at `protocol_config::builder_fee_cap` and
+/// then at the redeem value left after the trading fee, as the fill charges it.
+/// Changes nothing and aborts like `quote_redeem_open`. For SDK and devInspect
+/// pricing before `enqueue_redeem_open_with_builder`.
+public fun quote_redeem_open_with_builder_fee(
+    queue: &MarketQueue,
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    record_id: u64,
+    close_quantity: u64,
+    builder_fee_per_contract: u64,
+    clock: &Clock,
+): RedeemQuote {
+    assert!(queue.expiry_market_id == market.id(), EWrongMarket);
+    queue.assert_open(record_id);
+    market.quote_close_with_builder_fee(
+        config,
         pricer,
         queue.book.receipt(record_id),
         close_quantity,
-        predict_account::builder_code_id(wrapper.load_account()),
+        builder_fee_per_contract,
         clock,
     )
 }
@@ -313,6 +358,66 @@ public fun enqueue_exact_quantity(
         pyth,
         bs_values,
         bs_svi,
+        option::none(),
+        order_queue::kind_exact_quantity(),
+        request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `enqueue_exact_quantity` for an order that names a builder: `code` is the
+/// builder code the trade pays and `builder_fee_per_contract` its fee per
+/// contract, in FLOAT_SCALING of the $1 payout. Predict caps the fee at
+/// `protocol_config::builder_fee_cap` and prices the order's limits with it, the
+/// queue keeps the capped fee for the fill, and the fill pays `quantity * fee` to
+/// the code. Refuses orders like `enqueue_exact_quantity`. Returns the new record
+/// ID.
+public fun enqueue_exact_quantity_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let request = order_queue::new_request(
+        lower_tick,
+        higher_tick,
+        quantity,
+        0,
+        0,
+        max_cost,
+        max_probability,
+        0,
+        0,
+    );
+    queue.enqueue_mint(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         order_queue::kind_exact_quantity(),
         request,
         root,
@@ -366,6 +471,62 @@ public fun enqueue_exact_amount(
         pyth,
         bs_values,
         bs_svi,
+        option::none(),
+        order_queue::kind_exact_amount(),
+        request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `enqueue_exact_amount` for an order that names a builder, charging the capped
+/// `builder_fee_per_contract` to `code` like `enqueue_exact_quantity_with_builder`.
+/// The fee is inside the `max_cost` withdrawal cap. Returns the new record ID.
+public fun enqueue_exact_amount_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let request = order_queue::new_request(
+        lower_tick,
+        higher_tick,
+        0,
+        max_premium,
+        min_quantity,
+        max_cost,
+        0,
+        0,
+        0,
+    );
+    queue.enqueue_mint(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         order_queue::kind_exact_amount(),
         request,
         root,
@@ -419,6 +580,62 @@ public fun enqueue_exact_cost(
         pyth,
         bs_values,
         bs_svi,
+        option::none(),
+        order_queue::kind_exact_cost(),
+        request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `enqueue_exact_cost` for an order that names a builder, charging the capped
+/// `builder_fee_per_contract` to `code` like `enqueue_exact_quantity_with_builder`.
+/// The fill sizes the order so the fee fits inside `max_cost`. Returns the new
+/// record ID.
+public fun enqueue_exact_cost_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let request = order_queue::new_request(
+        lower_tick,
+        higher_tick,
+        0,
+        0,
+        min_quantity,
+        max_cost,
+        0,
+        0,
+        0,
+    );
+    queue.enqueue_mint(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         order_queue::kind_exact_cost(),
         request,
         root,
@@ -460,84 +677,73 @@ public fun enqueue_redeem_open(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let policy = *desk.policy_ref();
-    let account_id = wrapper.load_account().account_id();
-    let timing = queue.begin_enqueue(market, desk, config, &policy, false, account_id, clock);
-    // Status, not the record ID against `resolve_head`: records finish out of
-    // order, so only the status says whether this one holds a position.
-    queue.assert_open(record_id);
-    let source = queue.book.view(record_id).destroy_some();
-    assert!(source.account_id() == account_id, ENotRecordOwner);
-    let (lower_tick, higher_tick, held_quantity) = pmath::order_terms(source.position().order_id());
-    let min_sell_quantity = policy.min_sell_quantity();
-    assert!(close_quantity >= min_sell_quantity, EBelowMinSell);
-    // A partial sell leaves a sellable remainder. A close above the held
-    // quantity fails Predict's dry run instead.
-    assert!(
-        close_quantity >= held_quantity || held_quantity - close_quantity >= min_sell_quantity,
-        EBelowMinSell,
-    );
-
-    wrapper.settle<USDC>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    let order_fee = policy.order_fee();
-    assert!(account.balance<USDC>(root, clock) >= order_fee, EFeeNotCovered);
-    let (mut receipt, position) = queue.book.close_open_record(record_id);
-    order_flow::admit_sell(
+    queue.enqueue_sell(
         market,
+        wrapper,
+        auth,
+        desk,
         config,
-        account,
-        &mut receipt,
         propbook_registry,
         pyth,
         bs_values,
         bs_svi,
+        option::none(),
+        record_id,
         close_quantity,
         min_probability,
         min_proceeds,
-        order_fee,
-        policy.svi_max_age_ms(),
-        timing.pyth_channel(),
-        timing.tau_ms(),
-        timing.deadline_ms(),
+        root,
         clock,
         ctx,
-    );
-    let funds = if (order_fee > 0) {
-        account.withdraw<USDC>(order_fee, ctx).into_balance()
-    } else {
-        balance::zero()
-    };
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
+    )
+}
+
+/// `enqueue_redeem_open` for a sell that names a builder: `code` is the builder
+/// code the sell pays and `builder_fee_per_contract` its fee per contract, in
+/// FLOAT_SCALING of the $1 payout. Predict caps the fee at
+/// `protocol_config::builder_fee_cap` and checks `min_proceeds` with it, the queue
+/// keeps the capped fee for the fill, and the fill pays `close_quantity * fee` to
+/// the code, capped at the redeem value left after the trading fee. Refuses sells
+/// like `enqueue_redeem_open`. Returns the new record ID.
+public fun enqueue_redeem_open_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_sell(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        option::some(builder_code::new_fee(code, builder_fee_per_contract)),
+        record_id,
         close_quantity,
-        0,
-        0,
-        0,
-        0,
         min_probability,
         min_proceeds,
-    );
-    let builder_code_id = predict_account::builder_code_id(account);
-    let referrer_account_id = account.referrer_account_id();
-    let receive_address = account.receive_address();
-    queue.place(
-        market,
-        order_queue::kind_redeem_open(),
-        request,
-        account_id,
-        receive_address,
-        timing,
-        0,
-        order_fee,
-        position,
-        receipt,
-        funds,
-        builder_code_id,
-        referrer_account_id,
-        option::some(record_id),
+        root,
         clock,
+        ctx,
     )
 }
 
@@ -886,9 +1092,10 @@ public fun claim_parked(
 
 // --- Placement ---
 
-/// The three queued mints after their request is built: the queue's checks and
-/// τ, the escrow terms, Predict's admission, then the escrow withdrawal and the
-/// record. `kind` picks the budget rule.
+/// The queued mints after their request is built: the queue's checks and τ, the
+/// escrow terms, Predict's admission, then the escrow withdrawal, the record, and
+/// the capped builder fee saved for the fill. `kind` picks the budget rule, and
+/// `builder` is the code and fee the order names, or none.
 fun enqueue_mint(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -900,6 +1107,7 @@ fun enqueue_mint(
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
     kind: u8,
     request: OrderRequest,
     root: &AccumulatorRoot,
@@ -925,7 +1133,7 @@ fun enqueue_mint(
     } else {
         budget
     };
-    let receipt = order_flow::admit_mint(
+    let (receipt, bfee) = order_flow::admit_mint(
         market,
         config,
         account,
@@ -933,6 +1141,7 @@ fun enqueue_mint(
         pyth,
         bs_values,
         bs_svi,
+        builder,
         kind,
         request.lower_tick(),
         request.higher_tick(),
@@ -950,10 +1159,9 @@ fun enqueue_mint(
         ctx,
     );
     let funds = account.withdraw<USDC>(budget + order_fee, ctx).into_balance();
-    let builder_code_id = predict_account::builder_code_id(account);
     let referrer_account_id = account.referrer_account_id();
     let receive_address = account.receive_address();
-    queue.place(
+    let record_id = queue.place(
         market,
         kind,
         request,
@@ -965,11 +1173,119 @@ fun enqueue_mint(
         order_queue::empty_position(),
         receipt,
         funds,
-        builder_code_id,
+        builder.map!(|builder| builder.code_id()),
         referrer_account_id,
         option::none(),
         clock,
-    )
+    );
+    queue.save_bfee(record_id, bfee);
+    record_id
+}
+
+/// `enqueue_redeem_open`'s body, for a sell that names `builder` or none: the
+/// queue's checks, Predict's admission, the order-fee escrow, the sell record,
+/// and the capped builder fee saved for the fill.
+fun enqueue_sell(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    let policy = *desk.policy_ref();
+    let account_id = wrapper.load_account().account_id();
+    let timing = queue.begin_enqueue(market, desk, config, &policy, false, account_id, clock);
+    // Status, not the record ID against `resolve_head`: records finish out of
+    // order, so only the status says whether this one holds a position.
+    queue.assert_open(record_id);
+    let source = queue.book.view(record_id).destroy_some();
+    assert!(source.account_id() == account_id, ENotRecordOwner);
+    let (lower_tick, higher_tick, held_quantity) = pmath::order_terms(source.position().order_id());
+    let min_sell_quantity = policy.min_sell_quantity();
+    assert!(close_quantity >= min_sell_quantity, EBelowMinSell);
+    // A partial sell leaves a sellable remainder. A close above the held
+    // quantity fails Predict's dry run instead.
+    assert!(
+        close_quantity >= held_quantity || held_quantity - close_quantity >= min_sell_quantity,
+        EBelowMinSell,
+    );
+
+    wrapper.settle<USDC>(root, clock);
+    let account = wrapper.load_account_mut(auth);
+    let order_fee = policy.order_fee();
+    assert!(account.balance<USDC>(root, clock) >= order_fee, EFeeNotCovered);
+    let (mut receipt, position) = queue.book.close_open_record(record_id);
+    let bfee = order_flow::admit_sell(
+        market,
+        config,
+        account,
+        &mut receipt,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        builder,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        order_fee,
+        policy.svi_max_age_ms(),
+        timing.pyth_channel(),
+        timing.tau_ms(),
+        timing.deadline_ms(),
+        clock,
+        ctx,
+    );
+    let funds = if (order_fee > 0) {
+        account.withdraw<USDC>(order_fee, ctx).into_balance()
+    } else {
+        balance::zero()
+    };
+    let request = order_queue::new_request(
+        lower_tick,
+        higher_tick,
+        close_quantity,
+        0,
+        0,
+        0,
+        0,
+        min_probability,
+        min_proceeds,
+    );
+    let referrer_account_id = account.referrer_account_id();
+    let receive_address = account.receive_address();
+    let sell_record_id = queue.place(
+        market,
+        order_queue::kind_redeem_open(),
+        request,
+        account_id,
+        receive_address,
+        timing,
+        0,
+        order_fee,
+        position,
+        receipt,
+        funds,
+        builder.map!(|builder| builder.code_id()),
+        referrer_account_id,
+        option::some(record_id),
+        clock,
+    );
+    queue.save_bfee(sell_record_id, bfee);
+    sell_record_id
 }
 
 /// The queue's own placement checks, in order: the desk floor and the queue's
@@ -1332,6 +1648,7 @@ fun fill_record(
     now_ms: u64,
 ) {
     let (receipt, funds) = queue.book.take_order(record_id);
+    let bfee = queue.take_bfee(record_id);
     let (
         reason,
         kept,
@@ -1343,7 +1660,7 @@ fun fill_record(
         referral_fee,
         subsidy_used,
         inventory_impact,
-    ) = order_flow::try_fill(market, config, receipt, funds, deny_list, clock, ctx);
+    ) = order_flow::try_fill(market, config, receipt, funds, bfee, deny_list, clock, ctx);
     let returned = change.value();
     queue.send_or_park(record_id, view, change, deny_list, ctx, now_ms);
     if (reason != 0) {
@@ -1493,6 +1810,7 @@ fun release_record(
     if (!order_queue::is_unfinished(status)) return false;
     let reason = if (status == order_queue::status_refund_due()) view.result().reason() else reason;
     let (receipt, funds) = queue.book.take_order(record_id);
+    queue.take_bfee(record_id);
     let (kept, change) = market.release(config, receipt, funds, reason, prune);
     let returned = change.value();
     queue.send_or_park(record_id, &view, change, deny_list, ctx, now_ms);
@@ -1614,6 +1932,19 @@ fun pay_open_record(
 }
 
 // --- Shared ---
+
+/// Save a record's capped builder fee for its fill. Zero saves nothing, so an
+/// order without a builder adds no storage.
+fun save_bfee(queue: &mut MarketQueue, record_id: u64, bfee: u64) {
+    if (bfee > 0) queue.id.add(BuilderFeeKey(record_id), bfee);
+}
+
+/// Remove and return a record's saved builder fee, or `0` without one, as its
+/// receipt leaves for a fill or a release.
+fun take_bfee(queue: &mut MarketQueue, record_id: u64): u64 {
+    let key = BuilderFeeKey(record_id);
+    if (queue.id.exists_(key)) queue.id.remove(key) else 0
+}
 
 /// The desk floor, and this queue's desk and market.
 fun assert_bound(queue: &MarketQueue, desk: &OrderDesk, market: &ExpiryMarket) {

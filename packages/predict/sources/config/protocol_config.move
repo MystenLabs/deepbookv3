@@ -166,6 +166,11 @@ public struct FlushOperatorsKey() has copy, drop, store;
 /// refuses `W`.
 public struct OrderFlowKey<phantom W>() has copy, drop, store;
 
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` builder fee cap,
+/// stored off the struct layout because it was added after deploy. An absent field
+/// reads as `config_constants::default_builder_fee_cap`.
+public struct BuilderFeeCapKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -206,6 +211,14 @@ public fun fee_incentive_subsidy_rate(config: &ProtocolConfig): u64 {
         FeeIncentiveSubsidyRateKey(),
         config_constants::default_fee_incentive_subsidy_rate!(),
     )
+}
+
+/// Return the builder fee cap: the most a trade's builder fee can charge per
+/// contract, in FLOAT_SCALING of a contract's $1 payout. Admission charges a
+/// trade's named fee capped at this value. `public` for SDK and devInspect reads,
+/// so an app can show the fee a trade will actually pay.
+public fun builder_fee_cap(config: &ProtocolConfig): u64 {
+    config.u64_field_or(BuilderFeeCapKey(), config_constants::default_builder_fee_cap!())
 }
 
 /// Return the live fee-incentive target rate: the share of an expiry's allocation
@@ -714,6 +727,27 @@ public fun set_fee_incentive_subsidy_rate(
     config_constants::chk_subsidy(rate);
     config.set_u64(FeeIncentiveSubsidyRateKey(), rate);
     config_events::subsidy_upd(rate, clock.timestamp_ms());
+}
+
+/// Set the builder fee cap: the most a trade's builder fee can charge per
+/// contract, in FLOAT_SCALING of a contract's $1 payout, from `0` up to the whole
+/// payout. A trade that names a higher fee pays the cap. Read when an order is
+/// admitted, so the new cap applies to the next order on every market, and an
+/// order already queued keeps the fee it was admitted with. `0` stops builder fees.
+///
+/// Not gated on the valuation flag, matching `set_fee_incentive_subsidy_rate`:
+/// nothing in the flush reads the cap, and a builder fee leaves with the trader's
+/// own payment, never market cash.
+public fun set_builder_fee_cap(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    cap: u64,
+    clock: &Clock,
+) {
+    config.chk_version();
+    config_constants::chk_bldr_cap(cap);
+    config.set_u64(BuilderFeeCapKey(), cap);
+    config_events::bldr_cap_upd(cap, clock.timestamp_ms());
 }
 
 /// Set the share of an expiry's allocation cap each live rebalance tops its

@@ -3,6 +3,7 @@
 
 /// Owns deterministic builder referral codes and the USDC fees delivered to their object addresses through the funds accumulator.
 /// Codes are derived per owner and index, and only the immutable owner may withdraw accumulated fees.
+/// A trade names the code it pays, and its fee per contract, as a `BuilderFee`.
 module deepbook_predict::builder_code;
 
 use deepbook_predict::builder_code_events;
@@ -21,11 +22,37 @@ public struct BuilderCode has key {
     index: u64,
 }
 
+/// The builder code one trade pays and its fee per contract, in FLOAT_SCALING of
+/// a contract's $1 payout (5c is `50_000_000`). Built only from a `BuilderCode`,
+/// so a fee always goes to a code that exists. Predict caps the fee at
+/// `protocol_config::builder_fee_cap` when it admits the order.
+public struct BuilderFee has copy, drop {
+    code_id: ID,
+    fee_per_contract: u64,
+}
+
 // === Public Functions ===
 
 /// Returns the code identity for trade construction and external discovery.
 public fun id(code: &BuilderCode): ID {
     code.id.to_inner()
+}
+
+/// Name `code` and its fee per contract for one trade. For PTB construction and
+/// the order-flow companion, which pass it to Predict's builder admission.
+public fun new_fee(code: &BuilderCode, fee_per_contract: u64): BuilderFee {
+    BuilderFee { code_id: code.id(), fee_per_contract }
+}
+
+/// Returns the code a `BuilderFee` pays, for the companion and Sessions' checks.
+public fun code_id(fee: &BuilderFee): ID {
+    fee.code_id
+}
+
+/// Returns a `BuilderFee`'s uncapped fee per contract, for the companion and
+/// Sessions' checks.
+public fun fee_per_contract(fee: &BuilderFee): u64 {
+    fee.fee_per_contract
 }
 
 /// Returns the immutable owner authorized to claim fees.

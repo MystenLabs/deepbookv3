@@ -138,14 +138,6 @@ public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
 /// Milliseconds in a fixed 365-day year.
 public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
 
-// === Builder Fees ===
-
-/// Add-on builder fee as a fraction of the normal trade fee.
-public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
-
-/// Maximum all-in builder fee rate per traded quantity.
-public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
-
 // === Fee Incentives ===
 
 /// Minimum USDC a single fee-incentive sponsorship may contribute.

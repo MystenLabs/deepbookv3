@@ -40,6 +40,7 @@ const EInvalidNoTradeWindowMs: u64 = 24;
 const EInvalidFeeIncentiveSubsidyRate: u64 = 25;
 const EInvalidFeeIncentiveLiveTargetRate: u64 = 26;
 const EInvalidFeeIncentiveLifetimeCapRate: u64 = 27;
+const EInvalidBuilderFeeCap: u64 = 28;
 
 // === Fees ===
 
@@ -133,6 +134,24 @@ public(package) fun chk_life_cap(value: u64) {
         value >= min_fee_incentive_lifetime_cap_rate!()
             && value <= max_fee_incentive_lifetime_cap_rate!(),
         EInvalidFeeIncentiveLifetimeCapRate,
+    );
+}
+
+/// Most a trade's builder fee can charge per contract, in FLOAT_SCALING of a
+/// contract's $1 payout (5c). An order that names a higher fee pays the cap. `0`
+/// stops builder fees.
+public(package) macro fun default_builder_fee_cap(): u64 { 50_000_000 }
+
+public(package) macro fun min_builder_fee_cap(): u64 { 0 }
+
+/// A contract's whole $1 payout. No fee can usefully exceed it, so a higher
+/// value is a typo.
+public(package) macro fun max_builder_fee_cap(): u64 { fixed_math::math::float_scaling!() }
+
+public(package) fun chk_bldr_cap(value: u64) {
+    assert!(
+        value >= min_builder_fee_cap!() && value <= max_builder_fee_cap!(),
+        EInvalidBuilderFeeCap,
     );
 }
 

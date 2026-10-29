@@ -44,6 +44,9 @@ const FIRST_RECORD: u64 = 0;
 const UNUSED: u64 = 0;
 /// No budget (sells), no subsidy bound, no required cash, no committed τ.
 const NONE: u64 = 0;
+/// A builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, below the 5c cap.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
+const BUILDER_CODE_INDEX: u64 = 0;
 /// An unfinished record carries no refund reason.
 const NO_REASON: u8 = 0;
 /// The payout-tree node a `(strike_tick, +inf]` range pins: +inf never gets one.
@@ -233,6 +236,61 @@ fun enqueue_exact_quantity_records_escrows_and_announces_the_order() {
 
     q.assert_invariants();
     q.assert_backed();
+    q.finish();
+}
+
+/// A mint that names a builder escrows exactly what a plain one does,
+/// announces its code, and the queue saves its fee per contract for the fill.
+#[test]
+fun a_builder_mint_announces_its_code_and_saves_its_fee() {
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    let account_id = q.account_id();
+
+    let record_id = q.enqueue_atm_with_builder(
+        test_constants::mint_quantity(),
+        QUANTITY_MAX_COST,
+        code_id,
+        BUILDER_FEE_PER_CONTRACT,
+    );
+
+    let record = q.record(record_id);
+    let request = order_queue::new_request(
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        test_constants::mint_quantity(),
+        UNUSED,
+        UNUSED,
+        QUANTITY_MAX_COST,
+        std::u64::max_value!(),
+        UNUSED,
+        UNUSED,
+    );
+    assert_escrow(&record, QUANTITY_BUDGET, QUANTITY_SUBSIDY_BOUND, QUANTITY_CASH_NEED);
+    assert_eq!(record.funds(), QUANTITY_BUDGET + ORDER_FEE);
+    assert_eq!(q.saved_builder_fee(record_id), BUILDER_FEE_PER_CONTRACT);
+    assert_one_enqueued(ExpectedOrderEnqueued {
+        expiry_market_id: q.expiry_id(),
+        record_id,
+        account_id,
+        kind: order_queue::kind_exact_quantity(),
+        request,
+        position: order_queue::empty_position(),
+        timing: record.timing(),
+        vol: receipt_vol(&q, record_id),
+        budget: QUANTITY_BUDGET,
+        order_fee: ORDER_FEE,
+        cash_need: QUANTITY_CASH_NEED,
+        subsidy_bound: QUANTITY_SUBSIDY_BOUND,
+        builder_code_id: option::some(code_id),
+        referrer_account_id: option::none(),
+        source_record_id: option::none(),
+        market_cash: test_constants::default_seeded_expiry_cash(),
+        required_cash: NONE,
+        waiting_cash_need: QUANTITY_CASH_NEED,
+        onchain_timestamp_ms: test_constants::now_ms(),
+    });
+
+    q.assert_invariants();
     q.finish();
 }
 
