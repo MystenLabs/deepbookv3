@@ -1117,7 +1117,9 @@ public fun admit_mint<W: drop>(
 /// `protocol_config::builder_fee_cap`, records the code and the capped fee in
 /// the receipt, and prices the order's own limits at the clock with that fee. The
 /// fill charges the recorded fee, so a later cap change does not reach the
-/// order. Aborts as `admit_mint` does.
+/// order. Aborts as `admit_mint` does, and `EBuilderFeeCutoverNotReached` until
+/// the version watermark retires every version whose fill charges the legacy
+/// fee instead (`constants::builder_fee_version!()`).
 public fun admit_mint_with_builder<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
@@ -1236,7 +1238,8 @@ public fun admit_sell<W: drop>(
 /// `protocol_config::builder_fee_cap`, records the code in the receipt in place
 /// of the mint's along with the capped fee, and prices the close's floors at the
 /// clock with that fee. The fill charges the recorded fee. Aborts as
-/// `admit_sell` does.
+/// `admit_sell` does, and `EBuilderFeeCutoverNotReached` until the version
+/// watermark reaches `constants::builder_fee_version!()`.
 public fun admit_sell_with_builder<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
@@ -2543,6 +2546,7 @@ fun admit_sl(
 /// `(none, 0)` without one.
 fun bldr_terms(builder: &Option<BuilderFee>, config: &ProtocolConfig): (Option<ID>, u64) {
     if (builder.is_none()) return (option::none(), 0);
+    config.chk_bldr_cut();
     let builder = builder.borrow();
     (option::some(builder.code_id()), builder.fee_per_contract().min(config.builder_fee_cap()))
 }

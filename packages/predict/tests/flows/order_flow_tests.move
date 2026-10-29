@@ -1009,6 +1009,56 @@ fun an_attached_code_names_no_builder() {
     finish(fx, market, account);
 }
 
+/// Builder admission waits for the builder-fee cutover: while the watermark
+/// still names the delayed-execution cutover, an older resolver could fill the
+/// order at the legacy fee, so a mint naming a builder aborts. Plain admission
+/// stays open.
+#[test, expected_failure(abort_code = protocol_config::EBuilderFeeCutoverNotReached)]
+fun a_builder_mint_before_the_builder_fee_cutover_aborts() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    let code_id = fx.create_builder_code(BUILDER_CODE_INDEX, &trader);
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    helpers::config_mut(&mut market).set_version_watermark_for_testing(
+        constants::cutover_version!(),
+    );
+    let mut account = fx.take_account_bundle(&trader);
+    let plain = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    destroy(plain);
+    let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
+    let receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
+    destroy(receipt);
+    abort 999
+}
+
+/// A sell naming a builder waits for the same cutover.
+#[test, expected_failure(abort_code = protocol_config::EBuilderFeeCutoverNotReached)]
+fun a_builder_sell_before_the_builder_fee_cutover_aborts() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    let code_id = fx.create_builder_code(BUILDER_CODE_INDEX, &trader);
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
+    helpers::config_mut(&mut market).set_version_watermark_for_testing(
+        constants::cutover_version!(),
+    );
+    let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
+    admit_sell_builder(
+        &mut fx,
+        &mut market,
+        &mut account,
+        &mut receipt,
+        HALF,
+        0,
+        SELL_TAU,
+        builder,
+    );
+    destroy(receipt);
+    abort 999
+}
+
 /// The referral is a share of the trader-paid trading fee only: a builder fee
 /// on the same fill neither raises nor lowers it.
 #[test]

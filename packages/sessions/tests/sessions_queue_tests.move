@@ -553,6 +553,33 @@ fun a_new_grant_clears_an_approval_the_old_revoke_left_behind() {
     finish(fixture);
 }
 
+/// Builder approvals wait until the watermark retires the older Sessions
+/// versions, whose `revoke_session` and `authorize_session` would together
+/// keep a stale approval.
+#[test, expected_failure(abort_code = sessions::EBuilderApprovalsNotEnabled)]
+fun approving_a_builder_before_the_watermark_retires_older_sessions_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, owner, owner);
+    let tx_fields = &mut tx;
+    session_config::set_version_watermark_for_testing(
+        &mut tx_fields.sessions_config,
+        MAINNET_WATERMARK,
+    );
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::approve_session_builder(
+        &mut tx_fields.wrapper,
+        &tx_fields.sessions_config,
+        SESSION,
+        code_a,
+        APPROVED_MAX_FEE,
+        ctx,
+    );
+    abort EUnexpectedSuccess
+}
+
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun approving_a_builder_for_an_unauthorized_session_aborts() {
     let mut fixture = setup();

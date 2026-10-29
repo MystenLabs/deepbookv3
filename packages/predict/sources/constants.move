@@ -15,6 +15,12 @@ public macro fun current_version(): u64 { 5 }
 /// `current_version!()` never closes placement again until its floor is bumped.
 public(package) macro fun cutover_version(): u64 { 4 }
 
+/// The version floor at which builder admission opens: the first version whose fill charges the
+/// builder fee an order's receipt records. Every older version's fill charges the legacy fee from
+/// the receipt's builder code instead, so a builder order must never be fillable by one. Fixed,
+/// like `cutover_version!()`.
+public(package) macro fun builder_fee_version(): u64 { 5 }
+
 // === Scaling ===
 
 /// Decimal exponent of `math::float_scaling!()` (i.e. `math::float_scaling!() == 10^9`).

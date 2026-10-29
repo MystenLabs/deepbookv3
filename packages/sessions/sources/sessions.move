@@ -37,12 +37,19 @@ const ESessionNotAuthorized: u64 = 1;
 const ESessionLimitExceeded: u64 = 2;
 const EBuilderNotApproved: u64 = 3;
 const EBuilderFeeAboveApproved: u64 = 4;
+const EBuilderApprovalsNotEnabled: u64 = 5;
 
 // === Constants ===
 
 macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
 
 macro fun max_sessions(): u64 { 20 }
+
+/// The Sessions version floor at which builder approvals open: the first version
+/// whose `authorize_session` clears an approval left on a new grant. An older
+/// `authorize_session` would keep it, so approvals wait until the watermark
+/// retires every older version.
+macro fun builder_approval_version(): u64 { 4 }
 
 // === Structs ===
 
@@ -168,6 +175,8 @@ public fun authorize_session(
 /// and only for a session already authorized (`ESessionNotAuthorized`), so an app
 /// calls it right after `authorize_session` in the same transaction. The
 /// approval lasts until `revoke_session`; re-authorizing the session keeps it.
+/// Aborts `EBuilderApprovalsNotEnabled` until the `SessionsConfig` watermark
+/// reaches the first version that clears stale approvals.
 public fun approve_session_builder(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
@@ -177,6 +186,10 @@ public fun approve_session_builder(
     ctx: &mut TxContext,
 ) {
     sessions_config.assert_version();
+    assert!(
+        sessions_config.version_watermark() >= builder_approval_version!(),
+        EBuilderApprovalsNotEnabled,
+    );
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     assert!(
         account.has_data<SessionsApp>()

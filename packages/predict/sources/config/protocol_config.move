@@ -51,6 +51,7 @@ const ENotFlushOperator: u64 = 12;
 const ECutoverNotReached: u64 = 13;
 const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
+const EBuilderFeeCutoverNotReached: u64 = 16;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -917,6 +918,17 @@ public(package) fun chk_flow<W: drop>(config: &ProtocolConfig) {
 /// before its own floor bump.
 public(package) fun chk_cutover(config: &ProtocolConfig) {
     assert!(config.version_watermark >= constants::cutover_version!(), ECutoverNotReached);
+}
+
+/// Abort until the watermark has reached `constants::builder_fee_version!()`, which
+/// retires every package version whose fill ignores the builder fee a receipt
+/// records. Builder admission waits for it, so no older resolver that still
+/// shares the queue can fill a builder order at the legacy fee.
+public(package) fun chk_bldr_cut(config: &ProtocolConfig) {
+    assert!(
+        config.version_watermark >= constants::builder_fee_version!(),
+        EBuilderFeeCutoverNotReached,
+    );
 }
 
 /// Abort only when the running package version is below the watermark floor.
