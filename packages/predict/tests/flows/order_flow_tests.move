@@ -915,8 +915,8 @@ fun releasing_a_committed_mint_returns_the_reservation() {
     finish(fx, market, account);
 }
 
-/// A named builder fee comes out of the escrow and leaves the market, and
-/// admission returns the fee the fill charges.
+/// A named builder fee comes out of the escrow and leaves the market, and the
+/// receipt records the fee the fill charges.
 #[test]
 fun a_builder_fee_comes_out_of_the_escrow() {
     let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
@@ -925,17 +925,16 @@ fun a_builder_fee_comes_out_of_the_escrow() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
-    let (mut receipt, fee) = admit_builder(&mut fx, &mut market, &mut account, builder);
-    assert_eq!(fee, BUILDER_FEE_PER_CONTRACT);
+    let mut receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
+    assert_eq!(receipt.builder_fee_per_contract(), BUILDER_FEE_PER_CONTRACT);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let cash_before = helpers::market(&market).cash_balance();
 
-    let (reason, kept, change, _, amount, _, builder, referral, _, _) = fill_with_fee(
+    let (reason, kept, change, _, amount, _, builder, referral, _, _) = fill(
         &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
-        fee,
     );
 
     assert_eq!(reason, 0);
@@ -951,7 +950,7 @@ fun a_builder_fee_comes_out_of_the_escrow() {
 }
 
 /// A named fee above the builder fee cap is charged at the cap: admission
-/// returns the capped fee and the fill charges it.
+/// records the capped fee in the receipt and the fill charges it.
 #[test]
 fun a_builder_fee_above_the_cap_is_charged_at_the_cap() {
     let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
@@ -961,16 +960,15 @@ fun a_builder_fee_above_the_cap_is_charged_at_the_cap() {
     fx.set_builder_fee_cap_bundle(&mut market, LOW_BUILDER_FEE_CAP);
     let mut account = fx.take_account_bundle(&trader);
     let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
-    let (mut receipt, fee) = admit_builder(&mut fx, &mut market, &mut account, builder);
-    assert_eq!(fee, LOW_BUILDER_FEE_CAP);
+    let mut receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
+    assert_eq!(receipt.builder_fee_per_contract(), LOW_BUILDER_FEE_CAP);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
 
-    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill_with_fee(
+    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill(
         &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
-        fee,
     );
 
     assert_eq!(reason, 0);
@@ -983,24 +981,23 @@ fun a_builder_fee_above_the_cap_is_charged_at_the_cap() {
 }
 
 /// A code attached to the account no longer names a builder: the plain
-/// admission records none, and a fee passed to the fill for that receipt is not
-/// charged, because a fee only goes to a code the receipt records.
+/// admission records no code and no fee, and the fill charges none.
 #[test]
-fun an_attached_code_names_no_builder_and_a_fee_without_one_is_not_charged() {
+fun an_attached_code_names_no_builder() {
     let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
     fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
     fx.scenario_mut().next_tx(trader.owner());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    assert_eq!(receipt.builder_fee_per_contract(), 0);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
 
-    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill_with_fee(
+    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill(
         &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
-        BUILDER_FEE_PER_CONTRACT,
     );
 
     assert_eq!(reason, 0);
@@ -1022,16 +1019,15 @@ fun a_referral_basis_excludes_the_builder_fee() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
-    let (mut receipt, fee) = admit_builder(&mut fx, &mut market, &mut account, builder);
+    let mut receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let cash_before = helpers::market(&market).cash_balance();
 
-    let (reason, kept, change, _, amount, _, builder, referral, _, _) = fill_with_fee(
+    let (reason, kept, change, _, amount, _, builder, referral, _, _) = fill(
         &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
-        fee,
     );
 
     assert_eq!(reason, 0);
@@ -1233,17 +1229,16 @@ fun a_denied_builders_mint_fee_stays_in_market_cash() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
-    let (mut receipt, fee) = admit_builder(&mut fx, &mut market, &mut account, builder);
+    let mut receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let cash_before = helpers::market(&market).cash_balance();
 
     let deny_list = usdc_deny_list::take(fx.scenario_mut());
-    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill_with_fee_against(
+    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill_against(
         &mut fx,
         &mut market,
         receipt,
         escrow(BUDGET + ORDER_FEE, subsidy),
-        fee,
         &deny_list,
     );
 
@@ -1274,7 +1269,7 @@ fun a_denied_builders_sell_fee_stays_in_market_cash() {
     let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
     fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
     let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
-    let sell_fee = admit_sell_builder(
+    admit_sell_builder(
         &mut fx,
         &mut market,
         &mut account,
@@ -1288,12 +1283,11 @@ fun a_denied_builders_sell_fee_stays_in_market_cash() {
     let cash_before = helpers::market(&market).cash_balance();
 
     let deny_list = usdc_deny_list::take(fx.scenario_mut());
-    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill_with_fee_against(
+    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill_against(
         &mut fx,
         &mut market,
         receipt,
         escrow(ORDER_FEE, subsidy),
-        sell_fee,
         &deny_list,
     );
 
@@ -1330,7 +1324,7 @@ fun a_sells_builder_fee_stops_at_the_proceeds() {
     let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
     fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
     let builder = fx.builder_fee(code_id, WHOLE_PAYOUT_FEE);
-    let sell_fee = admit_sell_builder(
+    admit_sell_builder(
         &mut fx,
         &mut market,
         &mut account,
@@ -1340,16 +1334,15 @@ fun a_sells_builder_fee_stops_at_the_proceeds() {
         SELL_TAU,
         builder,
     );
-    assert_eq!(sell_fee, WHOLE_PAYOUT_FEE);
+    assert_eq!(receipt.builder_fee_per_contract(), WHOLE_PAYOUT_FEE);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, SELL_TAU, live_price());
     let cash_before = helpers::market(&market).cash_balance();
 
-    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill_with_fee(
+    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill(
         &mut fx,
         &mut market,
         receipt,
         escrow(ORDER_FEE, subsidy),
-        sell_fee,
     );
 
     assert_eq!(reason, 0);
@@ -1937,7 +1930,7 @@ fun admit_builder(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     builder: BuilderFee,
-): (OrderReceipt, u64) {
+): OrderReceipt {
     let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
     let (wrapper, _) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
@@ -1979,7 +1972,7 @@ fun admit_sell_builder(
     min_proceeds: u64,
     tau_ms: u64,
     builder: BuilderFee,
-): u64 {
+) {
     let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
     let (wrapper, _) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
@@ -2005,61 +1998,7 @@ fun admit_sell_builder(
         tau_ms + DEADLINE_AFTER_TAU_MS,
         clock,
         ctx,
-    )
-}
-
-fun fill_with_fee(
-    fx: &mut Fixture,
-    market: &mut MarketBundle,
-    receipt: OrderReceipt,
-    escrow: Balance<USDC>,
-    builder_fee_per_contract: u64,
-): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
-    let none_denied = deny_list::new_for_testing(fx.scenario_mut().ctx());
-    let (
-        reason,
-        kept,
-        change,
-        quantity,
-        amount,
-        fee,
-        builder,
-        referral,
-        used,
-        impact,
-    ) = fill_with_fee_against(
-        fx,
-        market,
-        receipt,
-        escrow,
-        builder_fee_per_contract,
-        &none_denied,
     );
-    destroy(none_denied);
-    (reason, kept, change, quantity, amount, fee, builder, referral, used, impact)
-}
-
-fun fill_with_fee_against(
-    fx: &mut Fixture,
-    market: &mut MarketBundle,
-    receipt: OrderReceipt,
-    escrow: Balance<USDC>,
-    builder_fee_per_contract: u64,
-    deny_list: &DenyList,
-): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
-    let (em, config, _, _, _) = market.market_parts_mut();
-    let (clock, ctx) = fx.clock_and_ctx();
-    expiry_market::try_fill_with_builder_fee(
-        TestFlow(),
-        em,
-        config,
-        receipt,
-        escrow,
-        builder_fee_per_contract,
-        deny_list,
-        clock,
-        ctx,
-    )
 }
 
 /// `try_pay_settled` with no address denied.

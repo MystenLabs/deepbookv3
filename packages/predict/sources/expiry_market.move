@@ -24,10 +24,9 @@
 ///
 /// A trade that pays a builder names its code and fee per contract
 /// (`builder_code::BuilderFee`). `admit_mint_with_builder` and
-/// `admit_sell_with_builder` cap the fee at `protocol_config::builder_fee_cap`,
-/// record the code in the receipt, and return the capped fee, which the companion
-/// keeps and passes back to `try_fill_with_builder_fee`. The plain admissions
-/// name no builder and charge none.
+/// `admit_sell_with_builder` cap the fee at `protocol_config::builder_fee_cap` and
+/// record the code and the capped fee in the receipt, and the fill charges what
+/// the receipt records. The plain admissions name no builder and charge none.
 ///
 /// Mainnet USDC is a regulated coin: Sui aborts a transaction that sends it to
 /// an address on its deny list, or to anyone while it is globally paused. So the
@@ -195,7 +194,10 @@ public struct RedeemQuote has copy, drop {
 /// stage reaches the next. A sell refund restores the open position whole and a
 /// partial close leaves `held_quantity` less the closed quantity. `budget` caps
 /// a mint's all-in cost, and a fill requires escrow of at least `budget +
-/// order_fee + subsidy_reserved`.
+/// order_fee + subsidy_reserved`. The receipt cannot gain a field, so an order
+/// admitted with a builder keeps its capped fee per contract in the field its
+/// stage never uses (`min_proceeds` for a mint, `max_premium` for a sell); the
+/// open stage zeroes both.
 public struct OrderReceipt has store {
     expiry_market_id: ID,
     stage: u8,
@@ -207,10 +209,14 @@ public struct OrderReceipt has store {
     higher_tick: u64,
     /// The exact mint quantity, or the sell's close quantity.
     quantity: u64,
+    /// A mint's premium cap. A sell never uses it, so a sell admitted with a
+    /// builder keeps its capped builder fee per contract here.
     max_premium: u64,
     min_quantity: u64,
     max_probability: u64,
     min_probability: u64,
+    /// A sell's proceeds floor. A mint never uses it, so a mint admitted with a
+    /// builder keeps its capped builder fee per contract here.
     min_proceeds: u64,
     /// Earliest Pyth generation time the order may price at.
     tau_ms: u64,
@@ -658,6 +664,21 @@ public fun receipt_info(receipt: &OrderReceipt): (ID, u8, ID, u256, u32, u64, u6
     )
 }
 
+/// Return the capped builder fee per contract an admitted order pays at its
+/// fill, which the fill charges to the code the receipt records: `0` for an
+/// order that names no builder and for an open receipt. For the order-flow
+/// companion's reads and SDK previews of a waiting order.
+public fun builder_fee_per_contract(receipt: &OrderReceipt): u64 {
+    if (receipt.parties.builder_code_id.is_none()) return 0;
+    if (receipt.stage == constants::receipt_stage_mint!()) {
+        receipt.min_proceeds
+    } else if (receipt.stage == constants::receipt_stage_sell!()) {
+        receipt.max_premium
+    } else {
+        0
+    }
+}
+
 // === MintQuote Getters ===
 
 /// Return the sized quantity for SDK and devInspect quote consumers.
@@ -1065,7 +1086,7 @@ public fun admit_mint<W: drop>(
     ctx: &TxContext,
 ): OrderReceipt {
     config.chk_flow<W>();
-    let (receipt, _) = market.admit_mnt(
+    market.admit_mnt(
         config,
         account,
         propbook_registry,
@@ -1088,16 +1109,15 @@ public fun admit_mint<W: drop>(
         deadline_ms,
         clock,
         ctx,
-    );
-    receipt
+    )
 }
 
 /// `admit_mint` for an order that names a builder. `builder` is the code the
 /// trade pays and its fee per contract; admission caps the fee at
-/// `protocol_config::builder_fee_cap`, records the code in the receipt, and prices
-/// the order's own limits at the clock with the capped fee. Returns the receipt
-/// and the capped fee, which the companion keeps for the order and passes to
-/// `try_fill_with_builder_fee`. Aborts as `admit_mint` does.
+/// `protocol_config::builder_fee_cap`, records the code and the capped fee in
+/// the receipt, and prices the order's own limits at the clock with that fee. The
+/// fill charges the recorded fee, so a later cap change does not reach the
+/// order. Aborts as `admit_mint` does.
 public fun admit_mint_with_builder<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
@@ -1123,7 +1143,7 @@ public fun admit_mint_with_builder<W: drop>(
     deadline_ms: u64,
     clock: &Clock,
     ctx: &TxContext,
-): (OrderReceipt, u64) {
+): OrderReceipt {
     config.chk_flow<W>();
     market.admit_mnt(
         config,
@@ -1214,9 +1234,9 @@ public fun admit_sell<W: drop>(
 /// `admit_sell` for a sell that names a builder. `builder` is the code the sell
 /// pays and its fee per contract; admission caps the fee at
 /// `protocol_config::builder_fee_cap`, records the code in the receipt in place
-/// of the mint's, and prices the close's floors at the clock with the capped fee.
-/// Returns the capped fee, which the companion keeps for the order and passes to
-/// `try_fill_with_builder_fee`. Aborts as `admit_sell` does.
+/// of the mint's along with the capped fee, and prices the close's floors at the
+/// clock with that fee. The fill charges the recorded fee. Aborts as
+/// `admit_sell` does.
 public fun admit_sell_with_builder<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
@@ -1238,7 +1258,7 @@ public fun admit_sell_with_builder<W: drop>(
     deadline_ms: u64,
     clock: &Clock,
     ctx: &TxContext,
-): u64 {
+) {
     config.chk_flow<W>();
     market.admit_sl(
         config,
@@ -1349,36 +1369,113 @@ public fun try_fill<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    receipt: OrderReceipt,
-    escrow: Balance<USDC>,
+    mut receipt: OrderReceipt,
+    mut escrow: Balance<USDC>,
     deny_list: &DenyList,
     clock: &Clock,
     ctx: &TxContext,
 ): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
     config.chk_flow<W>();
-    market.fill_order(config, receipt, escrow, 0, deny_list, clock, ctx)
-}
-
-/// `try_fill` for an order admitted with a builder: charges
-/// `builder_fee_per_contract`, the capped fee `admit_mint_with_builder` or
-/// `admit_sell_with_builder` returned for this order, to the code its receipt
-/// records. A mint pays `quantity * fee`; a sell pays `close_quantity * fee`,
-/// capped at the redeem value left after the trading fee. The fee is charged only
-/// when the receipt records a code, so an order admitted without one pays none.
-/// Returns and aborts as `try_fill` does.
-public fun try_fill_with_builder_fee<W: drop>(
-    _w: W,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    receipt: OrderReceipt,
-    escrow: Balance<USDC>,
-    builder_fee_per_contract: u64,
-    deny_list: &DenyList,
-    clock: &Clock,
-    ctx: &TxContext,
-): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
-    config.chk_flow<W>();
-    market.fill_order(config, receipt, escrow, builder_fee_per_contract, deny_list, clock, ctx)
+    config.chk_version();
+    config.chk_no_snap();
+    market.reconcile(config);
+    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
+    let is_mint = receipt.stage == constants::receipt_stage_mint!();
+    assert!(
+        (is_mint || receipt.stage == constants::receipt_stage_sell!()) && receipt.spot > 0,
+        EWrongStage,
+    );
+    assert!(
+        escrow.value() >= receipt.budget + receipt.order_fee + receipt.subsidy_reserved,
+        EEscrowMismatch,
+    );
+    let bfee = receipt.builder_fee_per_contract();
+    let now = clock.timestamp_ms();
+    // Admission put the deadline at least `deadline_expiry_margin_ms` before
+    // expiry and settlement needs `now >= expiry`, so this also refuses an
+    // expired or settled market.
+    let mut reason = constants::fill_reason_deadline!();
+    if (now < receipt.deadline_ms) {
+        // Refused before anything moves, so a fill never sends USDC where the
+        // send would abort the transaction.
+        reason = constants::fill_reason_recipient_denied!();
+        if (!denied(deny_list, receipt.parties.receive_address, ctx)) {
+            let pricer = pricing::pricer_at(
+                &receipt.vol,
+                receipt.spot,
+                receipt.generation_us / 1000,
+                receipt.tick_ms,
+                market.id(),
+                market.expiry,
+            );
+            reason = constants::fill_reason_admission!();
+            if (pricer.is_some() && is_mint) {
+                let (fill_reason, quote, referral_fee) = market.fill_mint(
+                    config,
+                    &mut receipt,
+                    pricer.borrow(),
+                    &mut escrow,
+                    bfee,
+                    deny_list,
+                    now,
+                    ctx,
+                );
+                if (fill_reason == 0) {
+                    // Allocation first, then the pins go, so the filled nodes hold
+                    // the order.
+                    market.unwind(&receipt, false);
+                    return (
+                        0,
+                        option::some(to_open(receipt)),
+                        escrow,
+                        quote.quantity,
+                        quote.all_in_cost,
+                        quote.trading_fee,
+                        quote.builder_fee,
+                        referral_fee,
+                        quote.fee_incentive_subsidy,
+                        quote.inventory_impact_charge,
+                    )
+                };
+                reason = fill_reason;
+            } else if (pricer.is_some()) {
+                let (fill_reason, remainder, quote) = market.fill_close(
+                    &mut receipt,
+                    pricer.borrow(),
+                    &mut escrow,
+                    bfee,
+                    deny_list,
+                    now,
+                    ctx,
+                );
+                if (fill_reason == 0) {
+                    market.unwind(&receipt, false);
+                    let kept = if (remainder) {
+                        option::some(to_open(receipt))
+                    } else {
+                        drop_receipt(receipt);
+                        option::none()
+                    };
+                    return (
+                        0,
+                        kept,
+                        escrow,
+                        quote.close_quantity,
+                        quote.proceeds,
+                        quote.trading_fee,
+                        quote.builder_fee,
+                        0,
+                        0,
+                        quote.inventory_impact_rebate,
+                    )
+                };
+                reason = fill_reason;
+            };
+        };
+    };
+    let kept = market.refund_order(config, receipt, &mut escrow, reason, true);
+    let zero = 0;
+    (reason, kept, escrow, zero, zero, zero, zero, zero, zero, zero)
 }
 
 /// Take an admitted order out without filling it: the companion's deadline,
@@ -2246,8 +2343,7 @@ fun settle_live_redeem_payment(
 
 // --- Order flow ---
 
-/// `admit_mint`'s body, for an order that names `builder` or none. Returns the
-/// receipt and the capped fee per contract.
+/// `admit_mint`'s body, for an order that names `builder` or none.
 fun admit_mnt(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -2272,7 +2368,7 @@ fun admit_mnt(
     deadline_ms: u64,
     clock: &Clock,
     ctx: &TxContext,
-): (OrderReceipt, u64) {
+): OrderReceipt {
     let (vol, pricer) = market.admit_gates(
         config,
         true,
@@ -2328,7 +2424,7 @@ fun admit_mnt(
     pin(&mut ledger.pins, higher_tick);
     ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
     let zero = 0;
-    let receipt = OrderReceipt {
+    OrderReceipt {
         expiry_market_id: market.id(),
         stage: constants::receipt_stage_mint!(),
         kind,
@@ -2340,7 +2436,8 @@ fun admit_mnt(
         min_quantity,
         max_probability,
         min_probability: zero,
-        min_proceeds: zero,
+        // A mint never uses its sell floor, so it carries the builder fee.
+        min_proceeds: bfee,
         tau_ms,
         deadline_ms,
         channel,
@@ -2360,12 +2457,10 @@ fun admit_mnt(
         root_id: (zero as u256),
         opened_at_ms: zero,
         held_quantity: zero,
-    };
-    (receipt, bfee)
+    }
 }
 
-/// `admit_sell`'s body, for a sell that names `builder` or none. Returns the
-/// capped fee per contract.
+/// `admit_sell`'s body, for a sell that names `builder` or none.
 fun admit_sl(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -2386,7 +2481,7 @@ fun admit_sl(
     deadline_ms: u64,
     clock: &Clock,
     ctx: &TxContext,
-): u64 {
+) {
     let (vol, pricer) = market.admit_gates(
         config,
         false,
@@ -2440,7 +2535,8 @@ fun admit_sl(
     receipt.vol = vol;
     receipt.order_fee = order_fee;
     receipt.cash_need = cash_need;
-    bfee
+    // A sell never uses the mint's premium cap, so it carries the builder fee.
+    receipt.max_premium = bfee;
 }
 
 /// The code and capped fee per contract an order's optional `builder` names, or
@@ -2449,120 +2545,6 @@ fun bldr_terms(builder: &Option<BuilderFee>, config: &ProtocolConfig): (Option<I
     if (builder.is_none()) return (option::none(), 0);
     let builder = builder.borrow();
     (option::some(builder.code_id()), builder.fee_per_contract().min(config.builder_fee_cap()))
-}
-
-/// `try_fill`'s body, charging `bfee` per contract to the receipt's builder code.
-fun fill_order(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    mut receipt: OrderReceipt,
-    mut escrow: Balance<USDC>,
-    bfee: u64,
-    deny_list: &DenyList,
-    clock: &Clock,
-    ctx: &TxContext,
-): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
-    config.chk_version();
-    config.chk_no_snap();
-    market.reconcile(config);
-    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
-    let is_mint = receipt.stage == constants::receipt_stage_mint!();
-    assert!(
-        (is_mint || receipt.stage == constants::receipt_stage_sell!()) && receipt.spot > 0,
-        EWrongStage,
-    );
-    assert!(
-        escrow.value() >= receipt.budget + receipt.order_fee + receipt.subsidy_reserved,
-        EEscrowMismatch,
-    );
-    // A fee only ever goes to a code the receipt records.
-    let bfee = if (receipt.parties.builder_code_id.is_some()) bfee else 0;
-    let now = clock.timestamp_ms();
-    // Admission put the deadline at least `deadline_expiry_margin_ms` before
-    // expiry and settlement needs `now >= expiry`, so this also refuses an
-    // expired or settled market.
-    let mut reason = constants::fill_reason_deadline!();
-    if (now < receipt.deadline_ms) {
-        // Refused before anything moves, so a fill never sends USDC where the
-        // send would abort the transaction.
-        reason = constants::fill_reason_recipient_denied!();
-        if (!denied(deny_list, receipt.parties.receive_address, ctx)) {
-            let pricer = pricing::pricer_at(
-                &receipt.vol,
-                receipt.spot,
-                receipt.generation_us / 1000,
-                receipt.tick_ms,
-                market.id(),
-                market.expiry,
-            );
-            reason = constants::fill_reason_admission!();
-            if (pricer.is_some() && is_mint) {
-                let (fill_reason, quote, referral_fee) = market.fill_mint(
-                    config,
-                    &mut receipt,
-                    pricer.borrow(),
-                    &mut escrow,
-                    bfee,
-                    deny_list,
-                    now,
-                    ctx,
-                );
-                if (fill_reason == 0) {
-                    // Allocation first, then the pins go, so the filled nodes hold
-                    // the order.
-                    market.unwind(&receipt, false);
-                    return (
-                        0,
-                        option::some(to_open(receipt)),
-                        escrow,
-                        quote.quantity,
-                        quote.all_in_cost,
-                        quote.trading_fee,
-                        quote.builder_fee,
-                        referral_fee,
-                        quote.fee_incentive_subsidy,
-                        quote.inventory_impact_charge,
-                    )
-                };
-                reason = fill_reason;
-            } else if (pricer.is_some()) {
-                let (fill_reason, remainder, quote) = market.fill_close(
-                    &mut receipt,
-                    pricer.borrow(),
-                    &mut escrow,
-                    bfee,
-                    deny_list,
-                    now,
-                    ctx,
-                );
-                if (fill_reason == 0) {
-                    market.unwind(&receipt, false);
-                    let kept = if (remainder) {
-                        option::some(to_open(receipt))
-                    } else {
-                        drop_receipt(receipt);
-                        option::none()
-                    };
-                    return (
-                        0,
-                        kept,
-                        escrow,
-                        quote.close_quantity,
-                        quote.proceeds,
-                        quote.trading_fee,
-                        quote.builder_fee,
-                        0,
-                        0,
-                        quote.inventory_impact_rebate,
-                    )
-                };
-                reason = fill_reason;
-            };
-        };
-    };
-    let kept = market.refund_order(config, receipt, &mut escrow, reason, true);
-    let zero = 0;
-    (reason, kept, escrow, zero, zero, zero, zero, zero, zero, zero)
 }
 
 /// The gates, timing checks, and volatility snapshot both admissions share,

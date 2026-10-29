@@ -530,6 +530,29 @@ fun revoking_clears_the_builder_and_reauthorizing_keeps_it() {
     finish(fixture);
 }
 
+/// The pre-upgrade `revoke_session` stays callable and leaves the builder
+/// approval behind. A new grant for that address clears it, so the session
+/// needs a fresh approval.
+#[test]
+fun a_new_grant_clears_an_approval_the_old_revoke_left_behind() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, owner, owner);
+    let tx_fields = &mut tx;
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::revoke_session_without_builder_for_testing(&mut tx_fields.wrapper, SESSION, ctx);
+    end_tx(tx);
+    assert!(session_builder(&mut fixture).is_some());
+
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    assert!(session_builder(&mut fixture).is_none());
+    finish(fixture);
+}
+
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun approving_a_builder_for_an_unauthorized_session_aborts() {
     let mut fixture = setup();
@@ -559,7 +582,7 @@ fun only_the_owner_can_approve_a_builder() {
 }
 
 #[test]
-fun an_approved_session_mint_saves_its_fee_and_the_fill_pays_it() {
+fun an_approved_session_mint_records_its_fee_and_the_fill_pays_it() {
     let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let code_a = create_code(&mut fixture, CODE_A_INDEX);

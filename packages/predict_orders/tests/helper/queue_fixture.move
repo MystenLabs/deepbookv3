@@ -253,8 +253,8 @@ public fun set_builder_fee_cap(q: &mut QueueTest, cap: u64) {
     q.fx.set_builder_fee_cap_bundle(&mut q.market, cap);
 }
 
-/// The builder fee per contract the queue saved for `record_id`.
-public fun saved_builder_fee(q: &QueueTest, record_id: u64): u64 {
+/// The builder fee per contract `record_id`'s receipt records.
+public fun builder_fee_of(q: &QueueTest, record_id: u64): u64 {
     q.queue.builder_fee_per_contract(record_id)
 }
 

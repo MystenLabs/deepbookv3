@@ -122,7 +122,9 @@ public fun approved_max_fee_per_contract(builder: &SessionBuilder): u64 {
 }
 
 /// Authorize `session` from execution time for at most 30 days.
-/// Accounts may store at most 20 addresses; reauthorization replaces in place.
+/// Accounts may store at most 20 addresses; reauthorization replaces in place
+/// and keeps the session's builder approval, while a new grant starts without
+/// one.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
@@ -140,11 +142,22 @@ public fun authorize_session(
         account.attach(permit<SessionsApp>(), SessionsData { sessions: vec_map::empty() });
     };
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
-    if (data.sessions.contains(&session)) {
-        *data.sessions.get_mut(&session) = expires_at_ms;
-    } else {
+    let is_new = !data.sessions.contains(&session);
+    if (is_new) {
         assert!(data.sessions.length() < max_sessions!(), ESessionLimitExceeded);
         data.sessions.insert(session, expires_at_ms);
+    } else {
+        *data.sessions.get_mut(&session) = expires_at_ms;
+    };
+    // The pre-upgrade `revoke_session` removes a session but not its builder
+    // approval, so a new grant starts without one.
+    if (is_new && account.has_data<SessionBuildersApp>()) {
+        let builders = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
+            permit<SessionBuildersApp>(),
+        );
+        if (builders.approvals.contains(&session)) {
+            let (_, _) = builders.approvals.remove(&session);
+        };
     };
     event::emit(SessionAuthorized { account_id, session, expires_at_ms });
 }
@@ -890,4 +903,17 @@ fun chk_builder(wrapper: &AccountWrapper, session: address, code: &BuilderCode, 
     let approval = session_builder(wrapper, session);
     assert!(approval.is_some() && approval.borrow().code_id == code.id(), EBuilderNotApproved);
     assert!(fee <= approval.borrow().max_fee_per_contract, EBuilderFeeAboveApproved);
+}
+
+#[test_only]
+/// The pre-upgrade `revoke_session`, which removes the session but not its
+/// builder approval. That version stays callable after an upgrade.
+public fun revoke_session_without_builder_for_testing(
+    wrapper: &mut AccountWrapper,
+    session: address,
+    ctx: &mut TxContext,
+) {
+    let account = wrapper.load_account_mut(account::generate_auth(ctx));
+    let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
+    let (_, _) = data.sessions.remove(&session);
 }

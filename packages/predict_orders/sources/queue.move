@@ -61,15 +61,9 @@ use sui::{
     clock::Clock,
     coin,
     deny_list::DenyList,
-    derived_object,
-    dynamic_field as df
+    derived_object
 };
 use usdc::usdc::USDC;
-
-use fun df::add as UID.add;
-use fun df::borrow as UID.borrow;
-use fun df::exists as UID.exists_;
-use fun df::remove as UID.remove;
 
 const EWrongDesk: u64 = 0;
 const EWrongMarket: u64 = 1;
@@ -116,13 +110,6 @@ public struct MarketQueue has key {
     /// Set by the `settle_step` call that emits `MarketPayoutsCompleted`.
     payouts_completed: bool,
 }
-
-/// Dynamic-field key on a `MarketQueue` for the builder fee per contract a record's
-/// order pays at its fill: the capped fee Predict's builder admission returned, in
-/// FLOAT_SCALING of the $1 payout. Added after deploy, so it lives off the record's
-/// layout. Saved only for a nonzero fee and removed when the record's receipt
-/// leaves for a fill or a release, so an absent field reads as `0`.
-public struct BuilderFeeKey(u64) has copy, drop, store;
 
 #[test_only]
 /// Stands in for one verified Lazer update in `commit_for_testing`, since a
@@ -215,12 +202,13 @@ public fun oldest_unfinished_tau_ms(queue: &MarketQueue): Option<u64> {
 }
 
 /// Return the builder fee per contract `record_id`'s order pays at its fill, in
-/// FLOAT_SCALING of the $1 payout: the capped fee Predict's admission returned, or
-/// `0` for an order that names no builder or once its receipt has left for a
-/// fill or a release. For SDK and devInspect reads of a waiting order.
+/// FLOAT_SCALING of the $1 payout: the capped fee its receipt records, or `0` for
+/// a missing record, a record holding no receipt or an open one, and an order
+/// that names no builder. For SDK and devInspect reads of a waiting order.
 public fun builder_fee_per_contract(queue: &MarketQueue, record_id: u64): u64 {
-    let key = BuilderFeeKey(record_id);
-    if (queue.id.exists_(key)) *queue.id.borrow(key) else 0
+    let view = queue.book.view(record_id);
+    if (view.is_none() || view.borrow().receipt_stage() == 0) return 0;
+    queue.book.receipt(record_id).builder_fee_per_contract()
 }
 
 /// Quote an early sell of `close_quantity` from the Open record `record_id` at a
@@ -370,10 +358,9 @@ public fun enqueue_exact_quantity(
 /// `enqueue_exact_quantity` for an order that names a builder: `code` is the
 /// builder code the trade pays and `builder_fee_per_contract` its fee per
 /// contract, in FLOAT_SCALING of the $1 payout. Predict caps the fee at
-/// `protocol_config::builder_fee_cap` and prices the order's limits with it, the
-/// queue keeps the capped fee for the fill, and the fill pays `quantity * fee` to
-/// the code. Refuses orders like `enqueue_exact_quantity`. Returns the new record
-/// ID.
+/// `protocol_config::builder_fee_cap`, records it in the order's receipt, and
+/// prices the order's limits with it, and the fill pays `quantity * fee` to the
+/// code. Refuses orders like `enqueue_exact_quantity`. Returns the new record ID.
 public fun enqueue_exact_quantity_with_builder(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -701,9 +688,9 @@ public fun enqueue_redeem_open(
 /// `enqueue_redeem_open` for a sell that names a builder: `code` is the builder
 /// code the sell pays and `builder_fee_per_contract` its fee per contract, in
 /// FLOAT_SCALING of the $1 payout. Predict caps the fee at
-/// `protocol_config::builder_fee_cap` and checks `min_proceeds` with it, the queue
-/// keeps the capped fee for the fill, and the fill pays `close_quantity * fee` to
-/// the code, capped at the redeem value left after the trading fee. Refuses sells
+/// `protocol_config::builder_fee_cap`, records it in the order's receipt, and
+/// checks `min_proceeds` with it, and the fill pays `close_quantity * fee` to the
+/// code, capped at the redeem value left after the trading fee. Refuses sells
 /// like `enqueue_redeem_open`. Returns the new record ID.
 public fun enqueue_redeem_open_with_builder(
     queue: &mut MarketQueue,
@@ -1093,9 +1080,9 @@ public fun claim_parked(
 // --- Placement ---
 
 /// The queued mints after their request is built: the queue's checks and τ, the
-/// escrow terms, Predict's admission, then the escrow withdrawal, the record, and
-/// the capped builder fee saved for the fill. `kind` picks the budget rule, and
-/// `builder` is the code and fee the order names, or none.
+/// escrow terms, Predict's admission, then the escrow withdrawal and the record.
+/// `kind` picks the budget rule, and `builder` is the code and fee the order
+/// names, or none.
 fun enqueue_mint(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -1133,7 +1120,7 @@ fun enqueue_mint(
     } else {
         budget
     };
-    let (receipt, bfee) = order_flow::admit_mint(
+    let receipt = order_flow::admit_mint(
         market,
         config,
         account,
@@ -1161,7 +1148,7 @@ fun enqueue_mint(
     let funds = account.withdraw<USDC>(budget + order_fee, ctx).into_balance();
     let referrer_account_id = account.referrer_account_id();
     let receive_address = account.receive_address();
-    let record_id = queue.place(
+    queue.place(
         market,
         kind,
         request,
@@ -1177,14 +1164,12 @@ fun enqueue_mint(
         referrer_account_id,
         option::none(),
         clock,
-    );
-    queue.save_bfee(record_id, bfee);
-    record_id
+    )
 }
 
 /// `enqueue_redeem_open`'s body, for a sell that names `builder` or none: the
-/// queue's checks, Predict's admission, the order-fee escrow, the sell record,
-/// and the capped builder fee saved for the fill.
+/// queue's checks, Predict's admission, the order-fee escrow, and the sell
+/// record.
 fun enqueue_sell(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -1228,7 +1213,7 @@ fun enqueue_sell(
     let order_fee = policy.order_fee();
     assert!(account.balance<USDC>(root, clock) >= order_fee, EFeeNotCovered);
     let (mut receipt, position) = queue.book.close_open_record(record_id);
-    let bfee = order_flow::admit_sell(
+    order_flow::admit_sell(
         market,
         config,
         account,
@@ -1267,7 +1252,7 @@ fun enqueue_sell(
     );
     let referrer_account_id = account.referrer_account_id();
     let receive_address = account.receive_address();
-    let sell_record_id = queue.place(
+    queue.place(
         market,
         order_queue::kind_redeem_open(),
         request,
@@ -1283,9 +1268,7 @@ fun enqueue_sell(
         referrer_account_id,
         option::some(record_id),
         clock,
-    );
-    queue.save_bfee(sell_record_id, bfee);
-    sell_record_id
+    )
 }
 
 /// The queue's own placement checks, in order: the desk floor and the queue's
@@ -1648,7 +1631,6 @@ fun fill_record(
     now_ms: u64,
 ) {
     let (receipt, funds) = queue.book.take_order(record_id);
-    let bfee = queue.take_bfee(record_id);
     let (
         reason,
         kept,
@@ -1660,7 +1642,7 @@ fun fill_record(
         referral_fee,
         subsidy_used,
         inventory_impact,
-    ) = order_flow::try_fill(market, config, receipt, funds, bfee, deny_list, clock, ctx);
+    ) = order_flow::try_fill(market, config, receipt, funds, deny_list, clock, ctx);
     let returned = change.value();
     queue.send_or_park(record_id, view, change, deny_list, ctx, now_ms);
     if (reason != 0) {
@@ -1810,7 +1792,6 @@ fun release_record(
     if (!order_queue::is_unfinished(status)) return false;
     let reason = if (status == order_queue::status_refund_due()) view.result().reason() else reason;
     let (receipt, funds) = queue.book.take_order(record_id);
-    queue.take_bfee(record_id);
     let (kept, change) = market.release(config, receipt, funds, reason, prune);
     let returned = change.value();
     queue.send_or_park(record_id, &view, change, deny_list, ctx, now_ms);
@@ -1932,19 +1913,6 @@ fun pay_open_record(
 }
 
 // --- Shared ---
-
-/// Save a record's capped builder fee for its fill. Zero saves nothing, so an
-/// order without a builder adds no storage.
-fun save_bfee(queue: &mut MarketQueue, record_id: u64, bfee: u64) {
-    if (bfee > 0) queue.id.add(BuilderFeeKey(record_id), bfee);
-}
-
-/// Remove and return a record's saved builder fee, or `0` without one, as its
-/// receipt leaves for a fill or a release.
-fun take_bfee(queue: &mut MarketQueue, record_id: u64): u64 {
-    let key = BuilderFeeKey(record_id);
-    if (queue.id.exists_(key)) queue.id.remove(key) else 0
-}
 
 /// The desk floor, and this queue's desk and market.
 fun assert_bound(queue: &MarketQueue, desk: &OrderDesk, market: &ExpiryMarket) {

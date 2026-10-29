@@ -240,9 +240,9 @@ fun enqueue_exact_quantity_records_escrows_and_announces_the_order() {
 }
 
 /// A mint that names a builder escrows exactly what a plain one does,
-/// announces its code, and the queue saves its fee per contract for the fill.
+/// announces its code, and its receipt records the fee per contract.
 #[test]
-fun a_builder_mint_announces_its_code_and_saves_its_fee() {
+fun a_builder_mint_announces_its_code_and_records_its_fee() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
     let account_id = q.account_id();
 
@@ -267,7 +267,7 @@ fun a_builder_mint_announces_its_code_and_saves_its_fee() {
     );
     assert_escrow(&record, QUANTITY_BUDGET, QUANTITY_SUBSIDY_BOUND, QUANTITY_CASH_NEED);
     assert_eq!(record.funds(), QUANTITY_BUDGET + ORDER_FEE);
-    assert_eq!(q.saved_builder_fee(record_id), BUILDER_FEE_PER_CONTRACT);
+    assert_eq!(q.builder_fee_of(record_id), BUILDER_FEE_PER_CONTRACT);
     assert_one_enqueued(ExpectedOrderEnqueued {
         expiry_market_id: q.expiry_id(),
         record_id,
