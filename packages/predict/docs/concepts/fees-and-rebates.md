@@ -20,11 +20,11 @@ leg_ramped_rate = leg_base_rate * expiry_fee_multiplier(time_to_expiry)
 leg_fee        = leg_ramped_rate * quantity
 trading_fee    = sum(leg_fee for each finite boundary)
 
-builder_fee     = min( trading_fee * builder_fee_multiplier , quantity * max_builder_fee_rate )
+builder_fee     = quantity * min( named_fee_per_contract , builder_fee_cap )
 referral_fee    = referral_fee_rate * (trading_fee - sponsor_subsidy)
 ```
 
-The base trading fee and the expiry ramp together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from that fee. The referral fee is not another charge: it is a distribution of protocol proceeds after the trader's total is fixed.
+The base trading fee and the expiry ramp together set the **fee rate** a trader pays. The builder fee is an **add-on** the trade names per contract, independent of the trading fee. The referral fee is not another charge: it is a distribution of protocol proceeds after the trader's total is fixed.
 
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
@@ -64,13 +64,21 @@ The ramp applies identically to mints and early sells, since both create or unwi
 
 ## 3. Builder fee add-on
 
-Front-ends and aggregators that route order flow to Predict can attach a **builder code** to a Predict account. When an account carries a builder code, each of its trades pays an additional builder fee on top of the trading fee:
+Front-ends and aggregators that route order flow to Predict earn a **builder fee** by naming their **builder code** and a fee per contract on each trade they build. The fee is a fraction of a contract's $1 payout in 1e9 scaling (5c is `50_000_000`), and the trader pays it on top of the trading fee:
 
 ```text
-builder_fee = min( trading_fee * builder_fee_multiplier , quantity * max_builder_fee_rate )
+builder_fee = quantity * min( named_fee_per_contract , builder_fee_cap )
 ```
 
-The builder fee is a fixed multiple (`builder_fee_multiplier`) of the trader's trading fee. It is capped at `max_builder_fee_rate · quantity` so that a high variance fee cannot push the builder cut to an unbounded share of notional. An account with no builder code pays no builder fee.
+`builder_fee_cap` is one admin setting on `ProtocolConfig` that caps every builder fee. It ships at 5c and can be set anywhere from 0 to the whole $1 payout. A trade that names a higher fee is charged the cap rather than refused, so a lower cap never breaks an app's trades. Admission caps the fee once and records it in the order's receipt, and the fill charges that recorded fee, so a later cap change does not touch orders already waiting.
+
+A trade names its builder through the `_with_builder` versions of the queued trade calls, which take the `BuilderCode` object and the fee. Anyone can create a builder code. A trader that names its own code pays the fee to itself. A trade that names no builder pays no builder fee. A code attached to the account with `set_builder_code` no longer affects fees: an account is shared by every app its owner uses, so a code attached once would pay one app for trades other apps built.
+
+On an early sell the builder fee is charged per contract closed and stops at what the sale returns after the trading fee, so a sell never costs the trader more than it pays out. A sell of a nearly worthless position can therefore return nothing and still fill. Settlement payouts and refunded orders pay no builder fee: the fee is charged only when an order fills. On a mint the builder fee counts toward the maximum-payout bound (RP-33): a mint whose all-in cost, builder fee included, exceeds its quantity is refused, so a builder fee can cause an exact-quantity mint on a very likely range to be refused, or an exact-cost mint to size down.
+
+Session-key trades name a builder only within what the account owner approved: `sessions::approve_session_builder` pins one code and a maximum fee per session, and the session's `_with_builder` calls refuse any other code or a higher fee.
+
+Builder fees open only after the version cutovers. Older package versions stay callable until their watermarks move, and an older fill would charge the legacy fee from the order's builder code instead of the fee its receipt records. So an order that names a builder aborts `EBuilderFeeCutoverNotReached` until Predict's watermark reaches version 5, while an order that names none is admitted as before, and session builder approvals abort `EBuilderApprovalsNotEnabled` until the Sessions watermark reaches version 4.
 
 The builder fee is split off the trader's payment and routed to the builder code's own object address using Sui's accumulator-based fund custody on the `BuilderCode` object — the USDC accumulates against the code object's address balance, and the code's owner can later claim all settled builder fees in a single call. The owner is fixed at creation and is the only address that can claim. For the object model and custody mechanism, see [../design/architecture.md](../design/architecture.md).
 
@@ -85,7 +93,7 @@ referral_basis = trading_fee - sponsor_subsidy
 referral_fee   = floor(referral_basis * referral_fee_rate)
 ```
 
-Sponsor-funded subsidy is subtracted because it is not paid by the trader. Builder fees are already owned by the builder, and inventory-impact charges are isolated risk escrow, so neither enters the referral basis. Referrals apply only to mints. Early sells and settled redeems do not pay referral fees. Before package version 4 the basis also included the congestion surcharge.
+Sponsor-funded subsidy is subtracted because it is not paid by the trader. Builder fees belong to the builder the trade names, and inventory-impact charges are isolated risk escrow, so neither enters the referral basis. Referrals apply only to mints. Early sells and settled redeems do not pay referral fees. Before package version 4 the basis also included the congestion surcharge.
 
 The referral amount is split from the mint payment before the remaining protocol proceeds enter expiry cash. It therefore leaves `MintQuote.all_in_cost`, `max_cost`, and the trader's account debit unchanged. `MintQuote` describes what the trader pays, not how the protocol distributes those proceeds.
 
@@ -187,7 +195,7 @@ flowchart TD
     P[Range probability p] --> BF["Base fee: max(base_fee * sqrt(p(1-p)), min_fee)"]
     BF --> RAMP["x expiry ramp multiplier (>= 1)"]
     RAMP --> FEE[trading fee = rate x quantity]
-    FEE --> BUILD["builder fee = min(fee x builder_mult, quantity x max_builder_rate)"]
+    NAMED[builder fee the trade names] --> BUILD["builder fee = quantity x min(named fee, builder_fee_cap)"]
     BUILD --> BUILDER[builder fee -> builder code address]
     FEE --> ROUTE[protocol fee routing]
     ROUTE --> COLLECT[net fee -> expiry cash]
@@ -204,12 +212,12 @@ Cash routing at trade time:
 | Component | Charged on | Destination | Earns builder cut? |
 |---|---|---|---|
 | Trading fee | mint price / sell proceeds | expiry cash, net of any mint referral share (LP + protocol) | — |
-| Builder fee | add-on to trading fee | builder code address | — |
+| Builder fee | add-on per contract, named by the trade | builder code address | — |
 | Order fee | escrowed at placement | expiry cash on a fill or a reason 1 or 2 refund, otherwise back to the trader | No |
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
 | Inventory impact | mint add-on / early-sell credit | isolated expiry escrow, and the residual becomes surplus at settlement | No |
 
-A queued **mint** pays `premium + trading_fee - sponsor_subsidy + builder_fee + inventory_impact_charge` from its escrowed budget, and the unused budget returns to the trader. Referral distribution changes only where part of that payment goes. `max_cost` caps the all-in cost on every shape: `enqueue_exact_quantity` takes it with `max_probability`, which separately caps the per-contract probability at τ before fees, `enqueue_exact_amount` sizes to its `max_premium` and pays the fees and inventory-impact charge on top within `max_cost`, and `enqueue_exact_cost` sizes the fill so every component fits inside `max_cost`, taking the fee out of the spend rather than adding it. Every queued mint requires a finite `max_cost`. If the budget fill breaches its maximum payout, a conservative fallback may select a smaller fill and is not guaranteed to find the largest admissible one. A fill the market's cash cannot back is refunded rather than shrunk. A queued **early sell** pays the trader `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee`, and `min_proceeds` floors that amount. The order fee is separate from both. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+A queued **mint** pays `premium + trading_fee - sponsor_subsidy + builder_fee + inventory_impact_charge` from its escrowed budget, and the unused budget returns to the trader. Referral distribution changes only where part of that payment goes. `max_cost` caps the all-in cost on every shape: `enqueue_exact_quantity` takes it with `max_probability`, which separately caps the per-contract probability at τ before fees, `enqueue_exact_amount` sizes to its `max_premium` and pays the fees and inventory-impact charge on top within `max_cost`, and `enqueue_exact_cost` sizes the fill so every component fits inside `max_cost`, taking the fee out of the spend rather than adding it. Every queued mint requires a finite `max_cost`. If the budget fill breaches its maximum payout, a conservative fallback may select a smaller fill and is not guaranteed to find the largest admissible one. A fill the market's cash cannot back is refunded rather than shrunk. A queued **early sell** pays the trader `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee`, with the builder fee capped at `gross_redeem_amount - trading_fee`, and `min_proceeds` floors that amount. The order fee is separate from both. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
 
 Before package version 4, the immediate `mint_exact_*` entrypoints withdrew the same sum plus the congestion surcharge, and `redeem_live` withheld it from the payout. The immediate exact-quantity mint accepted `std::u64::max_value!()` as an uncapped `max_cost`.
 
