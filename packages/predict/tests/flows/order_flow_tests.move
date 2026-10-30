@@ -1001,6 +1001,9 @@ fun a_builder_fee_above_the_cap_is_charged_at_the_cap() {
     assert_eq!(builder, CAPPED_BUILDER_FEE);
     assert_eq!(amount, ALL_IN_COST + CAPPED_BUILDER_FEE);
     assert_eq!(change.value(), BUDGET - ALL_IN_COST - CAPPED_BUILDER_FEE);
+    let (event_fee, event_code) = minted_builder();
+    assert_eq!(event_fee, CAPPED_BUILDER_FEE);
+    assert_eq!(event_code, option::some(code_id));
     destroy(change);
     destroy(kept);
     finish(fx, market, account);
@@ -1184,9 +1187,9 @@ fun a_builder_fee_one_unit_past_the_budget_is_refused() {
 }
 
 /// A plain sell of a position a builder's mint opened pays that builder nothing:
-/// the open stage clears the mint's fee, the sell names no code, and the mint's
-/// fee does not linger as the sell's floor, so a floor at the exact no-builder
-/// proceeds fills.
+/// the open receipt reports no fee, the sell's admission writes its own floor and
+/// fee column and names no code, and a floor at the exact no-builder proceeds
+/// fills.
 #[test]
 fun a_plain_sell_of_a_builder_mint_pays_that_builder_nothing() {
     let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
@@ -1356,8 +1359,16 @@ fun the_plain_mint_admission_matches_a_builder_admission_naming_none() {
     assert_receipts_match(&plain, &named_none, constants::receipt_stage_mint!(), MINT_CASH_NEED);
     assert_eq!(plain.builder_fee_per_contract(), 0);
     assert_eq!(named_none.builder_fee_per_contract(), 0);
-    destroy(plain);
-    destroy(named_none);
+
+    // Both fill alike, which pins the terms `receipt_info` does not show.
+    fill_plain_mint(&mut fx, &mut market, plain);
+    fill_plain_mint(&mut fx, &mut market, named_none);
+    let (first_fee, first_code) = minted_builder_of(2, 0);
+    let (second_fee, second_code) = minted_builder_of(2, 1);
+    assert_eq!(first_fee, 0);
+    assert_eq!(first_code, option::none());
+    assert_eq!(second_fee, 0);
+    assert_eq!(second_code, option::none());
     finish(fx, market, account);
 }
 
@@ -1381,14 +1392,69 @@ fun the_plain_sell_admission_matches_a_builder_admission_naming_none() {
     assert_receipts_match(&plain, &named_none, constants::receipt_stage_sell!(), HALF_CASH_NEED);
     assert_eq!(plain.builder_fee_per_contract(), 0);
     assert_eq!(named_none.builder_fee_per_contract(), 0);
-    destroy(plain);
-    destroy(named_none);
+
+    // Both fill alike, which pins the terms `receipt_info` does not show.
+    fill_plain_half_sell(&mut fx, &mut market, plain);
+    fill_plain_half_sell(&mut fx, &mut market, named_none);
+    let (first_fee, first_code) = redeemed_builder_of(2, 0);
+    let (second_fee, second_code) = redeemed_builder_of(2, 1);
+    assert_eq!(first_fee, 0);
+    assert_eq!(first_code, option::none());
+    assert_eq!(second_fee, 0);
+    assert_eq!(second_code, option::none());
+    finish(fx, market, account);
+}
+
+/// A sell naming a fee of `u64::MAX` is charged at the shipped 5c cap: the
+/// receipt records the cap and the half close pays 2e6 * 0.05, well inside the
+/// redeem value left after the trading fee.
+#[test]
+fun a_builder_sell_of_u64_max_is_charged_at_the_default_cap() {
+    let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
+    let code_id = fx.create_builder_code(BUILDER_CODE_INDEX, &trader);
+    fx.scenario_mut().next_tx(trader.owner());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
+    let builder = fx.builder_fee(code_id, MAX_U64_FEE);
+    admit_sell_builder(
+        &mut fx,
+        &mut market,
+        &mut account,
+        &mut receipt,
+        HALF,
+        HALF_PROCEEDS_AT_DEFAULT_CAP,
+        SELL_TAU,
+        builder,
+    );
+    assert_eq!(receipt.builder_fee_per_contract(), config_constants::default_builder_fee_cap!());
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, SELL_TAU, live_price());
+
+    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    assert_eq!(quantity, HALF);
+    assert_eq!(fee, HALF_FEE);
+    assert_eq!(builder, HALF_DEFAULT_CAP_BUILDER_FEE);
+    assert_eq!(proceeds, HALF_PROCEEDS_AT_DEFAULT_CAP);
+    let (event_fee, event_code) = redeemed_builder();
+    assert_eq!(event_fee, HALF_DEFAULT_CAP_BUILDER_FEE);
+    assert_eq!(event_code, option::some(code_id));
+    destroy(change);
+    destroy(kept);
     finish(fx, market, account);
 }
 
 /// Builder admission waits for the builder-fee cutover: while the watermark
 /// still names the delayed-execution cutover, an older resolver could fill the
-/// order at the legacy fee, so a mint naming a builder aborts. The same
+/// order at the legacy fee, so a mint naming a builder aborts.
+/// `a_plain_mint_before_the_builder_fee_cutover_admits_and_fills` shows the same
 /// admission naming no builder stays open.
 #[test, expected_failure(abort_code = protocol_config::EBuilderFeeCutoverNotReached)]
 fun a_builder_mint_before_the_builder_fee_cutover_aborts() {
@@ -1437,7 +1503,8 @@ fun a_builder_sell_before_the_builder_fee_cutover_aborts() {
 }
 
 /// The referral is a share of the trader-paid trading fee only: a builder fee
-/// on the same fill neither raises nor lowers it.
+/// on the same fill neither raises nor lowers it. The builder fee, 1_200, differs
+/// from the 2_000 referral, so the two cannot stand in for each other.
 #[test]
 fun a_referral_basis_excludes_the_builder_fee() {
     let (mut fx, expiry_id, trader, _) = referred_setup();
@@ -1445,7 +1512,7 @@ fun a_referral_basis_excludes_the_builder_fee() {
     fx.scenario_mut().next_tx(trader.owner());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    let builder = fx.builder_fee(code_id, BUILDER_FEE_PER_CONTRACT);
+    let builder = fx.builder_fee(code_id, LOW_BUILDER_FEE_CAP);
     let mut receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let cash_before = helpers::market(&market).cash_balance();
@@ -1458,9 +1525,9 @@ fun a_referral_basis_excludes_the_builder_fee() {
     );
 
     assert_eq!(reason, 0);
-    assert_eq!(builder, BUILDER_FEE);
+    assert_eq!(builder, CAPPED_BUILDER_FEE);
     assert_eq!(referral, REFERRAL_FEE);
-    assert_eq!(amount, ALL_IN_COST + BUILDER_FEE);
+    assert_eq!(amount, ALL_IN_COST + CAPPED_BUILDER_FEE);
     assert_eq!(helpers::market(&market).cash_balance(), cash_before + MINT_CASH - REFERRAL_FEE);
     helpers::assert_market_backed_bundle(&market);
     destroy(change);
@@ -1729,6 +1796,9 @@ fun a_denied_builders_sell_fee_stays_in_market_cash() {
         cash_before + ORDER_FEE + HALF_FEE + HALF_BUILDER_FEE - HALF_REDEEM,
     );
     helpers::assert_market_backed_bundle(&market);
+    let (event_fee, event_code) = redeemed_builder();
+    assert_eq!(event_fee, HALF_BUILDER_FEE);
+    assert_eq!(event_code, option::some(code_id));
     destroy(change);
     destroy(kept);
     return_shared(deny_list);
@@ -1782,6 +1852,9 @@ fun a_sells_builder_fee_stops_at_the_proceeds() {
         cash_before + ORDER_FEE + HALF_FEE - HALF_REDEEM,
     );
     helpers::assert_market_backed_bundle(&market);
+    let (event_fee, event_code) = redeemed_builder();
+    assert_eq!(event_fee, HALF_REDEEM - HALF_FEE);
+    assert_eq!(event_code, option::some(code_id));
     destroy(change);
     destroy(kept);
     finish(fx, market, account);
@@ -1816,6 +1889,19 @@ fun quote_close_with_builder_fee_prices_the_builders_sell() {
     );
     assert_eq!(at_cap.redeem_builder_fee(), HALF_DEFAULT_CAP_BUILDER_FEE);
     assert_eq!(at_cap.redeem_proceeds(), HALF_PROCEEDS_AT_DEFAULT_CAP);
+    // At a whole-payout cap and fee the quote clamps the fee at the redeem value
+    // left after the trading fee, as the fill does.
+    fx.set_builder_fee_cap_bundle(&mut market, WHOLE_PAYOUT_FEE);
+    let clamped = helpers::market(&market).quote_close_with_builder_fee(
+        helpers::config(&market),
+        &pricer,
+        &receipt,
+        HALF,
+        WHOLE_PAYOUT_FEE,
+        fx.clock(),
+    );
+    assert_eq!(clamped.redeem_builder_fee(), HALF_REDEEM - HALF_FEE);
+    assert_eq!(clamped.redeem_proceeds(), 0);
     let plain = helpers::market(&market).quote_close(
         &pricer,
         &receipt,
@@ -2507,6 +2593,42 @@ fun admit_sell_plain(
     );
 }
 
+/// Commit an admitted plain mint at TAU and fill it at the no-builder cost.
+fun fill_plain_mint(fx: &mut Fixture, market: &mut MarketBundle, mut receipt: OrderReceipt) {
+    let subsidy = commit_at(fx, market, &mut receipt, TAU, live_price());
+    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill(
+        fx,
+        market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+    assert_eq!(reason, 0);
+    assert_eq!(amount, ALL_IN_COST);
+    assert_eq!(builder, 0);
+    assert_eq!(change.value(), BUDGET - ALL_IN_COST);
+    destroy(change);
+    destroy(kept);
+}
+
+/// Commit an admitted plain half sell at SELL_TAU and fill it at the
+/// no-builder proceeds.
+fun fill_plain_half_sell(fx: &mut Fixture, market: &mut MarketBundle, mut receipt: OrderReceipt) {
+    let subsidy = commit_at(fx, market, &mut receipt, SELL_TAU, live_price());
+    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill(
+        fx,
+        market,
+        receipt,
+        escrow(ORDER_FEE, subsidy),
+    );
+    assert_eq!(reason, 0);
+    assert_eq!(quantity, HALF);
+    assert_eq!(fee, HALF_FEE);
+    assert_eq!(builder, 0);
+    assert_eq!(proceeds, HALF_PROCEEDS);
+    destroy(change);
+    destroy(kept);
+}
+
 /// Two receipts admitted alike: the same market, account, Pyth source, subsidy
 /// bound and volatility snapshot, at `stage` with `cash_need`.
 fun assert_receipts_match(a: &OrderReceipt, b: &OrderReceipt, stage: u8, cash_need: u64) {
@@ -2525,11 +2647,17 @@ fun assert_receipts_match(a: &OrderReceipt, b: &OrderReceipt, stage: u8, cash_ne
 
 /// The builder fee and code of the one `OrderMinted` this transaction emitted,
 /// read from its BCS. Event layouts are frozen: the fee follows two IDs, two
-/// order IDs, the owner, and seven amounts, and the code follows three more.
+/// order IDs, the owner, and seven `u64` fields, and the code follows three
+/// more.
 fun minted_builder(): (u64, Option<ID>) {
+    minted_builder_of(1, 0)
+}
+
+/// `minted_builder` for event `index` of the `count` this transaction emitted.
+fun minted_builder_of(count: u64, index: u64): (u64, Option<ID>) {
     let events = event::events_by_type<order_events::OrderMinted>();
-    assert_eq!(events.length(), 1);
-    let mut bytes = bcs::new(bcs::to_bytes(&events[0]));
+    assert_eq!(events.length(), count);
+    let mut bytes = bcs::new(bcs::to_bytes(&events[index]));
     let _ = bytes.peel_address();
     let _ = bytes.peel_address();
     let _ = bytes.peel_u256();
@@ -2547,9 +2675,14 @@ fun minted_builder(): (u64, Option<ID>) {
 /// closed and remaining quantities, the optional replacement order ID, the
 /// redeem value, and the trading fee; the code follows two more amounts.
 fun redeemed_builder(): (u64, Option<ID>) {
+    redeemed_builder_of(1, 0)
+}
+
+/// `redeemed_builder` for event `index` of the `count` this transaction emitted.
+fun redeemed_builder_of(count: u64, index: u64): (u64, Option<ID>) {
     let events = event::events_by_type<order_events::LiveOrderRedeemed>();
-    assert_eq!(events.length(), 1);
-    let mut bytes = bcs::new(bcs::to_bytes(&events[0]));
+    assert_eq!(events.length(), count);
+    let mut bytes = bcs::new(bcs::to_bytes(&events[index]));
     let _ = bytes.peel_address();
     let _ = bytes.peel_address();
     let _ = bytes.peel_u256();

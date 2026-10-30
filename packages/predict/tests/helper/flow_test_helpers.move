@@ -1778,6 +1778,62 @@ public fun quote_mint_exact_cost_for_account_bundle(
         )
 }
 
+/// The production `quote_mint_for_account` for an exact quantity: a queued
+/// fill's pricing at the clock, naming no builder.
+public fun production_quote_mint_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            0,
+            quantity,
+            true,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_exact_cost_for_account`: a queued exact-cost
+/// fill's budget search at the clock, naming no builder.
+public fun production_quote_mint_exact_cost_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
 /// The production `quote_mint_with_builder_fee` for an exact quantity: a queued
 /// fill's pricing at the clock, charging `builder_fee_per_contract`.
 public fun quote_mint_with_builder_fee_bundle(

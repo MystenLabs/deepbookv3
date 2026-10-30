@@ -550,10 +550,12 @@ fun a_premium_budget_builder_mint_capped_one_unit_short_of_its_cost_with_the_fee
     abort 999
 }
 
-/// A plain sell of a builder mint pays no builder fee and keeps its full
-/// proceeds. The mint's receipt kept its 5c fee in the field a sell reads its
-/// floor from, and 50_000_000 is far above the 1_979_974 proceeds, so the sell
-/// filling with no floor also shows that fee never became the sell's floor.
+/// A plain sell of a builder mint names no builder, pays no builder fee, and
+/// keeps its full proceeds. The mint's receipt held its 5c fee in the column a
+/// sell's floor is stored in, and 50_000_000 is far above the 1_979_974
+/// proceeds, so the sell filling with no floor shows its fill checked the floor
+/// and fee its own admission wrote. `enqueue_flow_tests` pins that its
+/// `OrderEnqueued` names no code.
 #[test]
 fun a_plain_sell_of_a_builder_mint_pays_no_builder_fee_and_inherits_no_floor() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
@@ -633,6 +635,41 @@ fun a_builder_sell_with_its_floor_one_unit_above_its_net_proceeds_is_refused() {
         BUILDER_FEE_PER_CONTRACT,
     );
     abort 999
+}
+
+/// A sell that names the largest fee is admitted and charged at the default
+/// cap: 4m * 0.05 = 200_000, inside the 1_979_974 left after the trading fee.
+#[test]
+fun a_builder_sell_naming_a_u64_max_fee_is_charged_at_the_default_cap() {
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    let open_id = q.enqueue_atm(QUANTITY, MAX_COST);
+    q.commit_at(TAU, fixture::live_price());
+    assert_eq!(q.resolve(RESOLVE_ALL), 1);
+    q.refresh_oracle_at(TAU);
+    let sell_id = q.enqueue_sell_with_builder(
+        open_id,
+        QUANTITY,
+        NO_FLOOR,
+        NO_FLOOR,
+        code_id,
+        MAX_FEE,
+    );
+    assert_eq!(q.builder_fee_of(sell_id), DEFAULT_CAP);
+
+    q.commit_at(SELL_TAU, fixture::live_price());
+    assert_eq!(q.resolve(RESOLVE_ALL), 1);
+
+    let fills = events::fills();
+    let fill = fills[fills.length() - 1];
+    assert_eq!(fill.record_id(), sell_id);
+    assert_eq!(fill.quantity(), QUANTITY);
+    assert_eq!(fill.trading_fee(), TRADING_FEE);
+    assert_eq!(fill.builder_fee(), DEFAULT_CAP_BUILDER_FEE);
+    assert_eq!(fill.amount(), PREMIUM - TRADING_FEE - DEFAULT_CAP_BUILDER_FEE);
+    assert_eq!(q.record(sell_id).status(), order_queue::status_closed());
+    q.assert_invariants();
+    q.assert_backed();
+    q.finish();
 }
 
 /// A sell's builder fee is clamped at the redeem value left after the trading

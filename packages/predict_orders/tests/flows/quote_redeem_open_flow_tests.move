@@ -37,6 +37,11 @@ const BUILDER_FEE: u64 = 2_000;
 /// default 5c cap leaves of it on 4m: 4m * 0.05.
 const MAX_FEE: u64 = 18_446_744_073_709_551_615;
 const DEFAULT_CAP_BUILDER_FEE: u64 = 200_000;
+/// The highest cap, a contract's whole $1 payout in FLOAT_SCALING; as a fee it
+/// is 4m * 1 = 4m on 4m, above the redeem value it is clamped at.
+const MAX_CAP: u64 = 1_000_000_000;
+/// A close the builder fee leaves nothing of.
+const NO_PROCEEDS: u64 = 0;
 const BUILDER_CODE_INDEX: u64 = 0;
 const TAU: u64 = 121_000;
 /// A placement at 121_000 lands on floor(122_000 / 200) * 200.
@@ -101,6 +106,22 @@ fun quote_redeem_open_with_builder_fee_charges_a_fee_above_the_cap_at_the_cap() 
     assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
     assert_eq!(quote.redeem_builder_fee(), DEFAULT_CAP_BUILDER_FEE);
     assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE - DEFAULT_CAP_BUILDER_FEE);
+    q.finish();
+}
+
+/// The builder-fee quote clamps the fee at the redeem value left after the
+/// trading fee, as the fill does: at the highest cap a fee of the whole $1
+/// payout quotes min(4m, 1_999_974 - 20_000) and no proceeds.
+#[test]
+fun quote_redeem_open_with_builder_fee_clamps_the_fee_at_the_redeem_value_left() {
+    let mut q = market_with_filled_position();
+    q.set_builder_fee_cap(MAX_CAP);
+
+    let pricer = q.load_pricer();
+    let quote = q.quote_redeem_open_with_builder_fee(&pricer, OPEN_RECORD, QUANTITY, MAX_CAP);
+    assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
+    assert_eq!(quote.redeem_builder_fee(), REDEEM_VALUE - TRADING_FEE);
+    assert_eq!(quote.redeem_proceeds(), NO_PROCEEDS);
     q.finish();
 }
 
