@@ -1789,17 +1789,7 @@ public fun quote_mint_with_builder_fee_bundle(
     quantity: u64,
     builder_fee_per_contract: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = self.load_pricer_bundle(market);
     market
         .market
         .quote_mint_with_builder_fee(
@@ -1830,17 +1820,7 @@ public fun quote_mint_exact_cost_with_builder_fee_bundle(
     min_quantity: u64,
     builder_fee_per_contract: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = self.load_pricer_bundle(market);
     market
         .market
         .quote_mint_exact_cost_with_builder_fee(

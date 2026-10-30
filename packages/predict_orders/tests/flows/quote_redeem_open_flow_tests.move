@@ -33,6 +33,10 @@ const TRADING_FEE: u64 = 20_000;
 /// fee on 4m: 4m * 0.0005.
 const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
 const BUILDER_FEE: u64 = 2_000;
+/// The largest fee per contract a sell can name, u64::MAX, and the fee the
+/// default 5c cap leaves of it on 4m: 4m * 0.05.
+const MAX_FEE: u64 = 18_446_744_073_709_551_615;
+const DEFAULT_CAP_BUILDER_FEE: u64 = 200_000;
 const BUILDER_CODE_INDEX: u64 = 0;
 const TAU: u64 = 121_000;
 /// A placement at 121_000 lands on floor(122_000 / 200) * 200.
@@ -83,6 +87,20 @@ fun quote_redeem_open_with_builder_fee_charges_the_named_fee() {
     assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
     assert_eq!(quote.redeem_builder_fee(), BUILDER_FEE);
     assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE - BUILDER_FEE);
+    q.finish();
+}
+
+/// The builder-fee quote caps the named fee as admission does: u64::MAX quotes
+/// at the default cap.
+#[test]
+fun quote_redeem_open_with_builder_fee_charges_a_fee_above_the_cap_at_the_cap() {
+    let mut q = market_with_filled_position();
+
+    let pricer = q.load_pricer();
+    let quote = q.quote_redeem_open_with_builder_fee(&pricer, OPEN_RECORD, QUANTITY, MAX_FEE);
+    assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
+    assert_eq!(quote.redeem_builder_fee(), DEFAULT_CAP_BUILDER_FEE);
+    assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE - DEFAULT_CAP_BUILDER_FEE);
     q.finish();
 }
 

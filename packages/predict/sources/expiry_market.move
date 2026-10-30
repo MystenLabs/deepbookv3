@@ -504,7 +504,7 @@ public fun quote_mint(
 
 /// `quote_mint` for the wrapper's account: `max_premium` is capped at the
 /// account's balance. No builder fee, matching the enqueue calls that name no
-/// builder; `quote_mint_with_builder_fee` quotes one that does.
+/// builder: `quote_mint_with_builder_fee` at a zero fee.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -517,21 +517,21 @@ public fun quote_mint_for_account(
     exact_quantity: bool,
     root: &AccumulatorRoot,
     clock: &Clock,
-    _ctx: &mut TxContext,
+    ctx: &mut TxContext,
 ): MintQuote {
-    let account = wrapper.load_account();
-    market.quote_now(
+    market.quote_mint_with_builder_fee(
+        wrapper,
         config,
         pricer,
-        if (exact_quantity) constants::mint_kind_exact_quantity!()
-        else constants::mint_kind_exact_amount!(),
         lower_tick,
         higher_tick,
-        max_premium.min(account.balance<USDC>(root, clock)),
+        max_premium,
         min_quantity,
-        std::u64::max_value!(),
+        exact_quantity,
         0,
+        root,
         clock,
+        ctx,
     )
 }
 
@@ -566,7 +566,7 @@ public fun quote_mint_with_builder_fee(
         max_premium.min(account.balance<USDC>(root, clock)),
         min_quantity,
         std::u64::max_value!(),
-        builder_fee_per_contract.min(config.builder_fee_cap()),
+        capped_fee(config, builder_fee_per_contract),
         clock,
     )
 }
@@ -574,7 +574,8 @@ public fun quote_mint_with_builder_fee(
 /// Quote the largest mint whose all-in cost fits `min(max_cost, account
 /// balance)`, at least `min_quantity`, for the wrapper's account, priced like a
 /// queued exact-cost fill at the clock. No builder fee, matching the enqueue
-/// calls that name no builder; otherwise prices and gates like `quote_mint`.
+/// calls that name no builder: `quote_mint_exact_cost_with_builder_fee` at a zero
+/// fee. Otherwise prices and gates like `quote_mint`.
 public fun quote_mint_exact_cost_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -586,20 +587,20 @@ public fun quote_mint_exact_cost_for_account(
     min_quantity: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
-    _ctx: &mut TxContext,
+    ctx: &mut TxContext,
 ): MintQuote {
-    let account = wrapper.load_account();
-    market.quote_now(
+    market.quote_mint_exact_cost_with_builder_fee(
+        wrapper,
         config,
         pricer,
-        constants::mint_kind_exact_cost!(),
         lower_tick,
         higher_tick,
-        0,
+        max_cost,
         min_quantity,
-        max_cost.min(account.balance<USDC>(root, clock)),
         0,
+        root,
         clock,
+        ctx,
     )
 }
 
@@ -631,7 +632,7 @@ public fun quote_mint_exact_cost_with_builder_fee(
         0,
         min_quantity,
         max_cost.min(account.balance<USDC>(root, clock)),
-        builder_fee_per_contract.min(config.builder_fee_cap()),
+        capped_fee(config, builder_fee_per_contract),
         clock,
     )
 }
@@ -797,7 +798,7 @@ public fun quote_close_with_builder_fee(
         pricer,
         receipt,
         close_quantity,
-        builder_fee_per_contract.min(config.builder_fee_cap()),
+        capped_fee(config, builder_fee_per_contract),
         clock,
     )
 }
@@ -1113,14 +1114,15 @@ public fun admit_mint<W: drop>(
     )
 }
 
-/// `admit_mint` for an order that names a builder. `builder` is the code the
-/// trade pays and its fee per contract; admission caps the fee at
-/// `protocol_config::builder_fee_cap`, records the code and the capped fee in
-/// the receipt, and prices the order's own limits at the clock with that fee. The
-/// fill charges the recorded fee, so a later cap change does not reach the
-/// order. Aborts as `admit_mint` does, and `EBuilderFeeCutoverNotReached` until
-/// the version watermark retires every version whose fill charges the legacy
-/// fee instead (`constants::builder_fee_version!()`).
+/// `admit_mint` for an order that may name a builder. `builder` is the code the
+/// trade pays and its fee per contract, or none, which admits exactly as
+/// `admit_mint` does. Admission caps the fee at `protocol_config::builder_fee_cap`,
+/// records the code and the capped fee in the receipt, and prices the order's own
+/// limits at the clock with that fee. The fill charges the recorded fee, so a
+/// later cap change does not reach the order. Aborts as `admit_mint` does, and,
+/// for an order that names a builder, `EBuilderFeeCutoverNotReached` until the
+/// version watermark retires every version whose fill charges the legacy fee
+/// instead (`constants::builder_fee_version!()`).
 public fun admit_mint_with_builder<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
@@ -1130,7 +1132,7 @@ public fun admit_mint_with_builder<W: drop>(
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
-    builder: BuilderFee,
+    builder: Option<BuilderFee>,
     kind: u8,
     lower_tick: u64,
     higher_tick: u64,
@@ -1155,7 +1157,7 @@ public fun admit_mint_with_builder<W: drop>(
         pyth,
         bs_values,
         bs_svi,
-        option::some(builder),
+        builder,
         kind,
         lower_tick,
         higher_tick,
@@ -1234,13 +1236,14 @@ public fun admit_sell<W: drop>(
     );
 }
 
-/// `admit_sell` for a sell that names a builder. `builder` is the code the sell
-/// pays and its fee per contract; admission caps the fee at
-/// `protocol_config::builder_fee_cap`, records the code in the receipt in place
-/// of the mint's along with the capped fee, and prices the close's floors at the
-/// clock with that fee. The fill charges the recorded fee. Aborts as
-/// `admit_sell` does, and `EBuilderFeeCutoverNotReached` until the version
-/// watermark reaches `constants::builder_fee_version!()`.
+/// `admit_sell` for a sell that may name a builder. `builder` is the code the
+/// sell pays and its fee per contract, or none, which admits exactly as
+/// `admit_sell` does. Admission caps the fee at `protocol_config::builder_fee_cap`,
+/// records the code in the receipt in place of the mint's along with the capped
+/// fee, and prices the close's floors at the clock with that fee. The fill
+/// charges the recorded fee. Aborts as `admit_sell` does, and, for a sell that
+/// names a builder, `EBuilderFeeCutoverNotReached` until the version watermark
+/// reaches `constants::builder_fee_version!()`.
 public fun admit_sell_with_builder<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
@@ -1251,7 +1254,7 @@ public fun admit_sell_with_builder<W: drop>(
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
-    builder: BuilderFee,
+    builder: Option<BuilderFee>,
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
@@ -1272,7 +1275,7 @@ public fun admit_sell_with_builder<W: drop>(
         pyth,
         bs_values,
         bs_svi,
-        option::some(builder),
+        builder,
         close_quantity,
         min_probability,
         min_proceeds,
@@ -2546,7 +2549,14 @@ fun bldr_terms(builder: &Option<BuilderFee>, config: &ProtocolConfig): (Option<I
     if (builder.is_none()) return (option::none(), 0);
     config.chk_bldr_cut();
     let builder = builder.borrow();
-    (option::some(builder.code_id()), builder.fee_per_contract().min(config.builder_fee_cap()))
+    (option::some(builder.code_id()), capped_fee(config, builder.fee_per_contract()))
+}
+
+/// A named builder fee per contract as a trade pays it: capped at
+/// `protocol_config::builder_fee_cap`, never refused, so lowering the cap never
+/// breaks a trade. Admission and the builder quotes share it.
+fun capped_fee(config: &ProtocolConfig, fee_per_contract: u64): u64 {
+    fee_per_contract.min(config.builder_fee_cap())
 }
 
 /// The gates, timing checks, and volatility snapshot both admissions share,

@@ -52,6 +52,11 @@ const SVI_MAX_AGE_MS: u64 = 60_000;
 // The last Predict version before the delayed-execution cutover at version 4: a
 // watermark that keeps queued placement closed.
 const PRE_CUTOVER_WATERMARK: u64 = 3;
+// The delayed-execution cutover itself, Predict's package-only
+// `constants::cutover_version!()`: a watermark that opens queued placement but
+// stays below the builder-fee cutover at version 5
+// (`constants::builder_fee_version!()`), so builder admission stays closed.
+const PRE_BUILDER_FEE_WATERMARK: u64 = 4;
 
 /// Everything one queue test transaction holds.
 public struct QueueTest {
@@ -144,6 +149,15 @@ public fun new_before_cutover(): QueueTest {
     );
     let mut q = assemble(fx, expiry_id, trader, false);
     q.set_predict_floor(PRE_CUTOVER_WATERMARK);
+    q
+}
+
+/// The default live market past the delayed-execution cutover, with Predict's
+/// watermark still below the builder-fee cutover: orders that name no builder
+/// admit, and orders that name one do not.
+public fun new_before_builder_fee_cutover(): QueueTest {
+    let mut q = new();
+    q.set_predict_floor(PRE_BUILDER_FEE_WATERMARK);
     q
 }
 
@@ -729,6 +743,47 @@ public fun enqueue_atm_with_builder(
         quantity,
         max_cost,
         std::u64::max_value!(),
+        root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+/// A premium-budget mint over `(strike, +inf]` that names the shared code
+/// `code_id` and `fee_per_contract`.
+public fun enqueue_amount_with_builder(
+    q: &mut QueueTest,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let QueueTest { fx, market, account, desk, queue, .. } = q;
+    let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, root) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let auth = account::generate_auth(ctx);
+    let record_id = queue.enqueue_exact_amount_with_builder(
+        expiry_market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        max_premium,
+        min_quantity,
+        max_cost,
         root,
         clock,
         ctx,

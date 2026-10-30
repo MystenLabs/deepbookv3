@@ -46,6 +46,8 @@ const UNUSED: u64 = 0;
 const NONE: u64 = 0;
 /// A builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, below the 5c cap.
 const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
+/// A zero builder fee, which still names the code.
+const ZERO_BUILDER_FEE: u64 = 0;
 const BUILDER_CODE_INDEX: u64 = 0;
 /// An unfinished record carries no refund reason.
 const NO_REASON: u8 = 0;
@@ -268,6 +270,60 @@ fun a_builder_mint_announces_its_code_and_records_its_fee() {
     assert_escrow(&record, QUANTITY_BUDGET, QUANTITY_SUBSIDY_BOUND, QUANTITY_CASH_NEED);
     assert_eq!(record.funds(), QUANTITY_BUDGET + ORDER_FEE);
     assert_eq!(q.builder_fee_of(record_id), BUILDER_FEE_PER_CONTRACT);
+    assert_one_enqueued(ExpectedOrderEnqueued {
+        expiry_market_id: q.expiry_id(),
+        record_id,
+        account_id,
+        kind: order_queue::kind_exact_quantity(),
+        request,
+        position: order_queue::empty_position(),
+        timing: record.timing(),
+        vol: receipt_vol(&q, record_id),
+        budget: QUANTITY_BUDGET,
+        order_fee: ORDER_FEE,
+        cash_need: QUANTITY_CASH_NEED,
+        subsidy_bound: QUANTITY_SUBSIDY_BOUND,
+        builder_code_id: option::some(code_id),
+        referrer_account_id: option::none(),
+        source_record_id: option::none(),
+        market_cash: test_constants::default_seeded_expiry_cash(),
+        required_cash: NONE,
+        waiting_cash_need: QUANTITY_CASH_NEED,
+        onchain_timestamp_ms: test_constants::now_ms(),
+    });
+
+    q.assert_invariants();
+    q.finish();
+}
+
+/// A mint that names a builder at a zero fee still announces the code, and its
+/// receipt records a zero fee.
+#[test]
+fun a_zero_fee_builder_mint_still_announces_its_code() {
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    let account_id = q.account_id();
+
+    let record_id = q.enqueue_atm_with_builder(
+        test_constants::mint_quantity(),
+        QUANTITY_MAX_COST,
+        code_id,
+        ZERO_BUILDER_FEE,
+    );
+
+    let record = q.record(record_id);
+    let request = order_queue::new_request(
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        test_constants::mint_quantity(),
+        UNUSED,
+        UNUSED,
+        QUANTITY_MAX_COST,
+        std::u64::max_value!(),
+        UNUSED,
+        UNUSED,
+    );
+    assert_escrow(&record, QUANTITY_BUDGET, QUANTITY_SUBSIDY_BOUND, QUANTITY_CASH_NEED);
+    assert_eq!(q.builder_fee_of(record_id), ZERO_BUILDER_FEE);
     assert_one_enqueued(ExpectedOrderEnqueued {
         expiry_market_id: q.expiry_id(),
         record_id,

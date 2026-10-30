@@ -11,7 +11,7 @@
 /// only that code at or below that fee.
 module deepbook_sessions::sessions;
 
-use account::{account::{Self, AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::{account::{Self, Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook::{order_info::OrderInfo, pool::Pool, registry::Registry};
 use deepbook_core_account::deepbook_core_account;
 use deepbook_predict::{
@@ -79,8 +79,10 @@ public struct SessionRevoked has copy, drop {
 /// without them, so they live in a slot of their own.
 public struct SessionBuildersApp has drop {}
 
-/// Each session's approved builder, keyed by session address. An entry exists
-/// only for a session in `SessionsData`, and `revoke_session` removes it.
+/// Each session's approved builder, keyed by session address. `revoke_session`
+/// removes an entry. The pre-upgrade `revoke_session` can leave one behind for a
+/// session no longer in `SessionsData`; no trade can use it, and a new grant of
+/// that address or another `revoke_session` clears it.
 public struct SessionBuilders has store {
     approvals: VecMap<address, SessionBuilder>,
 }
@@ -138,7 +140,8 @@ public fun approved_max_fee_per_contract(builder: &SessionBuilder): u64 {
 /// Authorize `session` from execution time for at most 30 days.
 /// Accounts may store at most 20 addresses; reauthorization replaces in place
 /// and keeps the session's builder approval, while a new grant starts without
-/// one.
+/// one. A session that expired but was never revoked is still stored, so
+/// granting it again is a reauthorization and keeps its approval.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
@@ -165,15 +168,7 @@ public fun authorize_session(
     };
     // The pre-upgrade `revoke_session` removes a session but not its builder
     // approval, so a new grant starts without one.
-    if (is_new && account.has_data<SessionBuildersApp>()) {
-        let builders = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
-            permit<SessionBuildersApp>(),
-        );
-        if (builders.approvals.contains(&session)) {
-            let (_, _) = builders.approvals.remove(&session);
-            event::emit(SessionBuilderCleared { account_id, session });
-        };
-    };
+    if (is_new) clear_builder(account, account_id, session);
     event::emit(SessionAuthorized { account_id, session, expires_at_ms });
 }
 
@@ -228,15 +223,7 @@ public fun approve_session_builder(
 public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     let account_id = account.account_id();
-    if (account.has_data<SessionBuildersApp>()) {
-        let builders = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
-            permit<SessionBuildersApp>(),
-        );
-        if (builders.approvals.contains(&session)) {
-            let (_, _) = builders.approvals.remove(&session);
-            event::emit(SessionBuilderCleared { account_id, session });
-        };
-    };
+    clear_builder(account, account_id, session);
     if (!account.has_data<SessionsApp>()) return;
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
     if (!data.sessions.contains(&session)) return;
@@ -595,8 +582,15 @@ public fun enqueue_exact_quantity_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    let auth = session_auth_with_builder(
+        sessions_config,
+        account_registry,
+        wrapper,
+        code,
+        builder_fee_per_contract,
+        clock,
+        ctx,
+    );
     queue.enqueue_exact_quantity_with_builder(
         market,
         wrapper,
@@ -692,8 +686,15 @@ public fun enqueue_exact_amount_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    let auth = session_auth_with_builder(
+        sessions_config,
+        account_registry,
+        wrapper,
+        code,
+        builder_fee_per_contract,
+        clock,
+        ctx,
+    );
     queue.enqueue_exact_amount_with_builder(
         market,
         wrapper,
@@ -786,8 +787,15 @@ public fun enqueue_exact_cost_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    let auth = session_auth_with_builder(
+        sessions_config,
+        account_registry,
+        wrapper,
+        code,
+        builder_fee_per_contract,
+        clock,
+        ctx,
+    );
     queue.enqueue_exact_cost_with_builder(
         market,
         wrapper,
@@ -879,8 +887,15 @@ public fun enqueue_redeem_open_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    chk_builder(wrapper, ctx.sender(), code, builder_fee_per_contract);
+    let auth = session_auth_with_builder(
+        sessions_config,
+        account_registry,
+        wrapper,
+        code,
+        builder_fee_per_contract,
+        clock,
+        ctx,
+    );
     queue.enqueue_redeem_open_with_builder(
         market,
         wrapper,
@@ -919,12 +934,39 @@ fun generate_auth_as_session(
     account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
 }
 
-/// The approval checks for a session-key trade that names a builder: `session`
-/// has an approval for `code`, and `fee` is at or below its maximum.
-fun chk_builder(wrapper: &AccountWrapper, session: address, code: &BuilderCode, fee: u64) {
-    let approval = session_builder(wrapper, session);
+/// `generate_auth_as_session` for a session-key trade that names a builder: after
+/// the session checks, the session's approval must name `code`
+/// (`EBuilderNotApproved`) and allow at least `builder_fee_per_contract`
+/// (`EBuilderFeeAboveApproved`).
+fun session_auth_with_builder(
+    sessions_config: &SessionsConfig,
+    account_registry: &AccountRegistry,
+    wrapper: &AccountWrapper,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): Auth {
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    let approval = session_builder(wrapper, ctx.sender());
     assert!(approval.is_some() && approval.borrow().code_id == code.id(), EBuilderNotApproved);
-    assert!(fee <= approval.borrow().max_fee_per_contract, EBuilderFeeAboveApproved);
+    assert!(
+        builder_fee_per_contract <= approval.borrow().max_fee_per_contract,
+        EBuilderFeeAboveApproved,
+    );
+    auth
+}
+
+/// Remove `session`'s builder approval, if any, and emit `SessionBuilderCleared`.
+/// Every removal goes through here, so the event stream tracks approvals.
+fun clear_builder(account: &mut Account, account_id: ID, session: address) {
+    if (!account.has_data<SessionBuildersApp>()) return;
+    let builders = account.borrow_data_mut<SessionBuildersApp, SessionBuilders>(
+        permit<SessionBuildersApp>(),
+    );
+    if (!builders.approvals.contains(&session)) return;
+    let (_, _) = builders.approvals.remove(&session);
+    event::emit(SessionBuilderCleared { account_id, session });
 }
 
 #[test_only]

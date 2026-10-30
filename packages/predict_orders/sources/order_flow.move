@@ -10,9 +10,9 @@
 /// package can obtain the witness or reach Predict with it. `release` and
 /// `try_pay_settled` need no authority and are called directly.
 ///
-/// Admission takes an optional `BuilderFee`: an order that names one goes to
-/// Predict's `_with_builder` admission, which records the code and the capped fee
-/// in the receipt for the fill, and one that names none pays no builder fee.
+/// Admission takes an optional `BuilderFee` and passes it to Predict's
+/// `_with_builder` admission, which records the code and the capped fee in the
+/// receipt for the fill. An order that names none pays no builder fee.
 module deepbook_predict_orders::order_flow;
 
 use account::account::Account;
@@ -60,33 +60,6 @@ public(package) fun admit_mint(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderReceipt {
-    if (builder.is_none()) {
-        return expiry_market::admit_mint(
-                OrderFlow(),
-                market,
-                config,
-                account,
-                propbook_registry,
-                pyth,
-                bs_values,
-                bs_svi,
-                kind,
-                lower_tick,
-                higher_tick,
-                quantity,
-                max_premium,
-                min_quantity,
-                max_probability,
-                budget,
-                order_fee,
-                svi_max_age_ms,
-                channel,
-                tau_ms,
-                deadline_ms,
-                clock,
-                ctx,
-            )
-    };
     expiry_market::admit_mint_with_builder(
         OrderFlow(),
         market,
@@ -96,7 +69,7 @@ public(package) fun admit_mint(
         pyth,
         bs_values,
         bs_svi,
-        builder.destroy_some(),
+        builder,
         kind,
         lower_tick,
         higher_tick,
@@ -136,29 +109,6 @@ public(package) fun admit_sell(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    if (builder.is_none()) {
-        return expiry_market::admit_sell(
-                OrderFlow(),
-                market,
-                config,
-                account,
-                receipt,
-                propbook_registry,
-                pyth,
-                bs_values,
-                bs_svi,
-                close_quantity,
-                min_probability,
-                min_proceeds,
-                order_fee,
-                svi_max_age_ms,
-                channel,
-                tau_ms,
-                deadline_ms,
-                clock,
-                ctx,
-            )
-    };
     expiry_market::admit_sell_with_builder(
         OrderFlow(),
         market,
@@ -169,7 +119,7 @@ public(package) fun admit_sell(
         pyth,
         bs_values,
         bs_svi,
-        builder.destroy_some(),
+        builder,
         close_quantity,
         min_probability,
         min_proceeds,
@@ -180,7 +130,7 @@ public(package) fun admit_sell(
         deadline_ms,
         clock,
         ctx,
-    )
+    );
 }
 
 public(package) fun commit(

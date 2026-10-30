@@ -66,6 +66,24 @@ const CAPPED_BUILDER_FEE_ATM: u64 = 200_000;
 /// top of the anonymous cost.
 const BUILDER_FEE_ATM: u64 = 500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
+/// The highest builder fee cap: the whole $1 payout.
+const WHOLE_PAYOUT_FEE: u64 = 1_000_000_000;
+/// A builder fee also counts toward the maximum-payout bound. At
+/// MAX_PAYOUT_BOUNDARY_QUANTITY the default 0.005 trading fee is 4e6 * 0.005 =
+/// 20_000, so a builder fee of 4e6 - 1_999_974 - 20_000 = 1_980_026 puts the
+/// all-in cost exactly at the payout. That is 4e6 * 0.4950065.
+const MAX_PAYOUT_BOUNDARY_TRADING_FEE: u64 = 20_000;
+const MAX_PAYOUT_BOUNDARY_BUILDER_FEE: u64 = 1_980_026;
+const BUILDER_FEE_AT_MAX_PAYOUT: u64 = 495_006_500;
+/// The smallest fee per contract one unit above: floor(4e6 * 0.49500675) =
+/// 1_980_027, an all-in cost of 4_000_001. 0.495006749 still floors to 1_980_026.
+const BUILDER_FEE_ABOVE_MAX_PAYOUT: u64 = 495_006_750;
+/// `u64::MAX` as a named fee per contract, and the shipped 5c cap on the ATM
+/// mint: 1e9 * 0.05.
+const MAX_U64_FEE: u64 = 18_446_744_073_709_551_615;
+const DEFAULT_CAP_BUILDER_FEE_ATM: u64 = 50_000_000;
+/// A cap that stops builder fees.
+const ZERO_BUILDER_FEE_CAP: u64 = 0;
 
 /// The congestion surcharge is flat once it fires: default_ewma_penalty_rate
 /// (0.001) * quantity (1e9) = 1_000_000, independent of the z-score magnitude.
@@ -367,6 +385,121 @@ fun a_named_builder_fee_above_the_cap_is_quoted_at_the_cap() {
         with_fee.all_in_cost(),
         with_fee.premium() + MIN_TRADING_FEE + CAPPED_BUILDER_FEE_ATM,
     );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A builder fee that brings the all-in cost to exactly the 4m payout quotes.
+#[test]
+fun a_builder_fee_at_the_maximum_payout_quotes() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.set_builder_fee_cap_bundle(&mut market, WHOLE_PAYOUT_FEE);
+    let account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_with_builder_fee_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
+        BUILDER_FEE_AT_MAX_PAYOUT,
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    assert_eq!(quote.premium(), MAX_PAYOUT_BOUNDARY_PREMIUM);
+    assert_eq!(quote.trading_fee(), MAX_PAYOUT_BOUNDARY_TRADING_FEE);
+    assert_eq!(quote.builder_fee(), MAX_PAYOUT_BOUNDARY_BUILDER_FEE);
+    assert_eq!(quote.all_in_cost(), MAX_PAYOUT_BOUNDARY_QUANTITY);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// One fee step more puts the all-in cost one unit above the payout, so the
+/// quote refuses the mint as admission would.
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun a_builder_fee_one_unit_past_the_maximum_payout_aborts_the_quote() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.set_builder_fee_cap_bundle(&mut market, WHOLE_PAYOUT_FEE);
+    let account = fx.take_account_bundle(&trader);
+
+    fx.quote_mint_with_builder_fee_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
+        BUILDER_FEE_ABOVE_MAX_PAYOUT,
+    );
+
+    abort 999
+}
+
+/// A named fee of `u64::MAX` is quoted at the shipped 5c cap without
+/// overflowing.
+#[test]
+fun a_builder_fee_of_u64_max_is_quoted_at_the_default_cap() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_with_builder_fee_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        MAX_U64_FEE,
+    );
+    assert_eq!(quote.builder_fee(), DEFAULT_CAP_BUILDER_FEE_ATM);
+    assert_eq!(
+        quote.all_in_cost(),
+        quote.premium() + MIN_TRADING_FEE + DEFAULT_CAP_BUILDER_FEE_ATM,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A zero cap quotes a named fee as nothing.
+#[test]
+fun a_zero_builder_fee_cap_quotes_no_builder_fee() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.set_builder_fee_cap_bundle(&mut market, ZERO_BUILDER_FEE_CAP);
+    let account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_with_builder_fee_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        BUILDER_FEE_PER_CONTRACT,
+    );
+    assert_eq!(quote.builder_fee(), 0);
+    assert_eq!(quote.all_in_cost(), quote.premium() + MIN_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

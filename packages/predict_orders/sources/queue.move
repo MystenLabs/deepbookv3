@@ -325,17 +325,7 @@ public fun enqueue_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
-        quantity,
-        0,
-        0,
-        max_cost,
-        max_probability,
-        0,
-        0,
-    );
+    let request = quantity_request(lower_tick, higher_tick, quantity, max_cost, max_probability);
     queue.enqueue_mint(
         market,
         wrapper,
@@ -359,8 +349,9 @@ public fun enqueue_exact_quantity(
 /// builder code the trade pays and `builder_fee_per_contract` its fee per
 /// contract, in FLOAT_SCALING of the $1 payout. Predict caps the fee at
 /// `protocol_config::builder_fee_cap`, records it in the order's receipt, and
-/// prices the order's limits with it, and the fill pays `quantity * fee` to the
-/// code. Refuses orders like `enqueue_exact_quantity`. Returns the new record ID.
+/// prices the order's limits with it, and the fill pays `quantity * fee`, rounded
+/// down, to the code. Refuses orders like `enqueue_exact_quantity`. Returns the
+/// new record ID.
 public fun enqueue_exact_quantity_with_builder(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -383,17 +374,7 @@ public fun enqueue_exact_quantity_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
-        quantity,
-        0,
-        0,
-        max_cost,
-        max_probability,
-        0,
-        0,
-    );
+    let request = quantity_request(lower_tick, higher_tick, quantity, max_cost, max_probability);
     queue.enqueue_mint(
         market,
         wrapper,
@@ -437,17 +418,7 @@ public fun enqueue_exact_amount(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
-        0,
-        max_premium,
-        min_quantity,
-        max_cost,
-        0,
-        0,
-        0,
-    );
+    let request = amount_request(lower_tick, higher_tick, max_premium, min_quantity, max_cost);
     queue.enqueue_mint(
         market,
         wrapper,
@@ -492,17 +463,7 @@ public fun enqueue_exact_amount_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
-        0,
-        max_premium,
-        min_quantity,
-        max_cost,
-        0,
-        0,
-        0,
-    );
+    let request = amount_request(lower_tick, higher_tick, max_premium, min_quantity, max_cost);
     queue.enqueue_mint(
         market,
         wrapper,
@@ -546,17 +507,7 @@ public fun enqueue_exact_cost(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
-        0,
-        0,
-        min_quantity,
-        max_cost,
-        0,
-        0,
-        0,
-    );
+    let request = cost_request(lower_tick, higher_tick, max_cost, min_quantity);
     queue.enqueue_mint(
         market,
         wrapper,
@@ -601,17 +552,7 @@ public fun enqueue_exact_cost_with_builder(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let request = order_queue::new_request(
-        lower_tick,
-        higher_tick,
-        0,
-        0,
-        min_quantity,
-        max_cost,
-        0,
-        0,
-        0,
-    );
+    let request = cost_request(lower_tick, higher_tick, max_cost, min_quantity);
     queue.enqueue_mint(
         market,
         wrapper,
@@ -689,9 +630,9 @@ public fun enqueue_redeem_open(
 /// code the sell pays and `builder_fee_per_contract` its fee per contract, in
 /// FLOAT_SCALING of the $1 payout. Predict caps the fee at
 /// `protocol_config::builder_fee_cap`, records it in the order's receipt, and
-/// checks `min_proceeds` with it, and the fill pays `close_quantity * fee` to the
-/// code, capped at the redeem value left after the trading fee. Refuses sells
-/// like `enqueue_redeem_open`. Returns the new record ID.
+/// checks `min_proceeds` with it, and the fill pays `close_quantity * fee`,
+/// rounded down, to the code, capped at the redeem value left after the trading
+/// fee. Refuses sells like `enqueue_redeem_open`. Returns the new record ID.
 public fun enqueue_redeem_open_with_builder(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -1078,6 +1019,58 @@ public fun claim_parked(
 // === Private Functions ===
 
 // --- Placement ---
+
+/// An exact-quantity mint's request, shared by the plain and builder enqueues.
+fun quantity_request(
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+): OrderRequest {
+    order_queue::new_request(
+        lower_tick,
+        higher_tick,
+        quantity,
+        0,
+        0,
+        max_cost,
+        max_probability,
+        0,
+        0,
+    )
+}
+
+/// A premium-budget mint's request, shared by the plain and builder enqueues.
+fun amount_request(
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+): OrderRequest {
+    order_queue::new_request(
+        lower_tick,
+        higher_tick,
+        0,
+        max_premium,
+        min_quantity,
+        max_cost,
+        0,
+        0,
+        0,
+    )
+}
+
+/// An all-in-budget mint's request, shared by the plain and builder enqueues.
+fun cost_request(
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): OrderRequest {
+    order_queue::new_request(lower_tick, higher_tick, 0, 0, min_quantity, max_cost, 0, 0, 0)
+}
 
 /// The queued mints after their request is built: the queue's checks and τ, the
 /// escrow terms, Predict's admission, then the escrow withdrawal and the record.
