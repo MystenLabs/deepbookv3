@@ -567,3 +567,43 @@ fun no_trade_window_above_max_aborts() {
 
     abort 999
 }
+
+// === Builder fee cap ===
+//
+// The floor is 0, so there is no reachable below-min case for a `u64`. The cap
+// lives in a dynamic field added after deploy, so the first read comes from a
+// config that has never stored it.
+
+/// 5c per contract: 0.05 of the $1 payout.
+const DEFAULT_BUILDER_FEE_CAP: u64 = 50_000_000;
+/// The whole $1 payout.
+const WHOLE_PAYOUT: u64 = 1_000_000_000;
+
+#[test, expected_failure(abort_code = config_constants::EInvalidBuilderFeeCap)]
+fun builder_fee_cap_above_the_whole_payout_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_builder_fee_cap(&admin_cap, WHOLE_PAYOUT + 1, &clock);
+    abort 999
+}
+
+#[test]
+fun builder_fee_cap_ships_at_five_cents_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Never set: reads the 5c default.
+    assert_eq!(config.builder_fee_cap(), DEFAULT_BUILDER_FEE_CAP);
+
+    // The first set creates the field, later sets overwrite it.
+    config.set_builder_fee_cap(&admin_cap, 0, &clock);
+    assert_eq!(config.builder_fee_cap(), 0);
+
+    config.set_builder_fee_cap(&admin_cap, WHOLE_PAYOUT, &clock);
+    assert_eq!(config.builder_fee_cap(), WHOLE_PAYOUT);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}

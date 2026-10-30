@@ -29,7 +29,7 @@ use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
-    builder_code::BuilderCode,
+    builder_code::{Self, BuilderCode, BuilderFee},
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
@@ -409,6 +409,11 @@ public fun set_referral_fee_rate_bundle(self: &Fixture, market: &mut MarketBundl
     market.config.set_referral_fee_rate(&self.admin_cap, rate);
 }
 
+/// Set the builder fee cap through the real admin path.
+public fun set_builder_fee_cap_bundle(self: &Fixture, market: &mut MarketBundle, cap: u64) {
+    market.config.set_builder_fee_cap(&self.admin_cap, cap, &self.clock);
+}
+
 /// Set the live fee-incentive subsidy rate through the real admin path.
 public fun set_fee_incentive_subsidy_rate_bundle(
     self: &Fixture,
@@ -615,9 +620,9 @@ public fun set_ewma_penalty_bundle(
     self.set_ewma_penalty(&mut market.config, alpha, z_score_threshold, penalty_rate);
 }
 
-/// Create and share a builder code, then set it as the trader's sticky
-/// attribution. Runs its own transactions; call before taking bundles.
-public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
+/// Create and share a builder code owned by `trader`'s owner. Runs its own
+/// transaction; call before taking bundles.
+public fun create_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
     self.scenario.next_tx(trader.owner);
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
@@ -628,7 +633,23 @@ public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, tra
     );
     return_shared(registry);
     return_shared(config);
+    code_id
+}
 
+/// Name the shared code `code_id` and `fee_per_contract` for one trade, inside
+/// the current transaction.
+public fun builder_fee(self: &mut Fixture, code_id: ID, fee_per_contract: u64): BuilderFee {
+    let code = self.scenario.take_shared_by_id<BuilderCode>(code_id);
+    let fee = builder_code::new_fee(&code, fee_per_contract);
+    return_shared(code);
+    fee
+}
+
+/// Create and share a builder code, then attach it to the trader's account.
+/// An attached code no longer affects fees; tests use this to show that. Runs
+/// its own transactions; call before taking bundles.
+public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
+    let code_id = self.create_builder_code(code_index, trader);
     self.scenario.next_tx(trader.owner);
     let code = self.scenario.take_shared_by_id<BuilderCode>(code_id);
     let mut wrapper = self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id);
@@ -1751,6 +1772,122 @@ public fun quote_mint_exact_cost_for_account_bundle(
             higher_tick,
             max_cost,
             min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_for_account` for an exact quantity: a queued
+/// fill's pricing at the clock, naming no builder.
+public fun production_quote_mint_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            0,
+            quantity,
+            true,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_exact_cost_for_account`: a queued exact-cost
+/// fill's budget search at the clock, naming no builder.
+public fun production_quote_mint_exact_cost_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_with_builder_fee` for an exact quantity: a queued
+/// fill's pricing at the clock, charging `builder_fee_per_contract`.
+public fun quote_mint_with_builder_fee_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    builder_fee_per_contract: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_with_builder_fee(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            0,
+            quantity,
+            true,
+            builder_fee_per_contract,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_exact_cost_with_builder_fee`: a queued exact-cost
+/// fill's budget search at the clock, charging `builder_fee_per_contract`.
+public fun quote_mint_exact_cost_with_builder_fee_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    builder_fee_per_contract: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_exact_cost_with_builder_fee(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            builder_fee_per_contract,
             &account.root,
             &self.clock,
             self.scenario.ctx(),

@@ -15,6 +15,12 @@ public macro fun current_version(): u64 { 5 }
 /// `current_version!()` never closes placement again until its floor is bumped.
 public(package) macro fun cutover_version(): u64 { 4 }
 
+/// The version floor at which builder admission opens: the first version whose fill charges the
+/// builder fee an order's receipt records. Every older version's fill charges the legacy fee from
+/// the receipt's builder code instead, so a builder order must never be fillable by one. Fixed,
+/// like `cutover_version!()`.
+public(package) macro fun builder_fee_version(): u64 { 5 }
+
 // === Scaling ===
 
 /// Decimal exponent of `math::float_scaling!()` (i.e. `math::float_scaling!() == 10^9`).
@@ -137,14 +143,6 @@ public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
 
 /// Milliseconds in a fixed 365-day year.
 public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
-
-// === Builder Fees ===
-
-/// Add-on builder fee as a fraction of the normal trade fee.
-public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
-
-/// Maximum all-in builder fee rate per traded quantity.
-public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
 

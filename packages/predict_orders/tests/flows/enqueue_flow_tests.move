@@ -44,6 +44,11 @@ const FIRST_RECORD: u64 = 0;
 const UNUSED: u64 = 0;
 /// No budget (sells), no subsidy bound, no required cash, no committed τ.
 const NONE: u64 = 0;
+/// A builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, below the 5c cap.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
+/// A zero builder fee, which still names the code.
+const ZERO_BUILDER_FEE: u64 = 0;
+const BUILDER_CODE_INDEX: u64 = 0;
 /// An unfinished record carries no refund reason.
 const NO_REASON: u8 = 0;
 /// The payout-tree node a `(strike_tick, +inf]` range pins: +inf never gets one.
@@ -233,6 +238,115 @@ fun enqueue_exact_quantity_records_escrows_and_announces_the_order() {
 
     q.assert_invariants();
     q.assert_backed();
+    q.finish();
+}
+
+/// A mint that names a builder escrows exactly what a plain one does,
+/// announces its code, and its receipt records the fee per contract.
+#[test]
+fun a_builder_mint_announces_its_code_and_records_its_fee() {
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    let account_id = q.account_id();
+
+    let record_id = q.enqueue_atm_with_builder(
+        test_constants::mint_quantity(),
+        QUANTITY_MAX_COST,
+        code_id,
+        BUILDER_FEE_PER_CONTRACT,
+    );
+
+    let record = q.record(record_id);
+    let request = order_queue::new_request(
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        test_constants::mint_quantity(),
+        UNUSED,
+        UNUSED,
+        QUANTITY_MAX_COST,
+        std::u64::max_value!(),
+        UNUSED,
+        UNUSED,
+    );
+    assert_escrow(&record, QUANTITY_BUDGET, QUANTITY_SUBSIDY_BOUND, QUANTITY_CASH_NEED);
+    assert_eq!(record.funds(), QUANTITY_BUDGET + ORDER_FEE);
+    assert_eq!(q.builder_fee_of(record_id), BUILDER_FEE_PER_CONTRACT);
+    assert_one_enqueued(ExpectedOrderEnqueued {
+        expiry_market_id: q.expiry_id(),
+        record_id,
+        account_id,
+        kind: order_queue::kind_exact_quantity(),
+        request,
+        position: order_queue::empty_position(),
+        timing: record.timing(),
+        vol: receipt_vol(&q, record_id),
+        budget: QUANTITY_BUDGET,
+        order_fee: ORDER_FEE,
+        cash_need: QUANTITY_CASH_NEED,
+        subsidy_bound: QUANTITY_SUBSIDY_BOUND,
+        builder_code_id: option::some(code_id),
+        referrer_account_id: option::none(),
+        source_record_id: option::none(),
+        market_cash: test_constants::default_seeded_expiry_cash(),
+        required_cash: NONE,
+        waiting_cash_need: QUANTITY_CASH_NEED,
+        onchain_timestamp_ms: test_constants::now_ms(),
+    });
+
+    q.assert_invariants();
+    q.finish();
+}
+
+/// A mint that names a builder at a zero fee still announces the code, and its
+/// receipt records a zero fee.
+#[test]
+fun a_zero_fee_builder_mint_still_announces_its_code() {
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    let account_id = q.account_id();
+
+    let record_id = q.enqueue_atm_with_builder(
+        test_constants::mint_quantity(),
+        QUANTITY_MAX_COST,
+        code_id,
+        ZERO_BUILDER_FEE,
+    );
+
+    let record = q.record(record_id);
+    let request = order_queue::new_request(
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        test_constants::mint_quantity(),
+        UNUSED,
+        UNUSED,
+        QUANTITY_MAX_COST,
+        std::u64::max_value!(),
+        UNUSED,
+        UNUSED,
+    );
+    assert_escrow(&record, QUANTITY_BUDGET, QUANTITY_SUBSIDY_BOUND, QUANTITY_CASH_NEED);
+    assert_eq!(q.builder_fee_of(record_id), ZERO_BUILDER_FEE);
+    assert_one_enqueued(ExpectedOrderEnqueued {
+        expiry_market_id: q.expiry_id(),
+        record_id,
+        account_id,
+        kind: order_queue::kind_exact_quantity(),
+        request,
+        position: order_queue::empty_position(),
+        timing: record.timing(),
+        vol: receipt_vol(&q, record_id),
+        budget: QUANTITY_BUDGET,
+        order_fee: ORDER_FEE,
+        cash_need: QUANTITY_CASH_NEED,
+        subsidy_bound: QUANTITY_SUBSIDY_BOUND,
+        builder_code_id: option::some(code_id),
+        referrer_account_id: option::none(),
+        source_record_id: option::none(),
+        market_cash: test_constants::default_seeded_expiry_cash(),
+        required_cash: NONE,
+        waiting_cash_need: QUANTITY_CASH_NEED,
+        onchain_timestamp_ms: test_constants::now_ms(),
+    });
+
+    q.assert_invariants();
     q.finish();
 }
 
@@ -501,12 +615,73 @@ fun enqueue_redeem_open_closes_the_source_and_carries_its_position() {
     q.finish();
 }
 
+/// A sell that names a builder announces its own code, through the sell path
+/// rather than the mint's, and its receipt records the fee per contract.
+#[test]
+fun a_builder_sell_announces_its_code_and_records_its_fee() {
+    let (q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    let mut q = open_record_from(q);
+    let held = q.record(FIRST_RECORD).position();
+    let cash_before = q.market().cash_balance();
+    let required_before = q.market().required_cash();
+
+    let record_id = q.enqueue_sell_with_builder(
+        FIRST_RECORD,
+        test_constants::mint_quantity(),
+        UNUSED,
+        UNUSED,
+        code_id,
+        BUILDER_FEE_PER_CONTRACT,
+    );
+
+    assert_eq!(q.builder_fee_of(record_id), BUILDER_FEE_PER_CONTRACT);
+    assert_full_sell_enqueued(
+        &q,
+        record_id,
+        held,
+        cash_before,
+        required_before,
+        option::some(code_id),
+    );
+    q.assert_invariants();
+    q.finish();
+}
+
+/// A plain sell of a position a builder mint opened names no builder: its
+/// event carries no code, and its receipt records no fee.
+#[test]
+fun a_plain_sell_of_a_builder_mint_announces_no_builder_code() {
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    q.enqueue_atm_with_builder(
+        test_constants::mint_quantity(),
+        QUANTITY_MAX_COST,
+        code_id,
+        BUILDER_FEE_PER_CONTRACT,
+    );
+    let mut q = fill_and_refresh(q);
+    let held = q.record(FIRST_RECORD).position();
+    let cash_before = q.market().cash_balance();
+    let required_before = q.market().required_cash();
+
+    let record_id = q.enqueue_sell(FIRST_RECORD, test_constants::mint_quantity(), UNUSED, UNUSED);
+
+    assert_eq!(q.builder_fee_of(record_id), 0);
+    assert_full_sell_enqueued(&q, record_id, held, cash_before, required_before, option::none());
+    q.assert_invariants();
+    q.finish();
+}
+
 // === Helpers ===
 
 /// The default market after one `mint_quantity` mint (record 0) filled at its
 /// τ 121_000, in a fresh transaction at FILL_AT_MS with fresh feeds.
 fun open_record_market(): QueueTest {
-    let mut q = fixture::new();
+    open_record_from(fixture::new())
+}
+
+/// `q` after one plain `mint_quantity` mint (record 0) filled as
+/// `fill_and_refresh` does.
+fun open_record_from(mut q: QueueTest): QueueTest {
     q.enqueue_quantity(
         helpers::strike_tick(),
         helpers::pos_inf_tick(),
@@ -514,6 +689,12 @@ fun open_record_market(): QueueTest {
         QUANTITY_MAX_COST,
         std::u64::max_value!(),
     );
+    fill_and_refresh(q)
+}
+
+/// `q` with its waiting mint, record 0, filled at its τ 121_000 and Open, in a
+/// fresh transaction at FILL_AT_MS with fresh feeds.
+fun fill_and_refresh(mut q: QueueTest): QueueTest {
     q.commit_at(TAU_MS, fixture::live_price());
     q.set_clock(FILL_AT_MS);
     assert_eq!(q.resolve(1), 1);
@@ -521,6 +702,54 @@ fun open_record_market(): QueueTest {
     let mut q = q.next_tx(test_constants::alice());
     q.refresh_oracle_at(FILL_AT_MS);
     q
+}
+
+/// The one `OrderEnqueued` of this transaction is a full sell of record 0's
+/// `mint_quantity` position placed at FILL_AT_MS, field for field as in
+/// `enqueue_redeem_open_closes_the_source_and_carries_its_position`, naming
+/// `builder_code_id`. `market_cash` and `required_cash` are sampled before the
+/// sell, whose admission moves no market cash.
+fun assert_full_sell_enqueued(
+    q: &QueueTest,
+    record_id: u64,
+    position: HeldPosition,
+    market_cash: u64,
+    required_cash: u64,
+    builder_code_id: Option<ID>,
+) {
+    let record = q.record(record_id);
+    assert_timing(&record, FILL_AT_MS, FILL_TAU_MS, FILL_DEADLINE_MS, DEFAULT_CUTOFF_MS);
+    assert_one_enqueued(ExpectedOrderEnqueued {
+        expiry_market_id: q.expiry_id(),
+        record_id,
+        account_id: q.account_id(),
+        kind: order_queue::kind_redeem_open(),
+        request: order_queue::new_request(
+            helpers::strike_tick(),
+            helpers::pos_inf_tick(),
+            test_constants::mint_quantity(),
+            UNUSED,
+            UNUSED,
+            UNUSED,
+            UNUSED,
+            UNUSED,
+            UNUSED,
+        ),
+        position,
+        timing: record.timing(),
+        vol: receipt_vol(q, record_id),
+        budget: NONE,
+        order_fee: ORDER_FEE,
+        cash_need: FULL_SELL_CASH_NEED,
+        subsidy_bound: NONE,
+        builder_code_id,
+        referrer_account_id: option::none(),
+        source_record_id: option::some(FIRST_RECORD),
+        market_cash,
+        required_cash,
+        waiting_cash_need: FULL_SELL_CASH_NEED,
+        onchain_timestamp_ms: FILL_AT_MS,
+    });
 }
 
 /// The volatility snapshot Predict took for the record's receipt.

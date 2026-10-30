@@ -9,10 +9,15 @@
 /// it goes through a package-only function here, so no caller outside this
 /// package can obtain the witness or reach Predict with it. `release` and
 /// `try_pay_settled` need no authority and are called directly.
+///
+/// Admission takes an optional `BuilderFee` and passes it to Predict's
+/// `_with_builder` admission, which records the code and the capped fee in the
+/// receipt for the fill. An order that names none pays no builder fee.
 module deepbook_predict_orders::order_flow;
 
 use account::account::Account;
 use deepbook_predict::{
+    builder_code::BuilderFee,
     expiry_market::{Self, ExpiryMarket, OrderReceipt},
     protocol_config::ProtocolConfig
 };
@@ -38,6 +43,7 @@ public(package) fun admit_mint(
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
     kind: u8,
     lower_tick: u64,
     higher_tick: u64,
@@ -54,7 +60,7 @@ public(package) fun admit_mint(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderReceipt {
-    expiry_market::admit_mint(
+    expiry_market::admit_mint_with_builder(
         OrderFlow(),
         market,
         config,
@@ -63,6 +69,7 @@ public(package) fun admit_mint(
         pyth,
         bs_values,
         bs_svi,
+        builder,
         kind,
         lower_tick,
         higher_tick,
@@ -90,6 +97,7 @@ public(package) fun admit_sell(
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
@@ -101,7 +109,7 @@ public(package) fun admit_sell(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    expiry_market::admit_sell(
+    expiry_market::admit_sell_with_builder(
         OrderFlow(),
         market,
         config,
@@ -111,6 +119,7 @@ public(package) fun admit_sell(
         pyth,
         bs_values,
         bs_svi,
+        builder,
         close_quantity,
         min_probability,
         min_proceeds,
