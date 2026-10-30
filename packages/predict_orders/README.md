@@ -34,6 +34,7 @@ Every trading call reads the desk, and only the admin's policy setters write it.
 | --- | --- | --- |
 | `queue::enqueue_exact_quantity`, `enqueue_exact_amount`, `enqueue_exact_cost` | The account, through its `Auth`, or an authorized app such as Sessions | Places a queued mint, escrows its budget and order fee, and returns the record ID |
 | `queue::enqueue_redeem_open` | The account that owns the Open record | Places an early sell of an Open record and escrows the order fee |
+| `queue::enqueue_exact_quantity_with_builder`, `enqueue_exact_amount_with_builder`, `enqueue_exact_cost_with_builder`, `enqueue_redeem_open_with_builder` | As the call without `_with_builder` | The same placement for an order that names a `BuilderCode` and a fee per contract. Predict's admission caps the fee and records it in the order's receipt for the fill |
 | `queue::commit` | Anyone | Attaches verified Pyth Lazer prices to the waiting cohorts they match |
 | `queue::resolve` | Anyone | Fills or refunds committed orders. Visits at most 450 records per call, a cap on events, so callers size `max_orders` from measured costs |
 | `queue::refund` | Anyone | Refunds waiting orders at or past their deadline, with the same 450-record cap |
@@ -48,7 +49,7 @@ Every trading call reads the desk, and only the admin's policy setters write it.
 
 Every call that can send USDC (`resolve`, `refund`, `admin_refund`, `settle_step`, `pay_open`, `claim_parked`) takes Sui's shared `DenyList`, because Mainnet USDC is a regulated coin and Sui aborts a transaction that credits a denied address. This package never makes such a send: it parks the funds in the record or leaves the record Open for later ([denied recipients](../predict/docs/concepts/delayed-execution.md#denied-recipients)).
 
-Reads: `queue::order`, `queue_id`, `queue_heads`, `payout_progress`, `waiting_cohorts`, `queue_stuck`, `pending_counts`, `waiting_orders`, `oldest_unfinished_tau_ms`, and `quote_redeem_open`, plus `desk::policy`, `desk::version_watermark`, and `desk::registry_id`. A record holds a receipt and a balance and cannot be copied, so `queue::order` returns an `OrderView`.
+Reads: `queue::order`, `queue_id`, `queue_heads`, `payout_progress`, `waiting_cohorts`, `queue_stuck`, `pending_counts`, `waiting_orders`, `oldest_unfinished_tau_ms`, `builder_fee_per_contract`, `quote_redeem_open`, and `quote_redeem_open_with_builder_fee`, plus `desk::policy`, `desk::version_watermark`, and `desk::registry_id`. A record holds a receipt and a balance and cannot be copied, so `queue::order` returns an `OrderView`.
 
 ## Trust boundary
 

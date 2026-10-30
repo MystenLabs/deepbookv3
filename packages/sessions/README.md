@@ -68,6 +68,7 @@ An active session may call these wrappers, which place delayed-execution orders 
 - `enqueue_exact_amount`
 - `enqueue_exact_cost`
 - `enqueue_redeem_open`
+- the `_with_builder` version of each, for an order that names a Predict builder code and a fee per contract
 
 Each calls the companion's `queue` function of the same name and returns the new record ID. Besides the market, the Account, and `ProtocolConfig`, each takes the market's `MarketQueue`, the companion's `OrderDesk`, Propbook's oracle registry, and the canonical Pyth and Block Scholes objects that Predict validates when it snapshots the order's pricing inputs. `enqueue_redeem_open` sells an Open record, a filled order that stays in its market's queue, by its record ID. Once placed, an order is committed, filled or refunded, and paid at settlement by calls that need no session or Account authority. See [delayed execution](../predict/docs/concepts/delayed-execution.md).
 
@@ -84,6 +85,31 @@ The immediate `mint_exact_*` and `redeem_live` wrappers always abort through Pre
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict or companion function. All market parameters remain caller-selected and are validated by the companion and Predict.
 
 The queued wrappers were added by the Sessions upgrade that sets `current_version!()` to 3. That upgrade links Predict package version 4 and the companion, so it publishes after both. Sessions runs the Predict and companion versions it linked when it was published, so before Predict's version watermark retires the version it links, Sessions must be relinked to the new Predict. An unrelinked Sessions package's queued wrappers abort once Predict's watermark advances, while placing orders directly through the companion keeps working. `current_version!()` is now 4, the version the next Mainnet upgrade publishes, relinked to Predict 5 and Propbook 2.
+
+## Builder approvals
+
+A builder fee goes to the code the trade names, at the fee the trade names, and on a session-key trade the session holder builds the trade. So the Account owner approves the builder for each session:
+
+```move
+public fun approve_session_builder(
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    session: address,
+    code_id: ID,
+    max_fee_per_contract: u64,
+    ctx: &mut TxContext,
+)
+
+public fun session_builder(wrapper: &AccountWrapper, session: address): Option<SessionBuilder>
+```
+
+`approve_session_builder` takes owner authorization from the transaction sender, like `authorize_session`, opens only once the `SessionsConfig` watermark reaches version 4 (`EBuilderApprovalsNotEnabled`), and works only for a session already authorized (`ESessionNotAuthorized`), so an app calls it right after `authorize_session` in the same transaction. It stores one builder code ID and a maximum fee per contract (in 1e9 scaling of a contract's $1 payout) for that session, and a later call replaces them. The approvals live in their own Account data slot, because `SessionsData` was published without them.
+
+The four `_with_builder` wrappers run the session checks, then require the session to have an approval, the trade's code to be the approved code (`EBuilderNotApproved`), and the trade's fee to be at or below the approved maximum (`EBuilderFeeAboveApproved`). Predict then caps the fee at its own `builder_fee_cap`. A session trade that names no builder uses the plain wrappers and pays no builder fee.
+
+`revoke_session` also removes the session's approval, so a session authorized again needs a new approval. Re-authorizing a session that was not revoked keeps its approval, including one that expired, because expiry does not remove a session. A new grant for an address that is not currently authorized clears any approval left on it, because the pre-upgrade `revoke_session` stays callable and removes a session without its approval. The pre-upgrade `authorize_session` would not clear it, which is why approvals wait for the watermark to retire that version. `session_builder` returns a session's approval, or `none`, for SDK and dev-inspect reads. It can still return an approval the pre-upgrade `revoke_session` left on a removed session. No trade can use that approval, and a new grant of the address or another `revoke_session` clears it. `approve_session_builder` emits `SessionBuilderApproved`, and every removal of an approval, by `revoke_session` or by a new grant, emits `SessionBuilderCleared`.
+
+An approval caps the fee per contract, not the number of trades. A session holder that is also the approved builder can trade the account repeatedly and collect the fee on each trade, so owners should approve only a builder they trust, at the lowest fee they accept. This is the trust a session grant already carries.
 
 ## DeepBook spot wrappers
 

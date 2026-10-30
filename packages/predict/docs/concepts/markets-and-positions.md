@@ -113,6 +113,8 @@ Admission dry-runs the order at the placement clock and aborts `EOrderFailsLimit
 
 `enqueue_redeem_open` queues a sell of `close_quantity` from an Open record the account owns, named by its record ID. The whole position moves from the source record into the sell's own record, and the source becomes Closed. `min_probability` floors the range probability at τ and `min_proceeds` floors the net USDC paid. `close_quantity` must be at least the policy's `min_sell_quantity`, and a partial sell must leave at least that much. The sell escrows only the order fee and is open during the trading and mint pauses. `quote_redeem_open` prices a prospective sell of a record at a live pricer.
 
+Each placement call has a `_with_builder` version that also takes the `BuilderCode` the trade pays and a fee per contract. The trade pays that fee on top, capped at `builder_fee_cap`; see [fees and rebates](./fees-and-rebates.md#3-builder-fee-add-on).
+
 At τ the sell fills at the range probability for the committed price, or it is refunded with a reason:
 
 - **Full close** (`close_quantity` equals the held quantity): the order's live-index terms are removed and the record becomes Closed.
