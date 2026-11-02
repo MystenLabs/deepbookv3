@@ -57,3 +57,14 @@ export const liquidationVaultTraders = {
     "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
   ],
 };
+
+// The propbook and predict_math UpgradeCaps, used by
+// propbookPredictMathPackageUpgrade.ts to upgrade both packages in one
+// transaction. Each is the cap its package's Published.toml records.
+export const propbookUpgradeCapID = {
+  mainnet: "0x95a1782928c6fcd22a4fb5cd1ea7e8def5fb98aeeacf119d1645d7c91128ff64",
+};
+
+export const predictMathUpgradeCapID = {
+  mainnet: "0xb39fb66a52ce6be8f0f9a8e875c51b7d722b70c790efcaa996440e4facb869eb",
+};

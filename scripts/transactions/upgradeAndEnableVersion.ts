@@ -9,7 +9,8 @@ import { serializeUnsignedUpgrade } from "./serializeUnsignedUpgrade.js";
 
 // Shared by the scripts that upgrade a package and make admin calls in the same
 // transaction (mainPackageUpgradeEnableVersion.ts,
-// marginPackageUpgradeEnableVersion.ts, vaultPackageUpgradeSetTraders.ts).
+// marginPackageUpgradeEnableVersion.ts, vaultPackageUpgradeSetTraders.ts), and by
+// propbookPredictMathPackageUpgrade.ts, which upgrades two packages in one.
 //
 // The upgrade commands are the ones `sui client upgrade` builds for the
 // upgrade-only scripts. Calls appended after them target the package being
