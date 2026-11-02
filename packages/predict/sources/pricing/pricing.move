@@ -31,7 +31,7 @@ use deepbook_predict::{pricing_config::PricingConfig, range_codec::Strike};
 use deepbook_predict_math::math as pmath;
 use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
-    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
     registry::{BlockScholesStorePair, OracleRegistry}
 };
@@ -240,7 +240,9 @@ macro fun precise_svi_decimals(): u8 { 18 }
 /// SVI freshness window and the order fills within the policy's delay plus stall timeout, while the
 /// provider publishes about once a second, so 64 entries cover about a minute of publications. That
 /// bounds retention by publication rate, not by receipt lifetime: an entry evicted before its fill
-/// prices the order from its 1e9 snapshot, which the load gate guarantees can price (`chk_inputs`).
+/// prices the order from its 1e9 snapshot, which the load gate checked prices unrolled
+/// (`chk_inputs`). The rolled snapshot can still lose an order, by crossing its limit or, on a
+/// surface whose minimum variance is a few 1e-18 units, by flooring to zero at the tick.
 macro fun svi_cache_capacity(): u64 { 64 }
 
 // === Public Functions ===
@@ -931,9 +933,9 @@ fun is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
 /// checked at 1e18, where the increment `b·sigma·sqrt(1 − rho²)` is not floored to a
 /// raw unit, so a final-seconds slice whose `a` rounds to zero still shows its positive
 /// minimum, and on both forms: `svi`, the stored `a` and `b` every live price uses, and
-/// `own`, the snapshot's rounded ones, so every admitted snapshot can also price
-/// without its full-precision tuple and a fill that no longer finds that tuple in the
-/// market's SVI cache loses precision, never the fill.
+/// `own`, the snapshot's rounded ones, so an admitted snapshot also prices without its
+/// full-precision tuple, before roll-down, for a fill that no longer finds that tuple
+/// in the market's SVI cache.
 fun chk_inputs(snapshot: &VolSnapshot, own: &PricingSVI, svi: &PricingSVI, precise: bool) {
     assert!(
         pmath::inputs_ok(
