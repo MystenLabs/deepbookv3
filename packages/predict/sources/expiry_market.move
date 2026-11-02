@@ -1408,6 +1408,7 @@ public fun try_fill<W: drop>(
         if (!denied(deny_list, receipt.parties.receive_address, ctx)) {
             let pricer = pricing::pricer_at(
                 &receipt.vol,
+                &market.id,
                 receipt.spot,
                 receipt.generation_us / 1000,
                 receipt.tick_ms,
@@ -2603,16 +2604,18 @@ fun admit_gates(
         EInvalidOrderTiming,
     );
     assert!(svi_max_age_ms <= constants::max_svi_max_age_ms!(), EInvalidOrderTerms);
+    let expiry_market_id = market.id();
     pricing::load_vol(
         config.pricing_cfg(),
         propbook_registry,
         pyth,
         bs_values,
         bs_svi,
-        market.id(),
+        expiry_market_id,
         market.propbook_underlying_id,
         expiry,
         svi_max_age_ms,
+        &mut market.id,
         clock,
         ctx,
     )

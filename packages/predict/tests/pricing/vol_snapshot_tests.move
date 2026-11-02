@@ -166,6 +166,7 @@ fun stale_pyth_spot_falls_back_to_the_block_scholes_forward() {
     assert_eq!(t0_pricer.pyth_ts(), DIVERGED_PYTH_SOURCE_MS);
     let on_block_scholes_forward = pricing::pricer_at(
         &snapshot,
+        fx.market_uid(),
         snapshot.bs_spot(),
         DIVERGED_PYTH_SOURCE_MS,
         test_constants::now_ms(),
