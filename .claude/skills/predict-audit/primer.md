@@ -34,7 +34,7 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - **LP** — supplies/withdraws USDC to the PLP vault (async request → privileged flush).
 - **Keeper** — permissionless: triggers settlement and pool syncs.
 - **Fill keeper / any caller** — permissionless on the companion: `commit` (a verified Pyth Lazer update per cohort), `resolve`, deadline `refund`, `settle_step`, `pay_open`, `claim_parked`, `cleanup`. No authority beyond holding a verified update; the deadline refund is the backstop when nobody commits.
-- **Builder** — earns attributed add-on fees via a `BuilderCode`.
+- **Builder** — earns the add-on fee per contract a trade names for its `BuilderCode`, capped by the admin `builder_fee_cap`.
 - **Oracle operator** — pushes Block-Scholes spot/forward/SVI updates into the `propbook` feeds; settlement
   is **passive** (no operator settle entrypoint).
 - **Admin** — holds `AdminCap`; tunes config (including the fee-incentive subsidy, live-target, and lifetime-cap rates), creates
