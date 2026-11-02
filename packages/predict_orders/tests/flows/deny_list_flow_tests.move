@@ -41,7 +41,9 @@ const ESCROW: u64 = 3_020_000;
 const ALL_IN_COST: u64 = 2_019_974;
 /// Market cash one 4m fill adds: the premium, the trading fee, the order fee.
 const MINT_CASH: u64 = 2_039_974;
-/// min(0.1 * 20_000, 0.005 * 4m).
+/// A trade's builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, and that
+/// fee on 4m: 4m * 0.0005.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
 const BUILDER_FEE: u64 = 2_000;
 /// The default 10% referral share of the 20_000 trading fee.
 const REFERRAL_FEE: u64 = 2_000;
@@ -68,10 +70,15 @@ const MISSING_RECORD: u64 = 99;
 #[test]
 fun a_fill_keeps_a_denied_builders_and_referrers_fees_in_market_cash() {
     let (q, referrer) = fixture::new_referred();
-    let (mut q, code_id) = q.link_builder_code(BUILDER_CODE_INDEX);
+    let (mut q, code_id) = q.new_builder_code(BUILDER_CODE_INDEX);
     let referrer_address = q.receive_address_of(&referrer);
     let mut q = q.deny(code_id.to_address()).deny(referrer_address);
-    let record_id = q.enqueue_atm(QUANTITY, MAX_COST);
+    let record_id = q.enqueue_atm_with_builder(
+        QUANTITY,
+        MAX_COST,
+        code_id,
+        BUILDER_FEE_PER_CONTRACT,
+    );
     q.commit_at(TAU, fixture::live_price());
     let cash_before = q.market().cash_balance();
 
