@@ -8,7 +8,8 @@
 #[test_only]
 module propbook::block_scholes_store_tests;
 
-use bs_oracle::verify::{Self, ValueUpdate, SviUpdate};
+use bs_oracle::verify::{Self, PackageMarker, ValueUpdate, SviUpdate};
+use bs_sid::sid;
 use propbook::{
     block_scholes_sid,
     block_scholes_store::{
@@ -20,7 +21,7 @@ use propbook::{
     },
     constants
 };
-use std::{string::String, unit_test::assert_eq};
+use std::{string::String, type_name, unit_test::assert_eq};
 use sui::{clock::{Self, Clock}, event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
@@ -66,6 +67,11 @@ const SVI_RHO_MAG: u128 = 300_000_000;
 const SVI_RHO_NEG: bool = true;
 const SVI_M_MAG: u128 = 25_000_000;
 const SVI_M_NEG: bool = false;
+
+const CLASSIC_SVI_MODEL: vector<u8> = b"SVI";
+const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
+/// Exactly 32 ASCII bytes, the longest accepted model spelling: eight groups of four.
+const THIRTY_TWO_BYTE_MODEL: vector<u8> = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";
 
 // === Accepting ===
 
@@ -1219,6 +1225,224 @@ fun a_series_repeated_within_one_batch_resolves_by_source_time() {
     scenario.end();
 }
 
+// === SVI model ===
+
+#[test]
+fun a_new_svi_store_serves_the_classic_svi_series() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+
+    assert_eq!(svi_store.svi_model(), CLASSIC_SVI_MODEL.to_string());
+    assert_eq!(svi_store.svi_sid(EXPIRY_A), independent_svi_sid(CLASSIC_SVI_MODEL, EXPIRY_A));
+
+    return_shared(svi_store);
+    scenario.end();
+}
+
+/// The model is the provider surface the store trusts, so setting it must move both what the
+/// store accepts and what it serves, and must say so on chain.
+#[test]
+fun setting_the_model_switches_the_series_the_store_accepts_and_serves() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    apply_svis(
+        &mut svi_store,
+        BATCH_EARLY,
+        vector[svi_update_with_sid(independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_A), SOURCE_EARLY)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(svi_store.svi_model(), SVI_REGIME_MODEL.to_string());
+    assert_eq!(svi_store.svi_sid(EXPIRY_A), independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_A));
+    let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
+    assert_eq!(read.read_source_timestamp_ms(), SOURCE_EARLY);
+    assert_eq!(read.read_value().svi_sigma(), SVI_SIGMA);
+    let events = event::events_by_type<store::BlockScholesSVIModelSet>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let (event_underlying_id, event_store_id, event_model) = store::svi_model_set_fields(
+        &events[0],
+    );
+    assert_eq!(event_underlying_id, BTC_UNDERLYING_ID);
+    assert_eq!(event_store_id, svi_id);
+    assert_eq!(event_model, SVI_REGIME_MODEL.to_string());
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = store::ESeriesIdMismatch)]
+fun a_batch_under_the_previous_model_aborts_after_a_switch() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    apply_svis(
+        &mut svi_store,
+        BATCH_EARLY,
+        vector[svi_update(&btc(), EXPIRY_A, SOURCE_EARLY)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    abort
+}
+
+/// Switching models never deletes observations: each model keeps its own rows, and setting a model
+/// back serves that model's last observation again (freshness is the reader's check, not the store's).
+#[test]
+fun each_models_observations_return_when_it_is_set_back() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    // Classic SVI lands at the early source time, then the store switches to the regime model.
+    apply_svis(
+        &mut svi_store,
+        BATCH_EARLY,
+        vector[svi_update(&btc(), EXPIRY_A, SOURCE_EARLY)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    assert!(store::svi(&svi_store, EXPIRY_A).is_none());
+
+    // The regime model lands at a later source time; setting classic back serves its own row.
+    apply_svis(
+        &mut svi_store,
+        BATCH_MID,
+        vector[svi_update_with_sid(independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_A), SOURCE_MID)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    store::set_svi_model(&mut svi_store, CLASSIC_SVI_MODEL.to_string());
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_EARLY,
+    );
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_MID,
+    );
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+/// The batch path reads the model once and derives every expiry's series id from it.
+#[test]
+fun a_multi_expiry_batch_under_a_switched_model_lands_every_expiry() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    store::apply_svi_batch(
+        &mut svi_store,
+        verify::new_svi_batch_for_testing(
+            BATCH_EARLY,
+            vector[
+                svi_update_with_sid(independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_A), SOURCE_EARLY),
+                svi_update_with_sid(independent_svi_sid(SVI_REGIME_MODEL, EXPIRY_B), SOURCE_MID),
+            ],
+        ),
+        vector[EXPIRY_A, EXPIRY_B],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_EARLY,
+    );
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_B).destroy_some().read_source_timestamp_ms(),
+        SOURCE_MID,
+    );
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+#[test]
+fun a_maximum_length_model_is_accepted() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+
+    store::set_svi_model(&mut svi_store, THIRTY_TWO_BYTE_MODEL.to_string());
+
+    assert_eq!(svi_store.svi_model(), THIRTY_TWO_BYTE_MODEL.to_string());
+    return_shared(svi_store);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = store::EInvalidSviModel)]
+fun an_over_length_model_aborts() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let mut over_length = THIRTY_TWO_BYTE_MODEL.to_string();
+    over_length.append(b"X".to_string());
+
+    store::set_svi_model(&mut svi_store, over_length);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = store::EInvalidSviModel)]
+fun an_empty_model_aborts() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+
+    store::set_svi_model(&mut svi_store, b"".to_string());
+
+    abort
+}
+
+/// A store still at the previous package version cannot take a model: the old package's writers,
+/// which derive under the hardcoded default, stay live until the store migrates.
+#[test, expected_failure(abort_code = store::EWrongVersion)]
+fun setting_the_model_on_an_unmigrated_store_aborts() {
+    let (scenario, value_id, svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    store::set_store_versions_for_testing(
+        &mut value_store,
+        &mut svi_store,
+        constants::current_version!() - 1,
+    );
+
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+
+    abort
+}
+
+#[test]
+fun a_migrated_store_takes_a_model() {
+    let (scenario, value_id, svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    store::set_store_versions_for_testing(
+        &mut value_store,
+        &mut svi_store,
+        constants::current_version!() - 1,
+    );
+
+    store::migrate_svi_store(&mut svi_store);
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+
+    assert_eq!(svi_store.svi_model(), SVI_REGIME_MODEL.to_string());
+    return_shared(value_store);
+    return_shared(svi_store);
+    scenario.end();
+}
+
 // === Store identity and version ===
 
 #[test]
@@ -1387,8 +1611,15 @@ fun forward_update(
 }
 
 fun svi_update(base_asset: &String, expiry_ms: u64, source_timestamp_ms: u64): SviUpdate {
+    svi_update_with_sid(
+        block_scholes_sid::svi(base_asset, &block_scholes_sid::default_svi_model!(), expiry_ms),
+        source_timestamp_ms,
+    )
+}
+
+fun svi_update_with_sid(sid: u256, source_timestamp_ms: u64): SviUpdate {
     verify::new_svi_for_testing(
-        block_scholes_sid::svi(base_asset, expiry_ms),
+        sid,
         source_timestamp_ms,
         SVI_A_MAG,
         SVI_A_NEG,
@@ -1398,6 +1629,20 @@ fun svi_update(base_asset: &String, expiry_ms: u64, source_timestamp_ms: u64): S
         SVI_RHO_NEG,
         SVI_M_MAG,
         SVI_M_NEG,
+    )
+}
+
+/// Derives a BTC SVI series id straight from the provider's SID package, so model tests do not
+/// check the store against its own derivation.
+fun independent_svi_sid(svi_model: vector<u8>, expiry_ms: u64): u256 {
+    sid::model_params(
+        type_name::original_id<PackageMarker>(),
+        b"option".to_string(),
+        btc(),
+        svi_model.to_string(),
+        sid::expiry_at(expiry_ms),
+        constants::float_scaling_decimals!() as u8,
+        b"ms".to_string(),
     )
 }
 
