@@ -44,8 +44,9 @@ public struct OrderMinted has copy, drop, store {
     referral_fee: u64,
     /// Separate inventory-impact charge escrowed for live-close rebates.
     inventory_impact_charge: u64,
-    /// Builder credited for `builder_fee`; `none` when no builder fee was paid
-    /// (attribution follows the fee — applied once, in the emit helper).
+    /// Builder code the order named, credited with `builder_fee`; `none` when the
+    /// order named none. Recorded even at a zero fee, so attribution covers apps
+    /// that charge nothing.
     builder_code_id: Option<ID>,
     /// Referrer recorded on the minting account, independent of the fee paid.
     referrer_account_id: Option<ID>,
@@ -81,8 +82,9 @@ public struct LiveOrderRedeemed has copy, drop, store {
     penalty_fee: u64,
     /// Separate inventory-impact rebate paid from its isolated escrow.
     inventory_impact_rebate: u64,
-    /// Builder credited for `builder_fee`; `none` when no builder fee was paid
-    /// (attribution follows the fee — applied once, in the emit helper).
+    /// Builder code the order named, credited with `builder_fee`; `none` when the
+    /// order named none. Recorded even at a zero fee, so attribution covers apps
+    /// that charge nothing.
     builder_code_id: Option<ID>,
     onchain_timestamp_ms: u64,
     /// Oracle source timestamps present when this redemption was priced: Pyth's canonical source
@@ -143,7 +145,7 @@ public(package) fun minted(
         penalty_fee,
         referral_fee,
         inventory_impact_charge,
-        builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
+        builder_code_id,
         referrer_account_id,
         onchain_timestamp_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_ts(),
@@ -184,7 +186,7 @@ public(package) fun redeemed(
         builder_fee,
         penalty_fee,
         inventory_impact_rebate,
-        builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
+        builder_code_id,
         onchain_timestamp_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_ts(),
         block_scholes_spot_source_timestamp_ms: pricer.bs_spot_ts(),

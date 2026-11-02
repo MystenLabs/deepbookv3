@@ -23,13 +23,19 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
-use sui::{clock::Clock, vec_set::{Self, VecSet}};
+use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists as UID.exists_;
 
 const EPauseCapNotValid: u64 = 0;
 const ELifecycleCapNotValid: u64 = 1;
 const ELifecycleCapNotFound: u64 = 2;
 const EPoolValuationCapNotValid: u64 = 3;
 const EPoolValuationCapNotFound: u64 = 4;
+const EUnexpectedExpiry: u64 = 5;
 
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
@@ -46,6 +52,11 @@ public struct Registry has key {
     /// full-pool valuation. Admin mints into this set and revokes from it.
     allowed_pool_valuation_caps: VecSet<ID>,
 }
+
+/// Dynamic-field key of the registry's cadence table: a `vector<u64>` of cadence
+/// periods in milliseconds, indexed by cadence ID. Absent until the first
+/// `add_cadence`, when it is created from `market_manager::base_periods`.
+public struct CadencePeriodsKey() has copy, drop, store;
 
 // === Public Functions ===
 
@@ -69,20 +80,30 @@ public fun cadence_config(
     propbook_underlying_id: u32,
     cadence_id: u8,
 ): CadenceConfig {
-    registry.market_manager.cadence_config(propbook_underlying_id, cadence_id)
+    registry
+        .market_manager
+        .cadence_config(&registry.cad_periods(), propbook_underlying_id, cadence_id)
 }
 
 /// Return one underlying's complete deployment policy as a single coherent
 /// snapshot, for off-chain consumers (SDK and devInspect cadence discovery by
 /// the keeper, price updater, and dashboard) that would otherwise need one
-/// read per cadence. The vector holds one entry per supported cadence, indexed
-/// by cadence ID; disabled cadences are present as their all-zero
+/// read per cadence. The vector holds one entry per cadence in `cadence_periods`,
+/// indexed by cadence ID; disabled cadences are present as their all-zero
 /// configuration. Aborts if the underlying is not registered.
 public fun cadence_configs(
     registry: &Registry,
     propbook_underlying_id: u32,
 ): vector<CadenceConfig> {
-    registry.market_manager.cadence_configs(propbook_underlying_id)
+    registry.market_manager.cadence_configs(&registry.cad_periods(), propbook_underlying_id)
+}
+
+/// Return every cadence's period in milliseconds, indexed by cadence ID, for
+/// devInspect cadence discovery by the keeper, price collector, and dashboard.
+/// The table starts with the six built-in cadences and grows through `add_cadence`;
+/// read it in the same transaction as `cadence_configs` for a consistent pair.
+public fun cadence_periods(registry: &Registry): vector<u64> {
+    registry.cad_periods()
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -217,9 +238,34 @@ public fun register_underlying(
     registry.market_manager.register_underlying(propbook_underlying_id);
 }
 
+/// Append a cadence with period `period_ms` to the cadence table and return its ID.
+/// The period is a whole number of minutes, at most one year, and not already in the
+/// table, which holds at most 16 cadences. A new cadence is disabled on every
+/// underlying until `set_template_cadence_config` sets its terms; periods never
+/// change, so retire a cadence by disabling it.
+public fun add_cadence(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    period_ms: u64,
+): u8 {
+    config.chk_version();
+    let registry_id = registry.id();
+    if (!registry.id.exists_(CadencePeriodsKey())) {
+        registry.id.add(CadencePeriodsKey(), market_manager::base_periods());
+    };
+    let cadence_id = market_manager::add_period(
+        registry.id.borrow_mut(CadencePeriodsKey()),
+        period_ms,
+    );
+    config_events::cadence_add(registry_id, cadence_id, period_ms);
+    cadence_id
+}
+
 /// Set all deployment terms for one underlying's cadence. Passing zero for all
 /// five values disables the cadence; otherwise all values must be nonzero and
-/// valid.
+/// valid. Aborts if the underlying's enabled windows would sum past the pool's
+/// live-market cap.
 public fun set_template_cadence_config(
     registry: &mut Registry,
     config: &ProtocolConfig,
@@ -233,9 +279,11 @@ public fun set_template_cadence_config(
     window_size: u64,
 ) {
     config.chk_version();
+    let periods = registry.cad_periods();
     registry
         .market_manager
         .set_template_cadence_config(
+            &periods,
             propbook_underlying_id,
             cadence_id,
             tick_size,
@@ -260,9 +308,9 @@ public fun set_template_cadence_config(
 ///
 /// Requires an allowlisted lifecycle capability, a registered underlying with all
 /// canonical feed objects bound, and an enabled cadence with a deployable slot.
-/// Higher-rank cadence overlaps and existing markets are skipped. The market
-/// snapshots cadence and expiry policy, starts with zero cash, and cannot mint
-/// until pool rebalancing funds it. Live pricing reads current Propbook bindings.
+/// Slots owned by a longer enabled cadence and existing markets are skipped. The
+/// market snapshots cadence and expiry policy, starts with zero cash, and cannot
+/// mint until pool rebalancing funds it. Live pricing reads current Propbook bindings.
 public fun create_and_share_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -274,63 +322,45 @@ public fun create_and_share_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    config.chk_version();
-    registry.chk_lc_cap(lifecycle_cap);
-    config.chk_trading();
-    // Deliberately NOT gated on the valuation flag: creation moves no cash
-    // (`plp::register_exp` records targets; funding is a later rebalance), an
-    // in-flight flush's expected set is frozen at its snapshot so the new market
-    // is simply not part of it, and funding it mid-window cannot reach the mark
-    // — every figure it reads was frozen at the snapshot instant, which counts
-    // that cash as the idle it then was. The market joins the next flush's
-    // snapshot. Gating here would gap a fast market cadence for as long as a
-    // stalled flush holds the flag.
-    let deployable = registry
-        .market_manager
-        .next_deploy(propbook_registry, propbook_underlying_id, cadence_id, clock);
-    let expiry = deployable.expiry();
-    let tick_size = deployable.tick_size();
-    let admission_tick_size = deployable.admission_tick_size();
-    // `ExpiryPnl` reports this stored time as the market's cadence-period start
-    // (`period_start_ms`), so changing the lookback changes that event field's meaning.
-    let reference_tick_source_timestamp_ms = expiry - market_manager::cad_period(cadence_id);
-    let max_expiry_allocation = deployable.max_alloc();
-    let initial_expiry_cash = deployable.init_cash();
-    let pool_vault_id = pool_vault.id();
-    let expiry_market_id = expiry_market::create_and_share(
+    registry.create_mkt(
+        pool_vault,
         config,
+        propbook_registry,
+        lifecycle_cap,
         propbook_underlying_id,
-        expiry,
-        tick_size,
-        admission_tick_size,
-        reference_tick_source_timestamp_ms,
-        max_expiry_allocation,
-        ctx,
-    );
-    pool_vault.register_exp(
-        expiry_market_id,
-        expiry,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        config.fee_incentive_lifetime_cap_rate(),
+        cadence_id,
+        option::none(),
         clock,
-    );
-    registry
-        .market_manager
-        .note_expiry(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
-    config_events::mkt_created(
-        expiry_market_id,
-        pool_vault_id,
-        propbook_underlying_id,
-        expiry,
-        tick_size,
-        admission_tick_size,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        config.se_template(),
-    );
+        ctx,
+    )
+}
 
-    expiry_market_id
+/// `create_and_share_expiry_market`, aborting unless the deployable expiry is
+/// `expected_expiry`. A keeper that planned the expiry off chain uses this so that a
+/// stale view of the cadence table fails instead of creating an unplanned market.
+public fun create_and_share_expiry_market_at(
+    registry: &mut Registry,
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    lifecycle_cap: &MarketLifecycleCap,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    expected_expiry: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    registry.create_mkt(
+        pool_vault,
+        config,
+        propbook_registry,
+        lifecycle_cap,
+        propbook_underlying_id,
+        cadence_id,
+        option::some(expected_expiry),
+        clock,
+        ctx,
+    )
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
@@ -368,6 +398,82 @@ fun new_registry(ctx: &mut TxContext): (Registry, AdminCap) {
     )
 }
 
+/// Shared body of the two market-creation entrypoints; `expected_expiry`, when set,
+/// must equal the expiry `next_deploy` selects.
+fun create_mkt(
+    registry: &mut Registry,
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    lifecycle_cap: &MarketLifecycleCap,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    expected_expiry: Option<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    config.chk_version();
+    registry.chk_lc_cap(lifecycle_cap);
+    config.chk_trading();
+    // Deliberately NOT gated on the valuation flag: creation moves no cash
+    // (`plp::register_exp` records targets; funding is a later rebalance), an
+    // in-flight flush's expected set is frozen at its snapshot so the new market
+    // is simply not part of it, and funding it mid-window cannot reach the mark
+    // — every figure it reads was frozen at the snapshot instant, which counts
+    // that cash as the idle it then was. The market joins the next flush's
+    // snapshot. Gating here would gap a fast market cadence for as long as a
+    // stalled flush holds the flag.
+    let periods = registry.cad_periods();
+    let deployable = registry
+        .market_manager
+        .next_deploy(&periods, propbook_registry, propbook_underlying_id, cadence_id, clock);
+    let expiry = deployable.expiry();
+    expected_expiry.do!(|expected| assert!(expiry == expected, EUnexpectedExpiry));
+    let tick_size = deployable.tick_size();
+    let admission_tick_size = deployable.admission_tick_size();
+    // `ExpiryPnl` reports this stored time as the market's cadence-period start
+    // (`period_start_ms`), so changing the lookback changes that event field's meaning.
+    let reference_tick_source_timestamp_ms =
+        expiry - market_manager::cad_period(&periods, cadence_id);
+    let max_expiry_allocation = deployable.max_alloc();
+    let initial_expiry_cash = deployable.init_cash();
+    let pool_vault_id = pool_vault.id();
+    let expiry_market_id = expiry_market::create_and_share(
+        config,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        reference_tick_source_timestamp_ms,
+        max_expiry_allocation,
+        ctx,
+    );
+    pool_vault.register_exp(
+        expiry_market_id,
+        expiry,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        config.fee_incentive_lifetime_cap_rate(),
+        clock,
+    );
+    registry
+        .market_manager
+        .note_expiry(&periods, propbook_underlying_id, cadence_id, expiry, expiry_market_id);
+    config_events::mkt_created(
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        config.se_template(),
+    );
+
+    expiry_market_id
+}
+
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun chk_pausecap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id()), EPauseCapNotValid);
@@ -383,6 +489,13 @@ fun chk_lc_cap(registry: &Registry, cap: &MarketLifecycleCap) {
 /// revoked.
 fun chk_pv_cap(registry: &Registry, cap: &PoolValuationCap) {
     assert!(registry.allowed_pool_valuation_caps.contains(&cap.id()), EPoolValuationCapNotValid);
+}
+
+/// The cadence table: the stored periods once `add_cadence` has run, else the
+/// built-in six.
+fun cad_periods(registry: &Registry): vector<u64> {
+    if (registry.id.exists_(CadencePeriodsKey())) *registry.id.borrow(CadencePeriodsKey())
+    else market_manager::base_periods()
 }
 
 // === Test-Only Functions ===

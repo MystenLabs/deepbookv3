@@ -204,6 +204,20 @@ macro fun max_pricing_basis_factor(): u64 { 100 }
 // bs_spot <= factor * spot can't overflow u64.
 macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
 
+/// Largest rise in UP price across ascending strikes that the NAV walk treats as
+/// fixed-point dust rather than an inverted surface. `pmath::digital` floors
+/// `N(d2)` and the skew correction independently, so where `N(d2)` sits on a tail
+/// plateau the difference steps up by one raw unit on a valid, butterfly-free
+/// surface. On real and healthy surfaces that one unit is the largest rise measured
+/// (the pricer's other rounding is larger per strike, but the true slope outruns
+/// it); rises above one appeared only on surfaces near the butterfly-arbitrage
+/// boundary, and there they range from 2 to thousands (RP-15's evidence). The bound
+/// is the measured unit plus one of headroom: an absorbed rise lowers NAV by at
+/// most 2e-9 per unit of the quantity ending at that boundary, plus one raw unit of
+/// rounding, and a larger rise fails closed. Re-measure when pricing or the SVI
+/// envelope changes.
+public(package) macro fun price_monotonicity_tolerance(): u64 { 2 }
+
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and

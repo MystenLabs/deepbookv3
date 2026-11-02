@@ -349,9 +349,9 @@ public fun svi_m_magnitude(s: u64): u64 {
     } else if (s == 5) {
         0
     } else if (s == 6) {
-        10_000
+        100
     } else if (s == 7) {
-        100_000
+        1_000
     } else if (s == 8) {
         100_000_000
     } else if (s == 9) {
@@ -413,11 +413,11 @@ public fun svi_sigma(s: u64): u64 {
     } else if (s == 4) {
         498_823
     } else if (s == 5) {
-        10_000
+        100
     } else if (s == 6) {
-        10_000
+        100
     } else if (s == 7) {
-        10_000
+        100
     } else if (s == 8) {
         100_000_000_000
     } else if (s == 9) {
@@ -463,17 +463,17 @@ public fun points(s: u64): vector<RefPoint> {
     } else if (s == 5) {
         vector[
             // at the forward, k=+0.000e+00, d2=-0.000
-            pt(66_875_410_000_000, constants::pos_inf!(), 499_878_577, 2_866),
+            pt(66_875_410_000_000, constants::pos_inf!(), 499_868_153, 3_180),
         ]
     } else if (s == 6) {
         vector[
             // at the forward, k=+0.000e+00, d2=-0.000
-            pt(66_875_410_000_000, constants::pos_inf!(), 681_488_093, 21_309),
+            pt(66_875_410_000_000, constants::pos_inf!(), 709_133_175, 1_491_126),
         ]
     } else if (s == 7) {
         vector[
             // at the forward, k=+0.000e+00, d2=-0.000
-            pt(66_875_410_000_000, constants::pos_inf!(), 339_052_785, 5_877),
+            pt(66_875_410_000_000, constants::pos_inf!(), 208_327_503, 304_527),
         ]
     } else if (s == 8) {
         vector[
@@ -574,54 +574,54 @@ public fun unit_forward_points(s: u64): vector<RefPoint> {
         ]
     } else if (s == 5) {
         vector[
-            // one width below the vertex, k=-1.000e-05, d2=+0.137
-            pt(999_990_000, constants::pos_inf!(), 734_274_700, 73_386),
-            // one width above the vertex, k=+1.000e-05, d2=-0.137
-            pt(1_000_010_000, constants::pos_inf!(), 265_511_012, 73_389),
-            // ten widths above the vertex, k=+1.000e-04, d2=-0.862
-            pt(1_000_100_005, constants::pos_inf!(), 83_297_804, 20_722),
-            // d2 target +2, k=-4.146e-04, d2=+2.000
-            pt(999_585_529, constants::pos_inf!(), 989_483_108, 2_592),
-            // d2 target +1, k=-1.260e-04, d2=+1.000
-            pt(999_874_000, constants::pos_inf!(), 931_275_216, 16_805),
-            // d2 target -1, k=+1.260e-04, d2=-1.000
-            pt(1_000_126_051, constants::pos_inf!(), 68_688_172, 16_797),
-            // d2 target -2, k=+4.148e-04, d2=-2.000
-            pt(1_000_414_841, constants::pos_inf!(), 10_514_162, 2_590),
+            // one width below the vertex, k=-1.000e-07, d2=+0.002
+            pt(999_999_900, constants::pos_inf!(), 709_762_668, 5_713_506),
+            // one width above the vertex, k=+1.000e-07, d2=-0.002
+            pt(1_000_000_100, constants::pos_inf!(), 289_973_971, 5_713_514),
+            // ten widths above the vertex, k=+1.000e-06, d2=-0.016
+            pt(1_000_001_000, constants::pos_inf!(), 202_128_904, 907_777),
+            // d2 target +2, k=-4.145e-04, d2=+2.000
+            pt(999_585_630, constants::pos_inf!(), 989_489_558, 2_593),
+            // d2 target +1, k=-1.258e-04, d2=+1.000
+            pt(999_874_236, constants::pos_inf!(), 931_727_277, 16_892),
+            // d2 target -1, k=+1.258e-04, d2=-1.000
+            pt(1_000_125_815, constants::pos_inf!(), 68_236_551, 16_883),
+            // d2 target -2, k=+4.147e-04, d2=-2.000
+            pt(1_000_414_741, constants::pos_inf!(), 10_507_660, 2_591),
         ]
     } else if (s == 6) {
         vector[
-            // vertex, k=+1.000e-05, d2=-0.142
-            pt(1_000_010_000, constants::pos_inf!(), 443_311_203, 68_789),
-            // one width above the vertex, k=+2.000e-05, d2=-0.274
-            pt(1_000_020_000, constants::pos_inf!(), 217_044_281, 74_774),
-            // ten widths above the vertex, k=+1.100e-04, d2=-0.949
-            pt(1_000_110_006, constants::pos_inf!(), 68_800_953, 20_186),
-            // d2 target +2, k=-4.227e-04, d2=+2.000
-            pt(999_577_391, constants::pos_inf!(), 989_247_700, 2_510),
-            // d2 target +1, k=-1.317e-04, d2=+1.000
-            pt(999_868_288, constants::pos_inf!(), 927_431_085, 15_447),
-            // d2 target -1, k=+1.199e-04, d2=-1.000
-            pt(1_000_119_898, constants::pos_inf!(), 64_164_451, 18_519),
-            // d2 target -2, k=+4.063e-04, d2=-2.000
-            pt(1_000_406_391, constants::pos_inf!(), 10_260_205, 2_680),
+            // vertex, k=+1.000e-07, d2=-0.002
+            pt(1_000_000_100, constants::pos_inf!(), 499_238_125, 5_937_604),
+            // one width above the vertex, k=+2.000e-07, d2=-0.003
+            pt(1_000_000_200, constants::pos_inf!(), 289_345_045, 5_713_559),
+            // ten widths above the vertex, k=+1.100e-06, d2=-0.017
+            pt(1_000_001_100, constants::pos_inf!(), 201_513_020, 907_810),
+            // d2 target +2, k=-4.145e-04, d2=+2.000
+            pt(999_585_547, constants::pos_inf!(), 989_487_114, 2_592),
+            // d2 target +1, k=-1.258e-04, d2=+1.000
+            pt(999_874_177, constants::pos_inf!(), 931_684_166, 16_876),
+            // d2 target -1, k=+1.257e-04, d2=-1.000
+            pt(1_000_125_755, constants::pos_inf!(), 68_193_796, 16_899),
+            // d2 target -2, k=+4.146e-04, d2=-2.000
+            pt(1_000_414_658, constants::pos_inf!(), 10_505_208, 2_592),
         ]
     } else if (s == 7) {
         vector[
-            // vertex, k=-1.000e-04, d2=+1.423
-            pt(999_900_005, constants::pos_inf!(), 922_557_402, 31_557),
-            // one width below the vertex, k=-1.100e-04, d2=+1.507
-            pt(999_890_006, constants::pos_inf!(), 992_396_548, 39_588),
-            // one width above the vertex, k=-9.000e-05, d2=+1.233
-            pt(999_910_004, constants::pos_inf!(), 806_184_811, 51_899),
-            // d2 target +2, k=-3.055e-04, d2=+2.000
-            pt(999_694_560, constants::pos_inf!(), 993_835_705, 4_419),
-            // d2 target +1, k=-7.878e-05, d2=+1.000
-            pt(999_921_224, constants::pos_inf!(), 710_706_232, 49_942),
-            // d2 target -1, k=+1.720e-04, d2=-1.000
-            pt(1_000_172_030, constants::pos_inf!(), 92_571_724, 9_646),
-            // d2 target -2, k=+4.863e-04, d2=-2.000
-            pt(1_000_486_468, constants::pos_inf!(), 12_314_012, 2_003),
+            // vertex, k=-1.000e-06, d2=+0.016
+            pt(999_999_000, constants::pos_inf!(), 506_169_825, 5_937_381),
+            // one width below the vertex, k=-1.100e-06, d2=+0.017
+            pt(999_998_900, constants::pos_inf!(), 716_029_171, 5_713_314),
+            // one width above the vertex, k=-9.000e-07, d2=+0.014
+            pt(999_999_100, constants::pos_inf!(), 296_292_339, 5_713_493),
+            // d2 target +2, k=-4.136e-04, d2=+2.000
+            pt(999_586_460, constants::pos_inf!(), 989_514_205, 2_602),
+            // d2 target +1, k=-1.252e-04, d2=+1.000
+            pt(999_874_835, constants::pos_inf!(), 932_159_280, 17_049),
+            // d2 target -1, k=+1.264e-04, d2=-1.000
+            pt(1_000_126_409, constants::pos_inf!(), 68_661_828, 16_730),
+            // d2 target -2, k=+4.155e-04, d2=-2.000
+            pt(1_000_415_569, constants::pos_inf!(), 10_532_095, 2_583),
         ]
     } else if (s == 8) {
         vector[

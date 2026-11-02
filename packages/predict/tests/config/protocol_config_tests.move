@@ -186,6 +186,15 @@ fun set_fee_incentive_subsidy_rate_while_frozen_aborts() {
 }
 
 #[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_builder_fee_cap_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_builder_fee_cap(&admin_cap, config_constants::max_builder_fee_cap!(), &clock);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
 fun set_fee_incentive_live_target_rate_while_frozen_aborts() {
     let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     let clock = new_clock(&mut scenario);

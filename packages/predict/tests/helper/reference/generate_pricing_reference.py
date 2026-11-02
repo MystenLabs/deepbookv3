@@ -134,9 +134,9 @@ NORMAL_PDF_ABS = 50.0 / F
 ULP = 1.0 / F
 ULP18 = 1.0 / (F * F)              # the pricing variance path's 1e18 granularity
 
-# SVI sigma bounds from pricing.move's pricing-safe envelope (`min_svi_sigma`,
+# SVI sigma bounds from predict_math's pricing-safe envelope (`min_svi_sigma`,
 # `max_svi_input`) the chosen rows must satisfy so the fixture can load them.
-SVI_SIGMA_MIN, SVI_SIGMA_MAX = 10_000, 100_000_000_000
+SVI_SIGMA_MIN, SVI_SIGMA_MAX = 100, 100_000_000_000
 
 # Four diverse-variance rows from the single real market, selected by stable
 # svi_event_digest (large / medium / small total variance => different time to

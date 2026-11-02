@@ -4,9 +4,11 @@
 /// Predict's per-account state, stored as an app-data slot on a shared `Account`
 /// (the `account` package).
 ///
-/// This is Predict's account-local state: open positions and sticky builder-code
-/// attribution. USDC/PLP custody lives in `Account`. The `PredictApp` witness
-/// namespaces this slot, so only Predict writes it.
+/// This is Predict's account-local state: open positions and a sticky builder
+/// code. The sticky code no longer affects fees: a trade names its builder and
+/// fee itself (`expiry_market::admit_mint_with_builder`). USDC/PLP custody lives
+/// in `Account`. The `PredictApp` witness namespaces this slot, so only Predict
+/// writes it.
 ///
 /// Position mutations are package-internal. Builder-code configuration accepts an
 /// account `Auth`; the account package decides which owner or authorized
@@ -65,8 +67,10 @@ public fun builder_code_id(account: &Account): Option<ID> {
     data(account).builder_code_id
 }
 
-/// Set sticky builder-code attribution for future trades using valid account auth.
-/// Owner auth and authorized-app auth both satisfy the account borrow boundary.
+/// Set the sticky builder code using valid account auth. Owner auth and
+/// authorized-app auth both satisfy the account borrow boundary. Kept for
+/// compatibility: it no longer affects fees, since a trade names its builder
+/// and fee itself.
 public fun set_builder_code(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -83,7 +87,8 @@ public fun set_builder_code(
     );
 }
 
-/// Clear sticky builder-code attribution using valid owner or authorized-app auth.
+/// Clear the sticky builder code using valid owner or authorized-app auth. Kept
+/// for compatibility: the code no longer affects fees.
 public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(auth);
     data_mut(account, ctx).builder_code_id = option::none();

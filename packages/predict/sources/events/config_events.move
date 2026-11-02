@@ -59,6 +59,13 @@ public struct FeeIncentiveSubsidyRateUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the builder fee cap changes: the most a trade's builder fee can
+/// charge per contract, in FLOAT_SCALING of a contract's $1 payout.
+public struct BuilderFeeCapUpdated has copy, drop, store {
+    builder_fee_cap: u64,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when either fee-incentive allocation rate changes, with both post-state
 /// values in FLOAT_SCALING: the live target every rebalance tops a market up to, and
 /// the lifetime cap newly created markets snapshot.
@@ -142,6 +149,14 @@ public struct CadenceConfigUpdated has copy, drop, store {
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
+}
+
+/// Emitted when an admin appends a cadence to the registry's cadence table. The new
+/// cadence is disabled on every underlying until a `CadenceConfigUpdated` enables it.
+public struct CadenceAdded has copy, drop, store {
+    registry_id: ID,
+    cadence_id: u8,
+    period_ms: u64,
 }
 
 /// Emitted when minting pause state changes for one expiry market.
@@ -236,6 +251,10 @@ public(package) fun subsidy_upd(fee_incentive_subsidy_rate: u64, onchain_timesta
     });
 }
 
+public(package) fun bldr_cap_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
+    event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
+}
+
 public(package) fun rates_upd(
     fee_incentive_live_target_rate: u64,
     fee_incentive_lifetime_cap_rate: u64,
@@ -325,6 +344,10 @@ public(package) fun cadence_upd(
         initial_expiry_cash,
         window_size,
     });
+}
+
+public(package) fun cadence_add(registry_id: ID, cadence_id: u8, period_ms: u64) {
+    event::emit(CadenceAdded { registry_id, cadence_id, period_ms });
 }
 
 public(package) fun mkt_paused(expiry_market_id: ID, paused: bool) {

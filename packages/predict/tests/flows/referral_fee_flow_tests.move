@@ -3,7 +3,8 @@
 
 /// End-to-end coverage for mint referral distribution: the split comes out of
 /// protocol proceeds without changing the trader quote, uses the live config
-/// rate, excludes sponsor subsidy and builder fees, includes congestion, and
+/// rate, excludes sponsor subsidy (and a queued fill's builder fee, pinned in
+/// `order_flow_tests`), includes congestion, and
 /// preserves the referrer's immutable Account identity and routing snapshot.
 #[test_only]
 module deepbook_predict::referral_fee_flow_tests;
@@ -29,8 +30,6 @@ const SUBSIDIZED_REFERRAL_FEE: u64 = 400_000;
 const HALF_SUBSIDY_RATE: u64 = 500_000_000;
 const SUBSIDY_AT_HALF_RATE: u64 = 2_500_000;
 const HALF_SUBSIDIZED_REFERRAL_FEE: u64 = 250_000;
-const BUILDER_FEE_ATM: u64 = 500_000;
-const BUILDER_CODE_INDEX: u64 = 0;
 const ROUNDING_TO_ZERO_RATE: u64 = 1;
 const EWMA_PENALTY_FLAT: u64 = 1_000_000;
 const VARIANCE_SEED_QUANTITY: u64 = 100_000_000;
@@ -367,12 +366,11 @@ fun configured_subsidy_rate_sets_the_subsidy_netted_from_the_referral_basis() {
 }
 
 #[test]
-fun sponsor_and_builder_are_excluded_from_referral_basis() {
+fun sponsor_is_excluded_from_referral_basis() {
     let (mut fx, expiry_id, trader, _referrer) = helpers::setup_referred_live_market(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );
-    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -388,7 +386,7 @@ fun sponsor_and_builder_are_excluded_from_referral_basis() {
     );
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_RATE_CAP);
-    assert_eq!(quote.builder_fee(), BUILDER_FEE_ATM);
+    assert_eq!(quote.builder_fee(), 0);
     let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
     let market_cash_before = helpers::market(&market).cash_balance();
 
