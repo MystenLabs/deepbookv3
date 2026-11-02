@@ -12,7 +12,8 @@
 /// cost. `quote_mint_tests` owns whether that quote's composition is itself
 /// right, and each fee component here is additionally pinned against its
 /// independent value (the fixture's 0.005 minimum fee is `quantity / 200` for a
-/// single finite leg, the builder cut is a tenth of it, the subsidy a fifth).
+/// single finite leg, the subsidy a fifth of it). A builder fee is named per trade,
+/// so its budget tests size the production quote the queued exact-cost fill uses.
 #[test_only]
 module deepbook_predict::mint_exact_cost_tests;
 
@@ -44,9 +45,10 @@ const LOT_CAP_DEPOSIT: u64 = 100_000_000_000_000;
 /// The fixture floors base_fee to 1 and fixes min_fee at 0.005, so at a far
 /// expiry (no fee ramp) a single-finite-leg range pays exactly `quantity / 200`.
 const MIN_FEE_DIVISOR: u64 = 200;
-/// Builder cut of the trading fee: builder_fee_multiplier (0.1), which binds
-/// below max_builder_fee_rate (0.005) * quantity at these sizes.
-const BUILDER_FEE_DIVISOR: u64 = 10;
+/// A trade's builder fee of 0.0005 per $1 contract, in FLOAT_SCALING.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
+/// That fee on `TEN_THOUSAND_LOTS`: 1e8 * 0.0005.
+const BUILDER_FEE_AT_TEN_THOUSAND_LOTS: u64 = 50_000;
 /// Sponsor share of the trading fee at the shipped fee_incentive_subsidy_rate (0.2).
 const SUBSIDY_DIVISOR: u64 = 5;
 /// The subsidy-rate ceiling, 50%: the sponsor pays half the fee while its balance
@@ -139,18 +141,15 @@ const WIDE_RANGE_VARIANCE: u64 = 40_000_000;
 /// entry-probability band.
 const WIDE_RANGE_RAISED_FORWARD: u64 = 95_000_000_000;
 
-/// A 6% fee floor, high enough that a tenth of the fee exceeds
-/// `max_builder_fee_rate` (0.005) * quantity, so the builder fee binds at its own
-/// rate cap instead of at the fee multiplier.
-const BUILDER_CAP_MIN_FEE_RATE: u64 = 60_000_000;
-/// The fee that rate produces on `TEN_THOUSAND_LOTS`: 0.06 * 1e8.
-const BUILDER_CAP_TRADING_FEE: u64 = 6_000_000;
+/// A builder fee cap of 0.001 per contract, and a named fee of 0.005 above it.
+const LOW_BUILDER_FEE_CAP: u64 = 1_000_000;
+const BUILDER_FEE_ABOVE_THE_CAP: u64 = 5_000_000;
+/// The capped fee on `TEN_THOUSAND_LOTS`: 1e8 * 0.001.
+const CAPPED_BUILDER_FEE_AT_TEN_THOUSAND_LOTS: u64 = 100_000;
 
 /// Consecutive lots walked by the monotonicity tests, centred on the shape change
 /// each one targets.
 const WALK_STEPS: u64 = 240;
-
-const BUILDER_CODE_INDEX: u64 = 0;
 
 // === Sizing: the fill is the largest whose all-in cost fits ===
 
@@ -423,44 +422,54 @@ fun builder_fee_is_sized_inside_the_budget() {
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );
-    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
     fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
 
-    let fill = account_quote_checked(&mut fx, &market, &account, TEN_THOUSAND_LOTS);
-    let next_lot = account_quote_checked(&mut fx, &market, &account, NEXT_LOT_QUANTITY);
+    let fill = builder_quote_checked(
+        &mut fx,
+        &market,
+        &account,
+        TEN_THOUSAND_LOTS,
+        BUILDER_FEE_PER_CONTRACT,
+    );
+    let next_lot = builder_quote_checked(
+        &mut fx,
+        &market,
+        &account,
+        NEXT_LOT_QUANTITY,
+        BUILDER_FEE_PER_CONTRACT,
+    );
     let trading_fee = TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR;
-    assert_eq!(fill.builder_fee(), trading_fee / BUILDER_FEE_DIVISOR);
+    assert_eq!(fill.builder_fee(), BUILDER_FEE_AT_TEN_THOUSAND_LOTS);
     assert_eq!(fill.all_in_cost(), fill.premium() + trading_fee + fill.builder_fee());
     let budget = next_lot.all_in_cost() - 1;
-    // The cost quote reads the same attribution the mint does.
-    let cost_quote = fx.quote_mint_exact_cost_for_account_bundle(
+    // The search sizes with the same builder fee the fill charges.
+    let cost_quote = fx.quote_mint_exact_cost_with_builder_fee_bundle(
         &market,
         &account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         budget,
         0,
+        BUILDER_FEE_PER_CONTRACT,
     );
     assert_eq!(cost_quote.quantity(), TEN_THOUSAND_LOTS);
-    assert_eq!(cost_quote.builder_fee(), trading_fee / BUILDER_FEE_DIVISOR);
+    assert_eq!(cost_quote.builder_fee(), BUILDER_FEE_AT_TEN_THOUSAND_LOTS);
     assert_eq!(cost_quote.all_in_cost(), fill.all_in_cost());
-
-    let order_id = fx.mint_exact_cost_bundle(
-        &mut market,
-        &mut account,
+    // Without the fee the same budget buys the next lot, so the fee is what
+    // kept it out.
+    let without_fee = fx.quote_mint_exact_cost_with_builder_fee_bundle(
+        &market,
+        &account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         budget,
-        TEN_THOUSAND_LOTS,
+        0,
+        0,
     );
-
-    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        test_constants::mint_deposit() - fill.all_in_cost(),
-    );
+    assert_eq!(without_fee.builder_fee(), 0);
+    assert!(without_fee.quantity() >= NEXT_LOT_QUANTITY);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -1713,47 +1722,51 @@ fun two_finite_legs_size_exactly() {
 
 #[test]
 fun builder_fee_at_its_own_rate_cap_sizes_exactly() {
-    // The builder fee is `min(0.1 * fee, 0.005 * quantity)`. Everywhere else the
-    // first arm binds; a 6% fee floor flips it to the second, which is the other
-    // side of a `min` the monotonicity argument depends on.
-    let mut fx = helpers::setup_market_default();
-    fx.set_template_min_fee(BUILDER_CAP_MIN_FEE_RATE);
-    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    let trader = fx.create_funded_manager(test_constants::mint_deposit());
-    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
-    let mut market = fx.take_market_bundle(expiry_id);
-    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.seed_market_cash(
-        helpers::market_mut(&mut market),
-        test_constants::default_seeded_expiry_cash(),
+    // A trade may name any fee; the builder fee cap is the most it is charged
+    // per contract. A named 0.005 against a 0.001 cap is charged the cap, and
+    // the search sizes with the capped fee, which is the fee the fill charges.
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
     );
-    helpers::return_market_bundle(market);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
+    fx.set_builder_fee_cap_bundle(&mut market, LOW_BUILDER_FEE_CAP);
+    let account = fx.take_account_bundle(&trader);
 
-    let fill = account_quote_checked(&mut fx, &market, &account, TEN_THOUSAND_LOTS);
-    let next_lot = account_quote_checked(&mut fx, &market, &account, NEXT_LOT_QUANTITY);
-    assert_eq!(fill.trading_fee(), BUILDER_CAP_TRADING_FEE);
-    // The rate cap binds: 0.005 * quantity, strictly below a tenth of the fee.
-    assert_eq!(fill.builder_fee(), TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR);
-    assert!(fill.builder_fee() < BUILDER_CAP_TRADING_FEE / BUILDER_FEE_DIVISOR);
+    let fill = builder_quote_checked(
+        &mut fx,
+        &market,
+        &account,
+        TEN_THOUSAND_LOTS,
+        BUILDER_FEE_ABOVE_THE_CAP,
+    );
+    let next_lot = builder_quote_checked(
+        &mut fx,
+        &market,
+        &account,
+        NEXT_LOT_QUANTITY,
+        BUILDER_FEE_ABOVE_THE_CAP,
+    );
+    assert_eq!(fill.builder_fee(), CAPPED_BUILDER_FEE_AT_TEN_THOUSAND_LOTS);
+    assert_eq!(
+        fill.all_in_cost(),
+        fill.premium() + TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR + CAPPED_BUILDER_FEE_AT_TEN_THOUSAND_LOTS,
+    );
     let budget = next_lot.all_in_cost() - 1;
 
-    let order_id = fx.mint_exact_cost_bundle(
-        &mut market,
-        &mut account,
+    let cost_quote = fx.quote_mint_exact_cost_with_builder_fee_bundle(
+        &market,
+        &account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         budget,
-        TEN_THOUSAND_LOTS,
+        0,
+        BUILDER_FEE_ABOVE_THE_CAP,
     );
-
-    assert_eq!(order::from_id(order_id).quantity(), TEN_THOUSAND_LOTS);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        test_constants::mint_deposit() - fill.all_in_cost(),
-    );
+    assert_eq!(cost_quote.quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(cost_quote.builder_fee(), CAPPED_BUILDER_FEE_AT_TEN_THOUSAND_LOTS);
+    assert_eq!(cost_quote.all_in_cost(), fill.all_in_cost());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -1990,20 +2003,22 @@ fun atm_quote_checked(
     quote
 }
 
-/// The account-aware quantity quote, for fixtures whose cost depends on account
-/// attribution (a builder code).
-fun account_quote_checked(
+/// The production quantity quote at the clock with a trade's builder fee, the
+/// price a queued exact-quantity fill charges.
+fun builder_quote_checked(
     fx: &mut helpers::Fixture,
     market: &helpers::MarketBundle,
     account: &helpers::AccountBundle,
     quantity: u64,
+    builder_fee_per_contract: u64,
 ): MintQuote {
-    let quote = fx.quote_mint_for_account_bundle(
+    let quote = fx.quote_mint_with_builder_fee_bundle(
         market,
         account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         quantity,
+        builder_fee_per_contract,
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     quote

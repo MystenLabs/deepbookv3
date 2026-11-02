@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Session wrappers over the order-flow companion's queue: the four enqueue
-/// wrappers, the session auth and version gates in front of them, and the
-/// retired immediate wrappers.
+/// wrappers and their `_with_builder` versions, the session auth, builder
+/// approval, and version gates in front of them, and the retired immediate
+/// wrappers.
 ///
 /// The auth and version tests abort in Sessions before the companion runs. The
 /// flow tests drive the real queue (enqueue, commit, resolve, sell) and pin
@@ -13,10 +14,14 @@
 #[test_only]
 module deepbook_sessions::sessions_queue_tests;
 
-use account::{account::AccountWrapper, account_registry::AccountRegistry};
+use account::{account::{Self, AccountWrapper}, account_registry::AccountRegistry};
 use deepbook_predict::{
+    builder_code::BuilderCode,
     expiry_market,
     flow_test_helpers::{Self as predict_helpers, Fixture, MarketBundle},
+    order_events,
+    protocol_config::ProtocolConfig,
+    registry::Registry,
     test_constants
 };
 use deepbook_predict_orders::{
@@ -24,21 +29,26 @@ use deepbook_predict_orders::{
     order_flow::OrderFlow,
     order_queue::{Self, OrderView},
     queue::{Self, MarketQueue},
+    queue_event_views as events,
     queue_fixture
 };
 use deepbook_sessions::{
     session_config::{Self as session_config, SessionsConfig},
     sessions::{Self as sessions, SessionsApp}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::{bcs, unit_test::{assert_eq, destroy}};
 use sui::{
     accumulator::AccumulatorRoot,
+    bcs as sui_bcs,
     deny_list,
+    event,
     test_scenario::{most_recent_id_shared, return_shared}
 };
 use usdc::usdc::USDC;
 
 const SESSION: address = @0x5E5510;
+/// A second session key on the owner's Account.
+const OTHER_SESSION: address = @0x5E5511;
 const BOB: address = @0xB0B;
 const KEEPER: address = @0x4EE9;
 
@@ -74,7 +84,7 @@ const AMOUNT_BUDGET: u64 = 80_000_000;
 // Exact-cost mint: 70 USDC all-in, at least three lots.
 const COST_MAX_COST: u64 = 70_000_000;
 const COST_MIN_QUANTITY: u64 = 30_000;
-// Budget = min(max_cost, available - fee) = min(70_000_000, 819_940_000).
+// Budget = min(max_cost, available - fee) = min(70_000_000, 829_940_000).
 const COST_BUDGET: u64 = 70_000_000;
 
 // 1_000_000_000 deposit - (90_000_000 + 20_000) - (80_000_000 + 20_000)
@@ -102,6 +112,54 @@ const MISSING_RECORD_ID: u64 = 0;
 const UNUSED_ORDER_ID: u256 = 1;
 const ZERO_FLOOR: u64 = 0;
 const EUnexpectedSuccess: u64 = 999;
+
+// Builder approvals: a session approved for code A at a 0.0005 per-contract
+// maximum. The 100m mint pays 100m * 0.0005 = 50_000 at that fee.
+const APPROVED_MAX_FEE: u64 = 500_000;
+const FEE_ABOVE_APPROVED: u64 = 500_001;
+const REPLACED_MAX_FEE: u64 = 300_000;
+const BUILDER_FEE_ON_MINT: u64 = 50_000;
+const CODE_A_INDEX: u64 = 0;
+const CODE_B_INDEX: u64 = 1;
+const ONE_ORDER: u64 = 1;
+/// A zero builder fee: what an app that charges nothing approves and names, and
+/// what a trade naming no builder records and pays.
+const ZERO_BUILDER_FEE: u64 = 0;
+// Fees under APPROVED_MAX_FEE, one per remaining builder wrapper and distinct,
+// so a fee forwarded from the wrong argument shows up in its record.
+const AMOUNT_BUILDER_FEE: u64 = 200_000;
+const COST_BUILDER_FEE: u64 = 100_000;
+const SELL_BUILDER_FEE: u64 = 400_000;
+/// An approval at the whole $1 payout per contract, 1e9 in FLOAT_SCALING: the
+/// highest cap Predict's admin can set, so it sits above the cap in force.
+const WHOLE_PAYOUT_MAX_FEE: u64 = 1_000_000_000;
+/// Predict's default builder fee cap, 5c per contract
+/// (`config_constants::default_builder_fee_cap`). The fixture never changes it.
+const DEFAULT_BUILDER_FEE_CAP: u64 = 50_000_000;
+/// 10c per contract: twice the cap, inside the $1 approval.
+const FEE_ABOVE_CAP: u64 = 100_000_000;
+/// A 6c approval: above the 5c cap, below the 10c FEE_ABOVE_CAP. The capped fee
+/// (5c) fits it and the named fee (10c) does not.
+const MAX_FEE_ABOVE_CAP: u64 = 60_000_000;
+/// The 100m mint pays the cap, not the 10c it named: floor(100_000_000 *
+/// 50_000_000 / 1e9) = 5_000_000, 5c on each of 100 contracts.
+const BUILDER_FEE_AT_CAP: u64 = 5_000_000;
+const NO_EVENTS: u64 = 0;
+const ONE_EVENT: u64 = 1;
+
+/// Mirrors `sessions::SessionBuilderApproved` for a byte-for-byte event check.
+public struct ExpectedSessionBuilderApproved has copy, drop {
+    account_id: ID,
+    session: address,
+    code_id: ID,
+    max_fee_per_contract: u64,
+}
+
+/// Mirrors `sessions::SessionBuilderCleared` for a byte-for-byte event check.
+public struct ExpectedSessionBuilderCleared has copy, drop {
+    account_id: ID,
+    session: address,
+}
 
 public struct QueueSessionFixture {
     predict: Fixture,
@@ -265,6 +323,21 @@ fun retired_package_version_cannot_sell() {
         ZERO_FLOOR,
         ZERO_FLOOR,
     );
+    abort EUnexpectedSuccess
+}
+
+/// The approval is in place before the watermark retires this version, so the
+/// version gate alone refuses the builder trade.
+#[test, expected_failure(abort_code = session_config::EPackageVersionDisabled)]
+fun retired_package_version_cannot_enqueue_with_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_config::set_version_watermark_for_testing(&mut tx.sessions_config, RETIRING_WATERMARK);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -480,6 +553,819 @@ fun sell_two_open_records(
     end_tx(tx);
 }
 
+// === Builder approvals ===
+
+#[test]
+fun approving_a_builder_records_it_and_reapproving_replaces_it() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let code_b = create_code(&mut fixture, CODE_B_INDEX);
+    let account_id = account_id(&mut fixture);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    assert_one_approved(account_id, code_a, APPROVED_MAX_FEE);
+    let approval = session_builder(&mut fixture).destroy_some();
+    assert_eq!(approval.approved_code_id(), code_a);
+    assert_eq!(approval.approved_max_fee_per_contract(), APPROVED_MAX_FEE);
+
+    // Replacing an approval emits the new one in full.
+    approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
+    assert_one_approved(account_id, code_b, REPLACED_MAX_FEE);
+    let approval = session_builder(&mut fixture).destroy_some();
+    assert_eq!(approval.approved_code_id(), code_b);
+    assert_eq!(approval.approved_max_fee_per_contract(), REPLACED_MAX_FEE);
+    finish(fixture);
+}
+
+#[test]
+fun revoking_clears_the_builder_and_reauthorizing_keeps_it() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    // Re-authorizing an existing grant clears nothing, so it emits no
+    // `SessionBuilderCleared`.
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    assert_eq!(event::events_by_type<sessions::SessionAuthorized>().length(), ONE_EVENT);
+    assert_none_cleared();
+    assert!(session_builder(&mut fixture).is_some());
+
+    let account_id = account_id(&mut fixture);
+    revoke_session(&mut fixture);
+    assert_one_cleared(account_id);
+    assert!(session_builder(&mut fixture).is_none());
+    finish(fixture);
+}
+
+/// The pre-upgrade `revoke_session` stays callable and leaves the builder
+/// approval behind. A new grant for that address clears it, so the session
+/// needs a fresh approval.
+#[test]
+fun a_new_grant_clears_an_approval_the_old_revoke_left_behind() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    revoke_session_leaving_approval(&mut fixture);
+    assert!(session_builder(&mut fixture).is_some());
+
+    let account_id = account_id(&mut fixture);
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    assert_one_cleared(account_id);
+    assert!(session_builder(&mut fixture).is_none());
+    finish(fixture);
+}
+
+/// Builder approvals wait until the watermark retires the older Sessions
+/// versions, whose `revoke_session` and `authorize_session` would together
+/// keep a stale approval.
+#[test, expected_failure(abort_code = sessions::EBuilderApprovalsNotEnabled)]
+fun approving_a_builder_before_the_watermark_retires_older_sessions_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, owner, owner);
+    let tx_fields = &mut tx;
+    session_config::set_version_watermark_for_testing(
+        &mut tx_fields.sessions_config,
+        MAINNET_WATERMARK,
+    );
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::approve_session_builder(
+        &mut tx_fields.wrapper,
+        &tx_fields.sessions_config,
+        SESSION,
+        code_a,
+        APPROVED_MAX_FEE,
+        ctx,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = session_config::EPackageVersionDisabled)]
+fun retired_package_version_cannot_approve_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, owner, owner);
+    let tx_fields = &mut tx;
+    session_config::set_version_watermark_for_testing(
+        &mut tx_fields.sessions_config,
+        RETIRING_WATERMARK,
+    );
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::approve_session_builder(
+        &mut tx_fields.wrapper,
+        &tx_fields.sessions_config,
+        SESSION,
+        code_a,
+        APPROVED_MAX_FEE,
+        ctx,
+    );
+    abort EUnexpectedSuccess
+}
+
+/// The Account has never granted a session, so it holds no grant data at all.
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun approving_a_builder_for_an_unauthorized_session_aborts() {
+    let mut fixture = setup();
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+/// The Account still holds grant data after the revoke, but none for `SESSION`.
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun approving_a_builder_for_a_revoked_session_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    revoke_session(&mut fixture);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+/// Approval checks that the grant is stored, not that it is live. Expiry removes
+/// nothing, so the owner can still approve an expired session's builder.
+#[test]
+fun an_expired_session_can_still_be_approved() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
+    let account_id = account_id(&mut fixture);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    assert_one_approved(account_id, code_a, APPROVED_MAX_FEE);
+    let approval = session_builder(&mut fixture).destroy_some();
+    assert_eq!(approval.approved_code_id(), code_a);
+    assert_eq!(approval.approved_max_fee_per_contract(), APPROVED_MAX_FEE);
+    finish(fixture);
+}
+
+#[test, expected_failure(abort_code = account::EInvalidOwner)]
+fun only_the_owner_can_approve_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let tx_fields = &mut tx;
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::approve_session_builder(
+        &mut tx_fields.wrapper,
+        &tx_fields.sessions_config,
+        SESSION,
+        code_a,
+        APPROVED_MAX_FEE,
+        ctx,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun an_approved_session_mint_records_its_fee_and_the_fill_pays_it() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let record_id = session_enqueue_exact_quantity_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(record_id), APPROVED_MAX_FEE);
+    let tau_ms = record(&tx, record_id).timing().tau_ms();
+    end_tx(tx);
+
+    fill_one(&mut fixture, tau_ms);
+    let fill = events::fills()[0];
+    assert_eq!(fill.record_id(), record_id);
+    assert_eq!(fill.builder_fee(), BUILDER_FEE_ON_MINT);
+    finish(fixture);
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun a_session_mint_with_a_builder_but_no_approval_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun a_session_mint_with_another_code_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let code_b = create_code(&mut fixture, CODE_B_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_b, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderFeeAboveApproved)]
+fun a_session_mint_above_the_approved_fee_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        FEE_ABOVE_APPROVED,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun a_revoked_and_reauthorized_session_needs_a_new_approval() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session(&mut fixture);
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun a_session_amount_mint_with_a_builder_but_no_approval_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_amount_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun a_session_cost_mint_with_a_builder_but_no_approval_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_cost_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun a_session_sell_with_a_builder_but_no_approval_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_redeem_open_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+        MISSING_RECORD_ID,
+        MINT_QUANTITY,
+        ZERO_FLOOR,
+        ZERO_FLOOR,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderFeeAboveApproved)]
+fun a_session_amount_mint_above_the_approved_fee_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_amount_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EBuilderFeeAboveApproved)]
+fun a_session_cost_mint_above_the_approved_fee_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_cost_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
+    abort EUnexpectedSuccess
+}
+
+/// Sessions checks the approval before the companion looks the record up, so a
+/// missing record ID still reaches the fee check.
+#[test, expected_failure(abort_code = sessions::EBuilderFeeAboveApproved)]
+fun a_session_sell_above_the_approved_fee_aborts() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_redeem_open_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        FEE_ABOVE_APPROVED,
+        MISSING_RECORD_ID,
+        MINT_QUANTITY,
+        ZERO_FLOOR,
+        ZERO_FLOOR,
+    );
+    abort EUnexpectedSuccess
+}
+
+// --- What an approval does and does not change ---
+
+/// The approval names what a builder trade may charge but forces no fee: the
+/// plain wrapper names no builder, so the record and the fill carry none.
+#[test]
+fun an_approved_session_trading_without_a_builder_pays_no_builder_fee() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let record_id = session_enqueue_exact_quantity(
+        &mut fixture,
+        &mut tx,
+        MINT_QUANTITY,
+        QUANTITY_MAX_COST,
+        QUANTITY_MAX_PROBABILITY,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(record_id), ZERO_BUILDER_FEE);
+    let tau_ms = record(&tx, record_id).timing().tau_ms();
+    end_tx(tx);
+
+    fill_one(&mut fixture, tau_ms);
+    let fill = events::fills()[0];
+    assert_eq!(fill.record_id(), record_id);
+    assert_eq!(fill.builder_fee(), ZERO_BUILDER_FEE);
+    let (minted_fee, minted_code) = minted_builder();
+    assert_eq!(minted_fee, ZERO_BUILDER_FEE);
+    assert!(minted_code.is_none());
+    finish(fixture);
+}
+
+/// Sessions compares the named fee, uncapped, against the approval, and Predict
+/// then caps it. A 10c fee inside a $1 approval passes Sessions, and the receipt
+/// and the fill carry the 5c cap.
+#[test]
+fun a_session_fee_above_the_cap_is_recorded_and_charged_at_the_cap() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, WHOLE_PAYOUT_MAX_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    assert_eq!(predict_helpers::config(&tx.market).builder_fee_cap(), DEFAULT_BUILDER_FEE_CAP);
+    let record_id = session_enqueue_exact_quantity_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        FEE_ABOVE_CAP,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(record_id), DEFAULT_BUILDER_FEE_CAP);
+    let tau_ms = record(&tx, record_id).timing().tau_ms();
+    end_tx(tx);
+
+    fill_one(&mut fixture, tau_ms);
+    let fill = events::fills()[0];
+    assert_eq!(fill.record_id(), record_id);
+    assert_eq!(fill.builder_fee(), BUILDER_FEE_AT_CAP);
+    let (minted_fee, minted_code) = minted_builder();
+    assert_eq!(minted_fee, BUILDER_FEE_AT_CAP);
+    assert_eq!(minted_code, option::some(code_a));
+    finish(fixture);
+}
+
+/// The approval bounds the fee the trade names, not the fee Predict charges: a
+/// 10c fee against a 6c approval aborts, although the 5c cap it would pay fits.
+#[test, expected_failure(abort_code = sessions::EBuilderFeeAboveApproved)]
+fun a_named_fee_above_the_approval_aborts_even_when_the_cap_fits_it() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, MAX_FEE_ABOVE_CAP);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    assert_eq!(predict_helpers::config(&tx.market).builder_fee_cap(), DEFAULT_BUILDER_FEE_CAP);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_CAP);
+    abort EUnexpectedSuccess
+}
+
+/// An app that charges nothing approves its code at a zero maximum. A zero fee
+/// is at that maximum, so the trade passes, pays nothing, and still names the
+/// code on its fill.
+#[test]
+fun a_zero_fee_approval_still_names_its_code_on_the_fill() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, ZERO_BUILDER_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let record_id = session_enqueue_exact_quantity_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        ZERO_BUILDER_FEE,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(record_id), ZERO_BUILDER_FEE);
+    let tau_ms = record(&tx, record_id).timing().tau_ms();
+    end_tx(tx);
+
+    fill_one(&mut fixture, tau_ms);
+    let fill = events::fills()[0];
+    assert_eq!(fill.record_id(), record_id);
+    assert_eq!(fill.builder_fee(), ZERO_BUILDER_FEE);
+    let (minted_fee, minted_code) = minted_builder();
+    assert_eq!(minted_fee, ZERO_BUILDER_FEE);
+    assert_eq!(minted_code, option::some(code_a));
+    finish(fixture);
+}
+
+/// The amount and cost builder wrappers forward the named fee into each record,
+/// beside the request fields, and the records belong to the Account. Both
+/// budgets are their `max_cost`, as in the plain flow.
+#[test]
+fun approved_session_amount_and_cost_mints_record_their_builder_fees() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let amount_id = session_enqueue_exact_amount_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        AMOUNT_BUILDER_FEE,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(amount_id), AMOUNT_BUILDER_FEE);
+    assert_amount_mint_record(&tx, amount_id, owner);
+    end_tx(tx);
+
+    // The code was returned to the scenario, so the next mint takes it in a new
+    // transaction.
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let cost_id = session_enqueue_exact_cost_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        COST_BUILDER_FEE,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(cost_id), COST_BUILDER_FEE);
+    assert_cost_mint_record(&tx, cost_id, owner);
+    end_tx(tx);
+    finish(fixture);
+}
+
+/// The sell builder wrapper forwards the named fee into the sell's record, beside
+/// the close quantity and floors. The position came from a plain mint, so the
+/// fee is the sell's own.
+#[test]
+fun an_approved_session_sell_records_its_builder_fee() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let mint_id = session_enqueue_exact_quantity(
+        &mut fixture,
+        &mut tx,
+        MINT_QUANTITY,
+        QUANTITY_MAX_COST,
+        QUANTITY_MAX_PROBABILITY,
+    );
+    let tau_ms = record(&tx, mint_id).timing().tau_ms();
+    end_tx(tx);
+    fill_one(&mut fixture, tau_ms);
+
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    // The fill landed past the setup seed's Block Scholes freshness window, so
+    // reseed the feeds at the current clock for the sell's volatility snapshot.
+    let now_ms = fixture.predict.clock().timestamp_ms();
+    fixture
+        .predict
+        .advance_live_oracle_bundle_to(
+            &mut tx.market,
+            test_constants::default_live_price(),
+            now_ms,
+        );
+    let position = record(&tx, mint_id).position().order_id();
+    let sell_id = session_enqueue_redeem_open_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        SELL_BUILDER_FEE,
+        mint_id,
+        MINT_QUANTITY,
+        QUANTITY_SELL_MIN_PROBABILITY,
+        QUANTITY_SELL_MIN_PROCEEDS,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(sell_id), SELL_BUILDER_FEE);
+    assert_sell_record(
+        &tx,
+        sell_id,
+        MINT_QUANTITY,
+        QUANTITY_SELL_MIN_PROBABILITY,
+        QUANTITY_SELL_MIN_PROCEEDS,
+        position,
+        owner,
+    );
+    end_tx(tx);
+    finish(fixture);
+}
+
+// --- Re-approval ---
+
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun after_reapproval_the_old_code_is_refused() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let code_b = create_code(&mut fixture, CODE_B_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, REPLACED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun after_reapproval_the_new_code_trades_at_its_new_max() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let code_b = create_code(&mut fixture, CODE_B_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let record_id = session_enqueue_exact_quantity_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_b,
+        REPLACED_MAX_FEE,
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(record_id), REPLACED_MAX_FEE);
+    end_tx(tx);
+    finish(fixture);
+}
+
+/// Re-approval replaces the maximum with the code: the first approval's higher
+/// maximum no longer passes.
+#[test, expected_failure(abort_code = sessions::EBuilderFeeAboveApproved)]
+fun reapproval_replaces_the_approved_max_fee() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    let code_b = create_code(&mut fixture, CODE_B_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_b, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+// --- Expiry and revocation ---
+
+/// The builder wrappers keep the expiry check: the trade passes the approval,
+/// and the expired session still cannot place it.
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun an_expired_session_cannot_trade_on_its_approval() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+/// The session checks run before the builder checks: an expired session naming
+/// a fee above its approval aborts on the expiry, not on the fee.
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun an_expired_session_is_refused_before_its_fee_is_checked() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
+    abort EUnexpectedSuccess
+}
+
+/// Expiry ends a session's trading but removes nothing: the approval stays
+/// readable, and re-authorizing the same address is an existing grant, which
+/// keeps it.
+#[test]
+fun an_expired_session_keeps_its_approval_through_reauthorization() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
+    let approval = session_builder(&mut fixture).destroy_some();
+    assert_eq!(approval.approved_code_id(), code_a);
+    assert_eq!(approval.approved_max_fee_per_contract(), APPROVED_MAX_FEE);
+
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    assert_eq!(event::events_by_type<sessions::SessionAuthorized>().length(), ONE_EVENT);
+    assert_none_cleared();
+    let approval = session_builder(&mut fixture).destroy_some();
+    assert_eq!(approval.approved_code_id(), code_a);
+    assert_eq!(approval.approved_max_fee_per_contract(), APPROVED_MAX_FEE);
+    finish(fixture);
+}
+
+// Revoking also removes the approval, so a builder check run first would abort
+// `EBuilderNotApproved`. Each builder wrapper runs the session checks first.
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun a_revoked_session_cannot_enqueue_exact_quantity_with_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session(&mut fixture);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun a_revoked_session_cannot_enqueue_exact_amount_with_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session(&mut fixture);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_amount_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun a_revoked_session_cannot_enqueue_exact_cost_with_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session(&mut fixture);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_cost_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun a_revoked_session_cannot_sell_with_a_builder() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session(&mut fixture);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_redeem_open_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+        MISSING_RECORD_ID,
+        MINT_QUANTITY,
+        ZERO_FLOOR,
+        ZERO_FLOOR,
+    );
+    abort EUnexpectedSuccess
+}
+
+/// The pre-upgrade revoke removes the session but leaves its approval, which
+/// still names the code. Only the session check refuses the trade.
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun a_session_the_old_revoke_removed_cannot_trade_on_its_leftover_approval() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session_leaving_approval(&mut fixture);
+    assert!(session_builder(&mut fixture).is_some());
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+/// The owner can clear an approval the pre-upgrade revoke left behind by revoking
+/// again: the approval goes, with its `SessionBuilderCleared`, although no session
+/// remains to emit `SessionRevoked`.
+#[test]
+fun revoking_again_clears_an_approval_the_old_revoke_left_behind() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    revoke_session_leaving_approval(&mut fixture);
+    assert!(session_builder(&mut fixture).is_some());
+
+    let account_id = account_id(&mut fixture);
+    revoke_session(&mut fixture);
+    assert_one_cleared(account_id);
+    assert_eq!(event::events_by_type<sessions::SessionRevoked>().length(), NO_EVENTS);
+    assert!(session_builder(&mut fixture).is_none());
+    finish(fixture);
+}
+
+/// Revoking a session that holds no approval emits no `SessionBuilderCleared`,
+/// and another session's approval on the same Account stays in place.
+#[test]
+fun revoking_an_unapproved_session_clears_nothing() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let owner = fixture.owner;
+    authorize_session_for(&mut fixture, owner, OTHER_SESSION, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+
+    revoke_session_for(&mut fixture, OTHER_SESSION);
+    assert_eq!(event::events_by_type<sessions::SessionRevoked>().length(), ONE_EVENT);
+    assert_none_cleared();
+    let approval = session_builder(&mut fixture).destroy_some();
+    assert_eq!(approval.approved_code_id(), code_a);
+    assert_eq!(approval.approved_max_fee_per_contract(), APPROVED_MAX_FEE);
+    finish(fixture);
+}
+
+// --- Scope ---
+
+/// Approvals are per session: a second session on the same Account has none, so
+/// it cannot name the code the first session may.
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun another_session_on_the_account_cannot_use_its_approval() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let owner = fixture.owner;
+    authorize_session_for(&mut fixture, owner, OTHER_SESSION, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let mut tx = begin_tx(&mut fixture, OTHER_SESSION, owner);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
+/// Approvals belong to the Account that made them: Bob grants the same session
+/// key on his own Account without one, so it cannot name the code there.
+#[test, expected_failure(abort_code = sessions::EBuilderNotApproved)]
+fun an_approval_on_one_account_does_not_reach_another() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    fixture.predict.create_funded_manager_as(BOB, test_constants::mint_deposit());
+    authorize_session_for(&mut fixture, BOB, SESSION, SESSION_DURATION_MS);
+    let mut tx = begin_tx(&mut fixture, SESSION, BOB);
+    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    abort EUnexpectedSuccess
+}
+
 // === Fixture ===
 
 /// A live market past the Predict cutover with the companion's witness
@@ -532,7 +1418,18 @@ fun setup(): QueueSessionFixture {
 /// The owner grants `SESSION` for `duration_ms` from the fixture clock.
 fun authorize_session(fixture: &mut QueueSessionFixture, duration_ms: u64) {
     let owner = fixture.owner;
-    let mut tx = begin_tx(fixture, owner, owner);
+    authorize_session_for(fixture, owner, SESSION, duration_ms);
+}
+
+/// `account_owner` grants `session` on their Account for `duration_ms` from the
+/// fixture clock.
+fun authorize_session_for(
+    fixture: &mut QueueSessionFixture,
+    account_owner: address,
+    session: address,
+    duration_ms: u64,
+) {
+    let mut tx = begin_tx(fixture, account_owner, account_owner);
     // Field borrows go through one reference: borrowing the local `tx` itself
     // while `&mut tx.wrapper` is alive fails the bytecode borrow check.
     let tx_fields = &mut tx;
@@ -540,11 +1437,140 @@ fun authorize_session(fixture: &mut QueueSessionFixture, duration_ms: u64) {
     sessions::authorize_session(
         &mut tx_fields.wrapper,
         &tx_fields.sessions_config,
-        SESSION,
+        session,
         duration_ms,
         clock,
         ctx,
     );
+    end_tx(tx);
+}
+
+/// The owner creates and shares builder code `code_index`. Returns its ID.
+fun create_code(fixture: &mut QueueSessionFixture, code_index: u64): ID {
+    let owner = fixture.owner;
+    let scenario = fixture.predict.scenario_mut();
+    scenario.next_tx(owner);
+    let mut registry = scenario.take_shared<Registry>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let code_id = registry.create_and_share_builder_code(&config, code_index, scenario.ctx());
+    return_shared(registry);
+    return_shared(config);
+    code_id
+}
+
+/// The owner approves `code_id` at `max_fee` for `SESSION`.
+fun approve_builder(fixture: &mut QueueSessionFixture, code_id: ID, max_fee: u64) {
+    let owner = fixture.owner;
+    let mut tx = begin_tx(fixture, owner, owner);
+    let tx_fields = &mut tx;
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::approve_session_builder(
+        &mut tx_fields.wrapper,
+        &tx_fields.sessions_config,
+        SESSION,
+        code_id,
+        max_fee,
+        ctx,
+    );
+    end_tx(tx);
+}
+
+/// The owner revokes `SESSION`.
+fun revoke_session(fixture: &mut QueueSessionFixture) {
+    revoke_session_for(fixture, SESSION);
+}
+
+/// The owner revokes `session`.
+fun revoke_session_for(fixture: &mut QueueSessionFixture, session: address) {
+    let owner = fixture.owner;
+    let mut tx = begin_tx(fixture, owner, owner);
+    let tx_fields = &mut tx;
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::revoke_session(&mut tx_fields.wrapper, session, ctx);
+    end_tx(tx);
+}
+
+/// The owner revokes `SESSION` through the pre-upgrade `revoke_session`, which
+/// leaves its builder approval behind.
+fun revoke_session_leaving_approval(fixture: &mut QueueSessionFixture) {
+    let owner = fixture.owner;
+    let mut tx = begin_tx(fixture, owner, owner);
+    let tx_fields = &mut tx;
+    let (_, ctx) = fixture.predict.clock_and_ctx();
+    sessions::revoke_session_without_builder_for_testing(&mut tx_fields.wrapper, SESSION, ctx);
+    end_tx(tx);
+}
+
+/// `SESSION`'s approved builder, read in its own transaction.
+fun session_builder(fixture: &mut QueueSessionFixture): Option<sessions::SessionBuilder> {
+    let owner = fixture.owner;
+    let tx = begin_tx(fixture, owner, owner);
+    let approval = sessions::session_builder(&tx.wrapper, SESSION);
+    end_tx(tx);
+    approval
+}
+
+/// The owner's canonical Account ID, read in its own transaction.
+fun account_id(fixture: &mut QueueSessionFixture): ID {
+    let owner = fixture.owner;
+    let tx = begin_tx(fixture, owner, owner);
+    let account_id = tx.wrapper.load_account().account_id();
+    end_tx(tx);
+    account_id
+}
+
+/// The last transaction emitted exactly one `SessionBuilderCleared`, for
+/// `SESSION` on `account_id`.
+fun assert_one_cleared(account_id: ID) {
+    let events = event::events_by_type<sessions::SessionBuilderCleared>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedSessionBuilderCleared { account_id, session: SESSION };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+}
+
+/// The last transaction emitted exactly one `SessionBuilderApproved`, for
+/// `SESSION` on `account_id` at `code_id` and `max_fee`.
+fun assert_one_approved(account_id: ID, code_id: ID, max_fee: u64) {
+    let events = event::events_by_type<sessions::SessionBuilderApproved>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedSessionBuilderApproved {
+        account_id,
+        session: SESSION,
+        code_id,
+        max_fee_per_contract: max_fee,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+}
+
+/// The last transaction emitted no `SessionBuilderCleared`.
+fun assert_none_cleared() {
+    assert_eq!(event::events_by_type<sessions::SessionBuilderCleared>().length(), NO_EVENTS);
+}
+
+/// A keeper commits τ's update and resolves the one waiting order.
+fun fill_one(fixture: &mut QueueSessionFixture, tau_ms: u64) {
+    fixture.predict.set_clock_for_testing(tau_ms + PRICE_LANDING_MS);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(fixture, KEEPER, owner);
+    let tx_fields = &mut tx;
+    let (market, config, _, _, _) = tx_fields.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    tx_fields
+        .queue
+        .commit_for_testing(
+            market,
+            &tx_fields.desk,
+            config,
+            vector[queue_fixture::price_update(tau_ms, test_constants::default_live_price())],
+            clock,
+            ctx,
+        );
+    let deny_list = deny_list::new_for_testing(ctx);
+    let finished = tx_fields
+        .queue
+        .resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, &deny_list, clock, ctx);
+    destroy(deny_list);
+    assert_eq!(finished, ONE_ORDER);
     end_tx(tx);
 }
 
@@ -683,6 +1709,152 @@ fun session_enqueue_exact_cost(
     )
 }
 
+fun session_enqueue_exact_quantity_with_builder(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let record_id = sessions::enqueue_exact_quantity_with_builder(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        MINT_QUANTITY,
+        QUANTITY_MAX_COST,
+        QUANTITY_MAX_PROBABILITY,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+fun session_enqueue_exact_amount_with_builder(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let record_id = sessions::enqueue_exact_amount_with_builder(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        AMOUNT_MAX_PREMIUM,
+        AMOUNT_MIN_QUANTITY,
+        AMOUNT_MAX_COST,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+fun session_enqueue_exact_cost_with_builder(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let record_id = sessions::enqueue_exact_cost_with_builder(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        COST_MAX_COST,
+        COST_MIN_QUANTITY,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+fun session_enqueue_redeem_open_with_builder(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, oracle_registry, pyth, bs) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let sell_id = sessions::enqueue_redeem_open_with_builder(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &code,
+        fee_per_contract,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    sell_id
+}
+
 fun session_enqueue_redeem_open(
     fixture: &mut QueueSessionFixture,
     tx: &mut SessionTx,
@@ -817,6 +1989,26 @@ fun record(tx: &SessionTx, record_id: u64): OrderView {
 
 fun account_balance(fixture: &QueueSessionFixture, tx: &SessionTx): u64 {
     tx.wrapper.load_account().balance<USDC>(&tx.root, fixture.predict.clock())
+}
+
+/// The builder fee and code of the one `OrderMinted` the last transaction
+/// emitted, read from its BCS in `order_events::OrderMinted` field order: the
+/// fee follows two IDs, two order IDs, the owner, and seven u64 fields, and the
+/// code follows three more u64 fields.
+fun minted_builder(): (u64, Option<ID>) {
+    let events = event::events_by_type<order_events::OrderMinted>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let mut bytes = sui_bcs::new(bcs::to_bytes(&events[0]));
+    let _ = bytes.peel_address();
+    let _ = bytes.peel_address();
+    let _ = bytes.peel_u256();
+    let _ = bytes.peel_u256();
+    let _ = bytes.peel_address();
+    7u64.do!(|_| { let _ = bytes.peel_u64(); });
+    let builder_fee = bytes.peel_u64();
+    3u64.do!(|_| { let _ = bytes.peel_u64(); });
+    let code = bytes.peel_option_address().map!(|code| code.to_id());
+    (builder_fee, code)
 }
 
 /// Predict's waiting cash need is exactly the queue's unfinished records' cash

@@ -22,6 +22,12 @@
 /// the receipt. The queue itself, its escrow, its policy, and its events live in
 /// the companion.
 ///
+/// A trade that pays a builder names its code and fee per contract
+/// (`builder_code::BuilderFee`). `admit_mint_with_builder` and
+/// `admit_sell_with_builder` cap the fee at `protocol_config::builder_fee_cap` and
+/// record the code and the capped fee in the receipt, and the fill charges what
+/// the receipt records. The plain admissions name no builder and charge none.
+///
 /// Mainnet USDC is a regulated coin: Sui aborts a transaction that sends it to
 /// an address on its deny list, or to anyone while it is globally paused. So the
 /// fill, the fee routing, and the settled payout read `sui::deny_list` first and
@@ -33,6 +39,7 @@ module deepbook_predict::expiry_market;
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     admin::AdminCap,
+    builder_code::BuilderFee,
     config_events,
     constants,
     ewma::{Self, EwmaState},
@@ -187,7 +194,11 @@ public struct RedeemQuote has copy, drop {
 /// stage reaches the next. A sell refund restores the open position whole and a
 /// partial close leaves `held_quantity` less the closed quantity. `budget` caps
 /// a mint's all-in cost, and a fill requires escrow of at least `budget +
-/// order_fee + subsidy_reserved`.
+/// order_fee + subsidy_reserved`. The receipt cannot gain a field, so an order
+/// admitted with a builder keeps its capped fee per contract in the field its
+/// stage never uses (`min_proceeds` for a mint, `max_premium` for a sell); the
+/// open stage zeroes both. A change that starts reading either field in that
+/// stage must move the fee first.
 public struct OrderReceipt has store {
     expiry_market_id: ID,
     stage: u8,
@@ -199,10 +210,14 @@ public struct OrderReceipt has store {
     higher_tick: u64,
     /// The exact mint quantity, or the sell's close quantity.
     quantity: u64,
+    /// A mint's premium cap. A sell never uses it, so a sell admitted with a
+    /// builder keeps its capped builder fee per contract here.
     max_premium: u64,
     min_quantity: u64,
     max_probability: u64,
     min_probability: u64,
+    /// A sell's proceeds floor. A mint never uses it, so a mint admitted with a
+    /// builder keeps its capped builder fee per contract here.
     min_proceeds: u64,
     /// Earliest Pyth generation time the order may price at.
     tau_ms: u64,
@@ -482,13 +497,14 @@ public fun quote_mint(
         max_premium,
         min_quantity,
         std::u64::max_value!(),
-        &option::none(),
+        0,
         clock,
     )
 }
 
 /// `quote_mint` for the wrapper's account: `max_premium` is capped at the
-/// account's balance and the account's builder fee is charged.
+/// account's balance. No builder fee, matching the enqueue calls that name no
+/// builder: `quote_mint_with_builder_fee` at a zero fee.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -499,6 +515,42 @@ public fun quote_mint_for_account(
     max_premium: u64,
     min_quantity: u64,
     exact_quantity: bool,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MintQuote {
+    market.quote_mint_with_builder_fee(
+        wrapper,
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        exact_quantity,
+        0,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `quote_mint_for_account` for an order that names a builder: charges
+/// `builder_fee_per_contract`, in FLOAT_SCALING of the $1 payout, capped at
+/// `protocol_config::builder_fee_cap` as admission caps it. Prices and gates like
+/// `quote_mint`. For SDK and devInspect previews of the `_with_builder` enqueue
+/// calls.
+public fun quote_mint_with_builder_fee(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    exact_quantity: bool,
+    builder_fee_per_contract: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     _ctx: &mut TxContext,
@@ -514,15 +566,16 @@ public fun quote_mint_for_account(
         max_premium.min(account.balance<USDC>(root, clock)),
         min_quantity,
         std::u64::max_value!(),
-        &predict_account::builder_code_id(account),
+        capped_fee(config, builder_fee_per_contract),
         clock,
     )
 }
 
 /// Quote the largest mint whose all-in cost fits `min(max_cost, account
 /// balance)`, at least `min_quantity`, for the wrapper's account, priced like a
-/// queued exact-cost fill at the clock. Charges the account's builder fee, and
-/// otherwise prices and gates like `quote_mint`.
+/// queued exact-cost fill at the clock. No builder fee, matching the enqueue
+/// calls that name no builder: `quote_mint_exact_cost_with_builder_fee` at a zero
+/// fee. Otherwise prices and gates like `quote_mint`.
 public fun quote_mint_exact_cost_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -532,6 +585,39 @@ public fun quote_mint_exact_cost_for_account(
     higher_tick: u64,
     max_cost: u64,
     min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MintQuote {
+    market.quote_mint_exact_cost_with_builder_fee(
+        wrapper,
+        config,
+        pricer,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        0,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `quote_mint_exact_cost_for_account` for an order that names a builder: the
+/// budget search fits `builder_fee_per_contract`, in FLOAT_SCALING of the $1
+/// payout and capped at `protocol_config::builder_fee_cap`, inside the budget.
+/// For SDK and devInspect previews of `enqueue_exact_cost_with_builder`.
+public fun quote_mint_exact_cost_with_builder_fee(
+    market: &ExpiryMarket,
+    wrapper: &AccountWrapper,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    builder_fee_per_contract: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     _ctx: &mut TxContext,
@@ -546,7 +632,7 @@ public fun quote_mint_exact_cost_for_account(
         0,
         min_quantity,
         max_cost.min(account.balance<USDC>(root, clock)),
-        &predict_account::builder_code_id(account),
+        capped_fee(config, builder_fee_per_contract),
         clock,
     )
 }
@@ -578,6 +664,21 @@ public fun receipt_info(receipt: &OrderReceipt): (ID, u8, ID, u256, u32, u64, u6
         receipt.subsidy_bound,
         receipt.vol,
     )
+}
+
+/// Return the capped builder fee per contract an admitted order pays at its
+/// fill, which the fill charges to the code the receipt records: `0` for an
+/// order that names no builder and for an open receipt. For the order-flow
+/// companion's reads and SDK previews of a waiting order.
+public fun builder_fee_per_contract(receipt: &OrderReceipt): u64 {
+    if (receipt.parties.builder_code_id.is_none()) return 0;
+    if (receipt.stage == constants::receipt_stage_mint!()) {
+        receipt.min_proceeds
+    } else if (receipt.stage == constants::receipt_stage_sell!()) {
+        receipt.max_premium
+    } else {
+        0
+    }
 }
 
 // === MintQuote Getters ===
@@ -659,37 +760,47 @@ public fun redeem_inventory_impact_rebate(quote: &RedeemQuote): u64 {
 // === Order-Flow Quotes ===
 
 /// Quote an early sell of `close_quantity` of an open receipt's position at a
-/// market-bound `Pricer` and the clock, charging `builder_code_id`'s builder
-/// fee: the close a sell fill prices, without the trader's floors. `proceeds`
-/// is before the order fee. Changes nothing. Aborts on the pricer binding
-/// (`EWrongPricer`), another market's receipt (`EWrongMarket`), a receipt that
-/// is not open (`EWrongStage`), `now >= expiry` (`EInvalidOrderTiming`), or a
-/// close that cannot be priced (`EOrderFailsLimits`). Public for the order-flow
-/// companion's sell preview and SDK reads.
+/// market-bound `Pricer` and the clock: the close a sell fill prices, without the
+/// trader's floors. `proceeds` is before the order fee. No builder fee, matching
+/// the sell enqueue that names no builder, whatever `_builder_code_id` names;
+/// `quote_close_with_builder_fee` quotes one that does. Changes nothing. Aborts on
+/// the pricer binding (`EWrongPricer`), another market's receipt
+/// (`EWrongMarket`), a receipt that is not open (`EWrongStage`), `now >= expiry`
+/// (`EInvalidOrderTiming`), or a close that cannot be priced
+/// (`EOrderFailsLimits`). Public for the order-flow companion's sell preview and
+/// SDK reads.
 public fun quote_close(
     market: &ExpiryMarket,
     pricer: &Pricer,
     receipt: &OrderReceipt,
     close_quantity: u64,
-    builder_code_id: Option<ID>,
+    _builder_code_id: Option<ID>,
     clock: &Clock,
 ): RedeemQuote {
-    market.chk_pricer(pricer);
-    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
-    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
-    let now = clock.timestamp_ms();
-    assert!(now < market.expiry, EInvalidOrderTiming);
-    let (_, quote, reason) = market.price_close(
+    market.quote_sell(pricer, receipt, close_quantity, 0, clock)
+}
+
+/// `quote_close` for a sell that names a builder: charges
+/// `builder_fee_per_contract`, in FLOAT_SCALING of the $1 payout, capped at
+/// `protocol_config::builder_fee_cap` and then at the redeem value left after the
+/// trading fee, as the fill charges it. Public for the order-flow companion's sell
+/// preview and SDK reads.
+public fun quote_close_with_builder_fee(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    receipt: &OrderReceipt,
+    close_quantity: u64,
+    builder_fee_per_contract: u64,
+    clock: &Clock,
+): RedeemQuote {
+    market.quote_sell(
         pricer,
-        &order::from_id(receipt.order_id),
+        receipt,
         close_quantity,
-        0,
-        0,
-        &builder_code_id,
-        now,
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    quote
+        capped_fee(config, builder_fee_per_contract),
+        clock,
+    )
 }
 
 /// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
@@ -977,100 +1088,98 @@ public fun admit_mint<W: drop>(
     ctx: &TxContext,
 ): OrderReceipt {
     config.chk_flow<W>();
-    let (vol, pricer) = market.admit_gates(
+    market.admit_mnt(
         config,
-        true,
+        account,
         propbook_registry,
         pyth,
         bs_values,
         bs_svi,
+        option::none(),
+        kind,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_premium,
+        min_quantity,
+        max_probability,
+        budget,
+        order_fee,
         svi_max_age_ms,
         channel,
         tau_ms,
         deadline_ms,
         clock,
         ctx,
-    );
-    assert!(budget > 0, EMintCostCapRequired);
-    let builder_code_id = predict_account::builder_code_id(account);
-    // The t₀ dry run is the fill's own predicate at the clock without subsidy,
-    // so admission refuses exactly what a fill would refund on the same inputs.
-    let (_, quote, _, reason) = market.price_mint(
-        &pricer,
+    )
+}
+
+/// `admit_mint` for an order that may name a builder. `builder` is the code the
+/// trade pays and its fee per contract, or none, which admits exactly as
+/// `admit_mint` does. Admission caps the fee at `protocol_config::builder_fee_cap`,
+/// records the code and the capped fee in the receipt, and prices the order's own
+/// limits at the clock with that fee. The fill charges the recorded fee, so a
+/// later cap change does not reach the order. Aborts as `admit_mint` does, and,
+/// for an order that names a builder, `EBuilderFeeCutoverNotReached` until the
+/// version watermark retires every version whose fill charges the legacy fee
+/// instead (`constants::builder_fee_version!()`).
+public fun admit_mint_with_builder<W: drop>(
+    _w: W,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    account: &mut Account,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
+    kind: u8,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_probability: u64,
+    budget: u64,
+    order_fee: u64,
+    svi_max_age_ms: u64,
+    channel: u8,
+    tau_ms: u64,
+    deadline_ms: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderReceipt {
+    config.chk_flow<W>();
+    market.admit_mnt(
+        config,
+        account,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        builder,
         kind,
         lower_tick,
         higher_tick,
         quantity,
         max_premium,
         min_quantity,
-        budget,
         max_probability,
-        &builder_code_id,
-        0,
-        0,
-        clock.timestamp_ms(),
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    // A fill pays at least `min_entry_probability` per contract into market
-    // cash (`pmath::need_qty` and `need_budget`). A premium-budget fill buys no
-    // more than `max_premium` allows, so a large budget does not inflate its need.
-    let p = market.strike_exposure.min_prob();
-    let cash_need = if (kind == constants::mint_kind_exact_quantity!()) {
-        pmath::need_qty(quantity, p)
-    } else if (kind == constants::mint_kind_exact_amount!()) {
-        pmath::need_budget(max_premium.min(budget), p)
-    } else {
-        pmath::need_budget(budget, p)
-    };
-    // Only this order's own need, against cash above required cash: one that
-    // misses at its tick never touches cash, and the fill checks cash again.
-    assert!(cash_need <= market.cash.balance() - market.required_cash(), EInsufficientMarketCash);
-    // Pinning both boundary nodes now means a fill never creates one.
-    market.strike_exposure.ensure_nodes(lower_tick, higher_tick);
-    let ledger = market.ledger_mut();
-    pin(&mut ledger.pins, lower_tick);
-    pin(&mut ledger.pins, higher_tick);
-    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
-    let zero = 0;
-    OrderReceipt {
-        expiry_market_id: market.id(),
-        stage: constants::receipt_stage_mint!(),
-        kind,
-        parties: parties(account, builder_code_id),
-        lower_tick,
-        higher_tick,
-        quantity,
-        max_premium,
-        min_quantity,
-        max_probability,
-        min_probability: zero,
-        min_proceeds: zero,
-        tau_ms,
-        deadline_ms,
-        channel,
-        vol,
         budget,
         order_fee,
-        cash_need,
-        // Bounds the subsidy a commit reserves, so one order cannot soak up the
-        // market's incentives.
-        subsidy_bound: quote.trading_fee.min(budget),
-        subsidy_rate: zero,
-        subsidy_reserved: zero,
-        spot: zero,
-        tick_ms: zero,
-        generation_us: zero,
-        order_id: (zero as u256),
-        root_id: (zero as u256),
-        opened_at_ms: zero,
-        held_quantity: zero,
-    }
+        svi_max_age_ms,
+        channel,
+        tau_ms,
+        deadline_ms,
+        clock,
+        ctx,
+    )
 }
 
 /// Admit an early sell of `close_quantity` of an open receipt's position: the
 /// receipt moves to the sell stage in place, with the sell's request, the
-/// account's current owner and builder code, a fresh volatility snapshot, τ, the
-/// deadline, and no price. The companion escrows `order_fee` and owns the
+/// account's current owner and no builder code, a fresh volatility snapshot, τ,
+/// the deadline, and no price. The companion escrows `order_fee` and owns the
 /// minimum-sell checks.
 ///
 /// Open during the trading pause and a market mint pause. Aborts unless `W` is
@@ -1105,13 +1214,19 @@ public fun admit_sell<W: drop>(
     ctx: &TxContext,
 ) {
     config.chk_flow<W>();
-    let (vol, pricer) = market.admit_gates(
+    market.admit_sl(
         config,
-        false,
+        account,
+        receipt,
         propbook_registry,
         pyth,
         bs_values,
         bs_svi,
+        option::none(),
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        order_fee,
         svi_max_age_ms,
         channel,
         tau_ms,
@@ -1119,45 +1234,59 @@ public fun admit_sell<W: drop>(
         clock,
         ctx,
     );
-    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
-    // Canonical open: every move into the open stage goes through `to_open`,
-    // and the position's size is the one its order ID names.
-    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
-    let held = order::from_id(receipt.order_id);
-    assert!(held.quantity() == receipt.held_quantity, EWrongStage);
-    assert!(receipt.parties.account_id == account.account_id(), ENotRecordOwner);
-    let builder_code_id = predict_account::builder_code_id(account);
-    let (_, _, reason) = market.price_close(
-        &pricer,
-        &held,
+}
+
+/// `admit_sell` for a sell that may name a builder. `builder` is the code the
+/// sell pays and its fee per contract, or none, which admits exactly as
+/// `admit_sell` does. Admission caps the fee at `protocol_config::builder_fee_cap`,
+/// records the code in the receipt in place of the mint's along with the capped
+/// fee, and prices the close's floors at the clock with that fee. The fill
+/// charges the recorded fee. Aborts as `admit_sell` does, and, for a sell that
+/// names a builder, `EBuilderFeeCutoverNotReached` until the version watermark
+/// reaches `constants::builder_fee_version!()`.
+public fun admit_sell_with_builder<W: drop>(
+    _w: W,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    account: &mut Account,
+    receipt: &mut OrderReceipt,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    order_fee: u64,
+    svi_max_age_ms: u64,
+    channel: u8,
+    tau_ms: u64,
+    deadline_ms: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    config.chk_flow<W>();
+    market.admit_sl(
+        config,
+        account,
+        receipt,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        builder,
         close_quantity,
         min_probability,
         min_proceeds,
-        &builder_code_id,
-        clock.timestamp_ms(),
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    let cash_need = pmath::need_sell(
-        close_quantity,
-        market.strike_exposure.backing_buffer_lambda(),
-    );
-    let ledger = market.ledger_mut();
-    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
-    // Canonical open already zeroes the mint limits, the budget, the subsidy,
-    // and the price, so only the sell column is written. The position group
-    // stays, so a refund restores it whole.
-    receipt.stage = constants::receipt_stage_sell!();
-    receipt.kind = constants::order_kind_sell!();
-    receipt.parties = parties(account, builder_code_id);
-    receipt.quantity = close_quantity;
-    receipt.min_probability = min_probability;
-    receipt.min_proceeds = min_proceeds;
-    receipt.tau_ms = tau_ms;
-    receipt.deadline_ms = deadline_ms;
-    receipt.channel = channel;
-    receipt.vol = vol;
-    receipt.order_fee = order_fee;
-    receipt.cash_need = cash_need;
+        order_fee,
+        svi_max_age_ms,
+        channel,
+        tau_ms,
+        deadline_ms,
+        clock,
+        ctx,
+    )
 }
 
 /// Commit the Pyth price an admitted order fills at: a `LazerPrice`, which only
@@ -1720,8 +1849,7 @@ fun mint_prepared(
             exact_quantity,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
-    let builder_code_id = predict_account::builder_code_id(account);
-    market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
+    market.mint_with_terms(account, config, pricer, terms, max_cost, clock, ctx)
 }
 
 /// Size the largest lot-rounded quantity whose all-in cost fits `max_cost`, step
@@ -1761,7 +1889,6 @@ fun quote_exact_cost_terms(
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
-    builder_code_id: &Option<ID>,
     max_cost: u64,
     min_quantity: u64,
     clock: &Clock,
@@ -1779,7 +1906,6 @@ fun quote_exact_cost_terms(
         let cost = market.all_in_cost_at(
             config,
             &range,
-            builder_code_id,
             mid * lot,
             subsidy_rate,
             clock,
@@ -1799,7 +1925,6 @@ fun quote_exact_cost_terms(
             || market.all_in_cost_at(
                 config,
                 &range,
-                builder_code_id,
                 budget_quantity,
                 subsidy_rate,
                 clock,
@@ -1816,7 +1941,6 @@ fun quote_exact_cost_terms(
             let cost = market.all_in_cost_at(
                 config,
                 &range,
-                builder_code_id,
                 quantity,
                 subsidy_rate,
                 clock,
@@ -1840,7 +1964,6 @@ fun all_in_cost_at(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     range: &MintRange,
-    builder_code_id: &Option<ID>,
     quantity: u64,
     fee_incentive_subsidy_rate: u64,
     clock: &Clock,
@@ -1852,7 +1975,6 @@ fun all_in_cost_at(
             quantity,
             range.range_prem(quantity),
             market.strike_exposure.mint_impact(range, quantity),
-            builder_code_id,
             market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
             fee_incentive_subsidy_rate,
             clock,
@@ -1863,7 +1985,7 @@ fun all_in_cost_at(
 /// Charge and record one admitted mint: price its fees and congestion penalty
 /// against pre-trade state, enforce the all-in `max_cost`, fold the EWMA, route
 /// the referral share, allocate the order, settle payment, and emit `OrderMinted`.
-/// `builder_code_id` is the caller's single read of the account's attribution.
+/// Names no builder, so it charges no builder fee.
 #[test_only]
 fun mint_with_terms(
     market: &mut ExpiryMarket,
@@ -1871,7 +1993,6 @@ fun mint_with_terms(
     config: &ProtocolConfig,
     pricer: &Pricer,
     terms: MintTerms,
-    builder_code_id: Option<ID>,
     max_cost: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -1881,7 +2002,6 @@ fun mint_with_terms(
     let referrer_receive_address = account.referrer_receive_address();
     let quote = market.compute_mint_quote(
         &terms,
-        &builder_code_id,
         penalty_amount,
         config.fee_incentive_subsidy_rate(),
         clock,
@@ -1901,7 +2021,6 @@ fun mint_with_terms(
         account,
         &minted_order,
         &quote,
-        builder_code_id,
         referrer_receive_address,
         referral_fee,
         clock,
@@ -1911,7 +2030,7 @@ fun mint_with_terms(
         market.id(),
         account.account_id(),
         account.owner(),
-        builder_code_id,
+        option::none(),
         referrer_account_id,
         &minted_order,
         pricer,
@@ -1933,7 +2052,6 @@ fun mint_with_terms(
 fun compute_mint_quote(
     market: &ExpiryMarket,
     terms: &MintTerms,
-    builder_code_id: &Option<ID>,
     penalty_fee: u64,
     fee_incentive_subsidy_rate: u64,
     clock: &Clock,
@@ -1943,7 +2061,6 @@ fun compute_mint_quote(
         terms.quantity(),
         terms.premium(),
         terms.inventory_impact_charge(),
-        builder_code_id,
         penalty_fee,
         fee_incentive_subsidy_rate,
         clock,
@@ -1963,7 +2080,6 @@ fun mint_quote_at(
     quantity: u64,
     premium: u64,
     inventory_impact_charge: u64,
-    builder_code_id: &Option<ID>,
     penalty_fee: u64,
     fee_incentive_subsidy_rate: u64,
     clock: &Clock,
@@ -1973,13 +2089,8 @@ fun mint_quote_at(
         trading_fee,
         fee_incentive_subsidy_rate,
     );
-    let builder_fee = bldr_fee_amt(builder_code_id, trading_fee, quantity);
     let all_in_cost =
-        premium
-        + (trading_fee - fee_incentive_subsidy)
-        + builder_fee
-        + penalty_fee
-        + inventory_impact_charge;
+        premium + (trading_fee - fee_incentive_subsidy) + penalty_fee + inventory_impact_charge;
 
     MintQuote {
         quantity,
@@ -1987,7 +2098,7 @@ fun mint_quote_at(
         premium,
         trading_fee,
         fee_incentive_subsidy,
-        builder_fee,
+        builder_fee: 0,
         penalty_fee,
         inventory_impact_charge,
         all_in_cost,
@@ -2004,12 +2115,10 @@ fun fee_incentive_subsidy_amount(
 }
 
 /// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
-/// account, route the builder and referral fees, join the subsidized trading fee,
-/// and keep the remainder in expiry cash. The caller owns the all-in `max_cost` guard and the
-/// quote derivation (`compute_mint_quote`), and passes its single
-/// `builder_code_id` read so the fee amount and the routing destination cannot
-/// come from different reads. The EWMA penalty, net of the referral split, rides
-/// into expiry cash as surplus and earns no builder cut.
+/// account, route the referral fee, join the subsidized trading fee, and keep the
+/// remainder in expiry cash. The caller owns the all-in `max_cost` guard and the
+/// quote derivation (`compute_mint_quote`). The EWMA penalty, net of the referral
+/// split, rides into expiry cash as surplus.
 /// Fee incentives subsidize only the trader-paid portion of the trading fee;
 /// the referral is split before that sponsor balance joins, so incentives do not
 /// fund the referral payment.
@@ -2019,7 +2128,6 @@ fun settle_mint_payment(
     account: &mut Account,
     order: &order::Order,
     quote: &MintQuote,
-    builder_code_id: Option<ID>,
     referrer_receive_address: Option<address>,
     referral_fee: u64,
     clock: &Clock,
@@ -2034,8 +2142,6 @@ fun settle_mint_payment(
         ctx,
     );
     let mut payment = account.withdraw<USDC>(quote.all_in_cost, ctx).into_balance();
-    let builder_fee_payment = payment.split(quote.builder_fee);
-    pay_builder(builder_code_id, builder_fee_payment);
     let referral_fee_payment = payment.split(referral_fee);
     pay_referral(referrer_receive_address, referral_fee_payment);
     // The remaining fee, sponsor subsidy, premium, penalty and inventory impact
@@ -2103,26 +2209,15 @@ fun redeem_live_with_auth(
         .min(redeem_amount);
 
     // The redeem payment decomposition, computed in full before any cash moves:
-    // builder fee and penalty are each clamped at the payout remaining after the
-    // prior deductions, so every subtraction below is exact. The single
-    // `builder_code_id` read feeds the fee amount, the routing destination, and
-    // the event, so they cannot come from different reads.
-    let builder_code_id = predict_account::builder_code_id(account);
-    let builder_fee_amount = bldr_fee_amt(
-        &builder_code_id,
-        fee_amount,
-        close_quantity,
-    ).min(redeem_amount - fee_amount);
-    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+    // the penalty is clamped at the payout remaining after the fee, so every
+    // subtraction below is exact. The retired path names no builder.
+    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount);
     let inventory_impact_rebate = terms.rebate();
     // Close-side all-in slippage floor: the net credited to the account is
-    // `redeem_amount` plus inventory rebate, minus fee, builder fee, and
-    // penalty. `0` disables. Mirror of mint's `max_cost`.
+    // `redeem_amount` plus inventory rebate, minus fee and penalty. `0`
+    // disables. Mirror of mint's `max_cost`.
     assert!(
-        redeem_amount + inventory_impact_rebate
-            - fee_amount
-            - builder_fee_amount
-            - penalty_amount >= min_proceeds,
+        redeem_amount + inventory_impact_rebate - fee_amount - penalty_amount >= min_proceeds,
         ERedeemProceedsBelowMin,
     );
 
@@ -2159,17 +2254,15 @@ fun redeem_live_with_auth(
         account,
         redeem_amount,
         fee_amount,
-        builder_fee_amount,
         penalty_amount,
         inventory_impact_rebate,
-        builder_code_id,
         ctx,
     );
     order_events::redeemed(
         market.id(),
         account.account_id(),
         account.owner(),
-        builder_code_id,
+        option::none(),
         &order,
         pricer,
         position_root_id,
@@ -2177,7 +2270,7 @@ fun redeem_live_with_auth(
         replacement_order_id,
         redeem_amount,
         fee_amount,
-        builder_fee_amount,
+        0,
         penalty_amount,
         inventory_impact_rebate,
         clock.timestamp_ms(),
@@ -2227,8 +2320,8 @@ fun rdm_settled(
 }
 
 /// Settle a live redeem per an already-computed payment decomposition: pay out
-/// `redeem_amount`, route the fee and builder fee, and credit the account with
-/// the remainder plus the isolated inventory-impact rebate. The caller owns the
+/// `redeem_amount`, keep the fee, and credit the account with the remainder plus
+/// the isolated inventory-impact rebate. The caller owns the
 /// decomposition and the `min_proceeds` guard.
 ///
 /// The EWMA penalty is withheld from the payout and kept in expiry cash
@@ -2239,24 +2332,232 @@ fun settle_live_redeem_payment(
     account: &mut Account,
     redeem_amount: u64,
     fee_amount: u64,
-    builder_fee_amount: u64,
     penalty_amount: u64,
     inventory_impact_rebate: u64,
-    builder_code_id: Option<ID>,
     ctx: &mut TxContext,
 ) {
     // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
     let mut payout = market.cash.pay_out(redeem_amount - penalty_amount);
     payout.join(market.cash.pay_rebate(inventory_impact_rebate));
     let fee = payout.split(fee_amount);
-    let builder_fee = payout.split(builder_fee_amount);
     market.cash.receive(fee);
-    pay_builder(builder_code_id, builder_fee);
     market.chk_backed();
     account.deposit<USDC>(payout.into_coin(ctx));
 }
 
 // --- Order flow ---
+
+/// `admit_mint`'s body, for an order that names `builder` or none.
+fun admit_mnt(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    account: &mut Account,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
+    kind: u8,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_probability: u64,
+    budget: u64,
+    order_fee: u64,
+    svi_max_age_ms: u64,
+    channel: u8,
+    tau_ms: u64,
+    deadline_ms: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderReceipt {
+    let (vol, pricer) = market.admit_gates(
+        config,
+        true,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        svi_max_age_ms,
+        channel,
+        tau_ms,
+        deadline_ms,
+        clock,
+        ctx,
+    );
+    assert!(budget > 0, EMintCostCapRequired);
+    let (builder_code_id, bfee) = bldr_terms(&builder, config);
+    // The t₀ dry run is the fill's own predicate at the clock without subsidy,
+    // so admission refuses exactly what a fill would refund on the same inputs.
+    let (_, quote, _, reason) = market.price_mint(
+        &pricer,
+        kind,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_premium,
+        min_quantity,
+        budget,
+        max_probability,
+        bfee,
+        0,
+        0,
+        clock.timestamp_ms(),
+    );
+    assert!(reason == 0, EOrderFailsLimits);
+    // A fill pays at least `min_entry_probability` per contract into market
+    // cash (`pmath::need_qty` and `need_budget`). A premium-budget fill buys no
+    // more than `max_premium` allows, so a large budget does not inflate its need.
+    let p = market.strike_exposure.min_prob();
+    let cash_need = if (kind == constants::mint_kind_exact_quantity!()) {
+        pmath::need_qty(quantity, p)
+    } else if (kind == constants::mint_kind_exact_amount!()) {
+        pmath::need_budget(max_premium.min(budget), p)
+    } else {
+        pmath::need_budget(budget, p)
+    };
+    // Only this order's own need, against cash above required cash: one that
+    // misses at its tick never touches cash, and the fill checks cash again.
+    assert!(cash_need <= market.cash.balance() - market.required_cash(), EInsufficientMarketCash);
+    // Pinning both boundary nodes now means a fill never creates one.
+    market.strike_exposure.ensure_nodes(lower_tick, higher_tick);
+    let ledger = market.ledger_mut();
+    pin(&mut ledger.pins, lower_tick);
+    pin(&mut ledger.pins, higher_tick);
+    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
+    let zero = 0;
+    OrderReceipt {
+        expiry_market_id: market.id(),
+        stage: constants::receipt_stage_mint!(),
+        kind,
+        parties: parties(account, builder_code_id),
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_premium,
+        min_quantity,
+        max_probability,
+        min_probability: zero,
+        // A mint never uses its sell floor, so it carries the builder fee.
+        min_proceeds: bfee,
+        tau_ms,
+        deadline_ms,
+        channel,
+        vol,
+        budget,
+        order_fee,
+        cash_need,
+        // Bounds the subsidy a commit reserves, so one order cannot soak up the
+        // market's incentives.
+        subsidy_bound: quote.trading_fee.min(budget),
+        subsidy_rate: zero,
+        subsidy_reserved: zero,
+        spot: zero,
+        tick_ms: zero,
+        generation_us: zero,
+        order_id: (zero as u256),
+        root_id: (zero as u256),
+        opened_at_ms: zero,
+        held_quantity: zero,
+    }
+}
+
+/// `admit_sell`'s body, for a sell that names `builder` or none.
+fun admit_sl(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    account: &mut Account,
+    receipt: &mut OrderReceipt,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    builder: Option<BuilderFee>,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    order_fee: u64,
+    svi_max_age_ms: u64,
+    channel: u8,
+    tau_ms: u64,
+    deadline_ms: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let (vol, pricer) = market.admit_gates(
+        config,
+        false,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        svi_max_age_ms,
+        channel,
+        tau_ms,
+        deadline_ms,
+        clock,
+        ctx,
+    );
+    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
+    // Canonical open: every move into the open stage goes through `to_open`,
+    // and the position's size is the one its order ID names.
+    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
+    let held = order::from_id(receipt.order_id);
+    assert!(held.quantity() == receipt.held_quantity, EWrongStage);
+    assert!(receipt.parties.account_id == account.account_id(), ENotRecordOwner);
+    let (builder_code_id, bfee) = bldr_terms(&builder, config);
+    let (_, _, reason) = market.price_close(
+        &pricer,
+        &held,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        bfee,
+        clock.timestamp_ms(),
+    );
+    assert!(reason == 0, EOrderFailsLimits);
+    let cash_need = pmath::need_sell(
+        close_quantity,
+        market.strike_exposure.backing_buffer_lambda(),
+    );
+    let ledger = market.ledger_mut();
+    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
+    // Canonical open already zeroes the mint limits, the budget, the subsidy,
+    // and the price, so only the sell column is written. The position group
+    // stays, so a refund restores it whole.
+    receipt.stage = constants::receipt_stage_sell!();
+    receipt.kind = constants::order_kind_sell!();
+    receipt.parties = parties(account, builder_code_id);
+    receipt.quantity = close_quantity;
+    receipt.min_probability = min_probability;
+    receipt.min_proceeds = min_proceeds;
+    receipt.tau_ms = tau_ms;
+    receipt.deadline_ms = deadline_ms;
+    receipt.channel = channel;
+    receipt.vol = vol;
+    receipt.order_fee = order_fee;
+    receipt.cash_need = cash_need;
+    // A sell never uses the mint's premium cap, so it carries the builder fee.
+    receipt.max_premium = bfee;
+}
+
+/// The code and capped fee per contract an order's optional `builder` names, or
+/// `(none, 0)` without one.
+fun bldr_terms(builder: &Option<BuilderFee>, config: &ProtocolConfig): (Option<ID>, u64) {
+    if (builder.is_none()) return (option::none(), 0);
+    config.chk_bldr_cut();
+    let builder = builder.borrow();
+    (option::some(builder.code_id()), capped_fee(config, builder.fee_per_contract()))
+}
+
+/// A named builder fee per contract as a trade pays it: capped at
+/// `protocol_config::builder_fee_cap`, never refused, so lowering the cap never
+/// breaks a trade. Admission and the builder quotes share it.
+fun capped_fee(config: &ProtocolConfig, fee_per_contract: u64): u64 {
+    fee_per_contract.min(config.builder_fee_cap())
+}
 
 /// The gates, timing checks, and volatility snapshot both admissions share,
 /// after the caller's witness check. Returns the snapshot and the t₀ `Pricer`
@@ -2329,7 +2630,7 @@ fun quote_now(
     max_premium: u64,
     min_quantity: u64,
     cost_cap: u64,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     clock: &Clock,
 ): MintQuote {
     market.chk_pricer(pricer);
@@ -2345,9 +2646,37 @@ fun quote_now(
         min_quantity,
         cost_cap,
         std::u64::max_value!(),
-        builder_code_id,
+        bfee,
         config.fee_incentive_subsidy_rate(),
         market.fee_incentive_balance.value(),
+        now,
+    );
+    assert!(reason == 0, EOrderFailsLimits);
+    quote
+}
+
+/// The close a sell fill prices at the clock for an open receipt, charging the
+/// capped `bfee`, without the trader's floors. Both sell quotes share it.
+fun quote_sell(
+    market: &ExpiryMarket,
+    pricer: &Pricer,
+    receipt: &OrderReceipt,
+    close_quantity: u64,
+    bfee: u64,
+    clock: &Clock,
+): RedeemQuote {
+    market.chk_pricer(pricer);
+    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
+    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
+    let now = clock.timestamp_ms();
+    assert!(now < market.expiry, EInvalidOrderTiming);
+    let (_, quote, reason) = market.price_close(
+        pricer,
+        &order::from_id(receipt.order_id),
+        close_quantity,
+        0,
+        0,
+        bfee,
         now,
     );
     assert!(reason == 0, EOrderFailsLimits);
@@ -2379,7 +2708,7 @@ fun fill_mint(
         receipt.min_quantity,
         receipt.budget,
         receipt.max_probability,
-        &receipt.parties.builder_code_id,
+        receipt.builder_fee_per_contract(),
         receipt.subsidy_rate,
         receipt.subsidy_reserved,
         tick_ms,
@@ -2467,7 +2796,7 @@ fun fill_close(
         close_quantity,
         receipt.min_probability,
         receipt.min_proceeds,
-        &receipt.parties.builder_code_id,
+        receipt.builder_fee_per_contract(),
         receipt.tick_ms,
     );
     if (reason != 0) return (reason, false, quote);
@@ -2666,8 +2995,8 @@ fun drop_receipt(receipt: OrderReceipt) {
     let OrderReceipt { .. } = receipt;
 }
 
-/// The account's party snapshot for a receipt, with the builder code the
-/// caller already read for the dry run.
+/// The account's party snapshot for a receipt, with the builder code the trade
+/// names, or none.
 fun parties(account: &Account, builder_code_id: Option<ID>): OrderParties {
     OrderParties {
         account_id: account.account_id(),
@@ -2741,7 +3070,7 @@ fun price_mint(
     min_quantity: u64,
     cost_cap: u64,
     max_probability: u64,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
     tick_ms: u64,
@@ -2760,7 +3089,7 @@ fun price_mint(
     } else {
         market.cost_qty_at(
             &range,
-            builder_code_id,
+            bfee,
             cost_cap,
             subsidy_rate,
             subsidy_cap,
@@ -2779,7 +3108,7 @@ fun price_mint(
             terms.quantity(),
             terms.premium(),
             terms.inventory_impact_charge(),
-            builder_code_id,
+            bfee,
             subsidy_rate,
             subsidy_cap,
             tick_ms,
@@ -2812,7 +3141,7 @@ fun price_mint(
 fun cost_qty_at(
     market: &ExpiryMarket,
     range: &MintRange,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     max_cost: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
@@ -2825,7 +3154,7 @@ fun cost_qty_at(
         let mid = (lo + hi + 1) / 2;
         let cost = market.cost_at_tick(
             range,
-            builder_code_id,
+            bfee,
             mid * lot,
             subsidy_rate,
             subsidy_cap,
@@ -2842,7 +3171,7 @@ fun cost_qty_at(
         lo == 0
             || market.cost_at_tick(
                 range,
-                builder_code_id,
+                bfee,
                 budget_quantity,
                 subsidy_rate,
                 subsidy_cap,
@@ -2857,7 +3186,7 @@ fun cost_qty_at(
         let quantity = mid * lot;
         let cost = market.cost_at_tick(
             range,
-            builder_code_id,
+            bfee,
             quantity,
             subsidy_rate,
             subsidy_cap,
@@ -2877,7 +3206,7 @@ fun cost_qty_at(
 fun cost_at_tick(
     market: &ExpiryMarket,
     range: &MintRange,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     quantity: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
@@ -2889,7 +3218,7 @@ fun cost_at_tick(
             quantity,
             range.range_prem(quantity),
             market.strike_exposure.mint_impact(range, quantity),
-            builder_code_id,
+            bfee,
             subsidy_rate,
             subsidy_cap,
             tick_ms,
@@ -2909,7 +3238,7 @@ fun mint_q_at(
     quantity: u64,
     premium: u64,
     inventory_impact_charge: u64,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
     tick_ms: u64,
@@ -2917,7 +3246,7 @@ fun mint_q_at(
     if (tick_ms >= market.expiry) return option::none();
     let trading_fee = market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms);
     let fee_incentive_subsidy = math::mul_down(trading_fee, subsidy_rate).min(subsidy_cap);
-    let builder_fee = bldr_fee_amt(builder_code_id, trading_fee, quantity);
+    let builder_fee = bldr_fee_amt(bfee, quantity);
     option::some(MintQuote {
         quantity,
         entry_probability: price.probability(),
@@ -2945,7 +3274,7 @@ fun price_close(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     tick_ms: u64,
 ): (Option<LiveCloseTerms>, RedeemQuote, u8) {
     let terms = market.strike_exposure.try_close(pricer, order, close_quantity);
@@ -2954,7 +3283,7 @@ fun price_close(
     };
     let quote = market.rdm_q_at(
         terms.borrow(),
-        builder_code_id,
+        bfee,
         close_quantity,
         tick_ms,
     );
@@ -2970,7 +3299,7 @@ fun price_close(
 fun rdm_q_at(
     market: &ExpiryMarket,
     terms: &LiveCloseTerms,
-    builder_code_id: &Option<ID>,
+    bfee: u64,
     close_quantity: u64,
     tick_ms: u64,
 ): RedeemQuote {
@@ -2979,9 +3308,7 @@ fun rdm_q_at(
         .strike_exposure
         .fee_at(market.expiry, terms.close_price(), close_quantity, tick_ms)
         .min(redeem_amount);
-    let builder_fee = bldr_fee_amt(builder_code_id, trading_fee, close_quantity).min(
-        redeem_amount - trading_fee,
-    );
+    let builder_fee = bldr_fee_amt(bfee, close_quantity).min(redeem_amount - trading_fee);
     let inventory_impact_rebate = terms.rebate();
     RedeemQuote {
         close_quantity,
@@ -3038,17 +3365,11 @@ fun ewma_penalty(
     penalty
 }
 
-fun bldr_fee_amt(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
-    if (builder_code_id.is_some()) {
-        pmath::builder_fee(
-            fee_amount,
-            quantity,
-            constants::builder_fee_multiplier!(),
-            constants::max_builder_fee_rate!(),
-        )
-    } else {
-        0
-    }
+/// A trade's builder fee: `quantity * bfee`, rounded down, where `bfee` is the
+/// capped fee per contract in FLOAT_SCALING of the $1 payout. Nondecreasing in
+/// quantity, which keeps the all-in budget search exact (RP-36).
+fun bldr_fee_amt(bfee: u64, quantity: u64): u64 {
+    math::mul_down(quantity, bfee)
 }
 
 /// Send `amount` of `from` to `recipient`, unless the send would abort the
@@ -3073,16 +3394,6 @@ fun pay_fee(
 fun denied(deny_list: &DenyList, recipient: address, ctx: &TxContext): bool {
     coin::deny_list_v2_contains_current_epoch<USDC>(deny_list, recipient, ctx)
         || coin::deny_list_v2_is_global_pause_enabled_current_epoch<USDC>(deny_list, ctx)
-}
-
-#[test_only]
-fun pay_builder(builder_code_id: Option<ID>, fee: Balance<USDC>) {
-    if (fee.value() == 0) {
-        fee.destroy_zero();
-        return
-    };
-    let builder_code_id = builder_code_id.destroy_some();
-    balance::send_funds(fee, builder_code_id.to_address());
 }
 
 #[test_only]
@@ -3130,11 +3441,9 @@ public fun quote_mint_for_testing(
             min_quantity,
             exact_quantity,
         );
-    let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     market.compute_mint_quote(
         &terms,
-        &builder_code_id,
         penalty_fee,
         config.fee_incentive_subsidy_rate(),
         clock,
@@ -3169,11 +3478,9 @@ public fun quote_mint_for_account_for_testing(
             min_quantity,
             exact_quantity,
         );
-    let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     market.compute_mint_quote(
         &terms,
-        &builder_code_id,
         penalty_fee,
         config.fee_incentive_subsidy_rate(),
         clock,
@@ -3197,13 +3504,11 @@ public fun quote_mint_exact_cost_for_account_for_testing(
     market.assert_live_mint_allowed(config, pricer, clock);
     let account = wrapper.load_account();
     let max_cost = max_cost.min(account.balance<USDC>(root, clock));
-    let builder_code_id = predict_account::builder_code_id(account);
     let terms = market.quote_exact_cost_terms(
         config,
         pricer,
         lower_tick,
         higher_tick,
-        &builder_code_id,
         max_cost,
         min_quantity,
         clock,
@@ -3212,7 +3517,6 @@ public fun quote_mint_exact_cost_for_account_for_testing(
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     market.compute_mint_quote(
         &terms,
-        &builder_code_id,
         penalty_fee,
         config.fee_incentive_subsidy_rate(),
         clock,
@@ -3316,19 +3620,17 @@ public fun mint_exact_cost_for_testing(
     let max_cost = max_cost.min(wrapper.load_account().balance<USDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     market.reconcile(config);
-    let builder_code_id = predict_account::builder_code_id(account);
     let terms = market.quote_exact_cost_terms(
         config,
         pricer,
         lower_tick,
         higher_tick,
-        &builder_code_id,
         max_cost,
         min_quantity,
         clock,
         ctx,
     );
-    market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
+    market.mint_with_terms(account, config, pricer, terms, max_cost, clock, ctx)
 }
 
 #[test_only]

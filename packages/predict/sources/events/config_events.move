@@ -59,6 +59,13 @@ public struct FeeIncentiveSubsidyRateUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the builder fee cap changes: the most a trade's builder fee can
+/// charge per contract, in FLOAT_SCALING of a contract's $1 payout.
+public struct BuilderFeeCapUpdated has copy, drop, store {
+    builder_fee_cap: u64,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when either fee-incentive allocation rate changes, with both post-state
 /// values in FLOAT_SCALING: the live target every rebalance tops a market up to, and
 /// the lifetime cap newly created markets snapshot.
@@ -242,6 +249,10 @@ public(package) fun subsidy_upd(fee_incentive_subsidy_rate: u64, onchain_timesta
         fee_incentive_subsidy_rate,
         onchain_timestamp_ms,
     });
+}
+
+public(package) fun bldr_cap_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
+    event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
 }
 
 public(package) fun rates_upd(

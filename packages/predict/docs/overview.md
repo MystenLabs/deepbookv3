@@ -34,7 +34,7 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit USDC and
 | `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` USDC, exact `current_nav`, cleanup, and the order-flow primitives a queued order passes through | shared, one per expiry |
 | `OrderDesk` (`deepbook_predict_orders`) | The delayed-execution policy and the order-flow companion's version floor | shared, one |
 | `MarketQueue` (`deepbook_predict_orders`) | One market's queued orders, each with its escrow, and its Open records | shared, one per expiry |
-| `AccountWrapper` / `Account` | Account-package custody plus Predict app data: positions from immediate mints, builder attribution | shared wrapper |
+| `AccountWrapper` / `Account` | Account-package custody plus Predict app data: positions from immediate mints, a sticky builder code kept for compatibility | shared wrapper |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
 Oracle data is **not** a Predict object: the `PythFeed`, `BlockScholesValueStore`, and `BlockScholesSVIStore` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed oracle objects against Propbook's current canonical bindings for that underlying and then reads the expiry's forward and SVI series from the stores.
