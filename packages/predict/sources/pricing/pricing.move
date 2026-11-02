@@ -135,8 +135,9 @@ public struct PricingSVI has copy, drop, store {
 }
 
 /// Dynamic-field key of a market's SVI cache under the market's UID: a `VecMap` from SVI source time
-/// to the full-precision tuple an admission read from a Propbook store at 18 decimals. Created by the
-/// first such admission, so that trader pays its storage, and capped at `svi_cache_capacity`.
+/// to the full-precision tuple an admission read from a Propbook store at 18 decimals, or a poisoned
+/// entry when two different tuples share a time (`keep_svi`). Created by the first such admission,
+/// so that trader pays its storage, and capped at `svi_cache_capacity`.
 public struct SviKey() has copy, drop, store;
 
 /// The raw volatility inputs an order-flow admission read, stored in the order's
@@ -433,7 +434,7 @@ public(package) fun load_vol(
         is_fresh(snapshot.svi_source_timestamp_ms, svi_max_age_ms, clock),
         EBlockScholesSVIStale,
     );
-    if (precise) cache_svi(market_uid, &snapshot, svi);
+    if (precise) keep_svi(market_uid, &snapshot, svi);
     (snapshot, pricer)
 }
 
@@ -728,7 +729,7 @@ fun read_inputs(
         ),
         EBlockScholesPriceStale,
     );
-    let bs_spot = narrow_input(bs_spot_read.read_value(), 1);
+    let bs_spot = narrow_input(bs_spot_read.read_value(), false);
 
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
@@ -739,7 +740,7 @@ fun read_inputs(
         ),
         EBlockScholesPriceStale,
     );
-    let bs_forward = narrow_input(bs_forward_read.read_value(), 1);
+    let bs_forward = narrow_input(bs_forward_read.read_value(), false);
 
     let svi_read = bs_svi.svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
@@ -771,8 +772,6 @@ fun read_inputs(
     // 1e9: `rho`, `m`, and `sigma` keep enough digits there (a `sigma` at the 1e-7 floor still has
     // a hundred raw units), and `a` and `b` are taken at 1e18 below, because on a final-seconds
     // slice they are only a raw unit or two at 1e9.
-    let scale = if (precise) math::float_scaling!() as u128 else 1;
-
     let snapshot = VolSnapshot {
         // `chk_oracles` bound `pyth` as the underlying's canonical feed, so
         // its source is the registry binding's.
@@ -780,19 +779,19 @@ fun read_inputs(
         bs_spot,
         bs_forward,
         svi_a: i64::from_parts(
-            narrow_input(params.svi_a_magnitude(), scale),
+            narrow_input(params.svi_a_magnitude(), precise),
             params.svi_a_is_negative(),
         ),
-        svi_b: narrow_input(params.svi_b(), scale),
+        svi_b: narrow_input(params.svi_b(), precise),
         svi_rho: i64::from_parts(
-            narrow_input(params.svi_rho_magnitude(), scale),
+            narrow_input(params.svi_rho_magnitude(), precise),
             params.svi_rho_is_negative(),
         ),
         svi_m: i64::from_parts(
-            narrow_input(params.svi_m_magnitude(), scale),
+            narrow_input(params.svi_m_magnitude(), precise),
             params.svi_m_is_negative(),
         ),
-        svi_sigma: narrow_input(params.svi_sigma(), scale),
+        svi_sigma: narrow_input(params.svi_sigma(), precise),
         bs_spot_source_timestamp_ms: block_scholes_spot_source_timestamp_ms,
         bs_forward_source_timestamp_ms: block_scholes_forward_source_timestamp_ms,
         svi_source_timestamp_ms: block_scholes_svi_source_timestamp_ms,
@@ -828,8 +827,10 @@ fun own_svi(snapshot: &VolSnapshot): PricingSVI {
 /// The tuple a fill prices `snapshot` with: its market's cached full-precision tuple for the
 /// snapshot's SVI source time when that tuple is the snapshot's whole calibration, its `a` and `b`
 /// rounding to the snapshot's and its `rho`, `m`, and `sigma` equal to them, and otherwise the
-/// snapshot's own. A cached tuple narrowed at its admission, so the rounding cannot abort, and it
-/// passed the load gate, so a match prices wherever the snapshot does.
+/// snapshot's own. The rounded `a` takes its sign through `i64::from_parts` exactly as the
+/// snapshot's did, so a slightly negative `a` that rounds to zero still matches. A cached tuple
+/// narrowed at its admission, so the rounding cannot abort, and it passed the load gate, so a match
+/// prices wherever the snapshot does.
 fun svi_for(market_uid: &UID, snapshot: &VolSnapshot): PricingSVI {
     let own = own_svi(snapshot);
     if (!market_uid.exists_(SviKey())) return own;
@@ -838,35 +839,43 @@ fun svi_for(market_uid: &UID, snapshot: &VolSnapshot): PricingSVI {
     if (cached.is_some()) {
         let full = cached.destroy_some();
         let scale = math::float_scaling!() as u128;
+        let a = i64::from_parts(narrow_input(full.a_magnitude, true), full.a_is_negative);
         let mut rounded = full;
-        rounded.a_magnitude = (narrow_input(full.a_magnitude, scale) as u128) * scale;
-        rounded.b = (narrow_input(full.b, scale) as u128) * scale;
+        rounded.a_magnitude = (a.magnitude() as u128) * scale;
+        rounded.a_is_negative = a.is_negative();
+        rounded.b = (narrow_input(full.b, true) as u128) * scale;
         if (rounded == own) return full;
     };
     own
 }
 
 /// Record the full-precision tuple an admission read for `snapshot` under its SVI source time,
-/// creating the market's SVI cache on first use, keeping the first tuple recorded for a time, and
-/// evicting the oldest past capacity.
-fun cache_svi(market_uid: &mut UID, snapshot: &VolSnapshot, svi: PricingSVI) {
+/// creating the market's SVI cache on first use and evicting the oldest past capacity. A source
+/// time that arrives with a second, different tuple (an SVI model switch can bring two calibrations
+/// published at one time) is held by neither: its entry's `sigma` goes to zero, below the envelope's
+/// floor, so it matches no snapshot and every order on that time prices from its own 1e9 values.
+fun keep_svi(market_uid: &mut UID, snapshot: &VolSnapshot, svi: PricingSVI) {
     if (!market_uid.exists_(SviKey())) {
         market_uid.add(SviKey(), vec_map::empty<u64, PricingSVI>());
     };
     let cache: &mut VecMap<u64, PricingSVI> = market_uid.borrow_mut(SviKey());
     let source_ms = snapshot.svi_source_timestamp_ms;
-    if (cache.try_get(&source_ms).is_some()) return;
+    let held = cache.try_get(&source_ms);
+    if (held.is_some()) {
+        if (held.destroy_some() != svi) cache.get_mut(&source_ms).sigma = 0;
+        return
+    };
     cache.insert(source_ms, svi);
     if (cache.length() > svi_cache_capacity!()) {
         cache.remove_entry_by_idx(0);
     };
 }
 
-/// One Block Scholes input at `scale` raw units per Predict raw unit, rounded half up and narrowed to
-/// Predict's pricing width with the provider-width error shared by every Block Scholes input. The
-/// rounding is quotient plus carry, so no addition can leave `u128`, and `scale = 1` is a plain
-/// narrowing.
-fun narrow_input(value: u128, scale: u128): u64 {
+/// One Block Scholes input narrowed to Predict's pricing width with the provider-width error shared
+/// by every Block Scholes input: as stored, or for a `precise` (18-decimal) input divided by 1e9 and
+/// rounded half up. The rounding is quotient plus carry, so no addition can leave `u128`.
+fun narrow_input(value: u128, precise: bool): u64 {
+    let scale = if (precise) math::float_scaling!() as u128 else 1;
     let value = value / scale + if (value % scale > (scale - 1) / 2) 1 else 0;
     assert!(value <= (std::u64::max_value!() as u128), EBlockScholesInputTooWide);
     value as u64
@@ -1053,12 +1062,12 @@ public(package) fun svi_source_timestamp_ms(snapshot: &VolSnapshot): u64 {
 }
 
 #[test_only]
-public(package) fun cache_svi_for_testing(
+public(package) fun keep_svi_for_testing(
     market_uid: &mut UID,
     snapshot: &VolSnapshot,
     svi: PricingSVI,
 ) {
-    cache_svi(market_uid, snapshot, svi)
+    keep_svi(market_uid, snapshot, svi)
 }
 
 #[test_only]

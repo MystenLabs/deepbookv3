@@ -233,7 +233,7 @@ fun a_tuple_from_another_surface_is_not_used() {
         i64::from_parts(25_000_000, false),
         2 * SIGMA_1E9,
     );
-    pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), other_shape);
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), other_shape);
 
     assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS)), own());
     market_uid.delete();
@@ -242,7 +242,7 @@ fun a_tuple_from_another_surface_is_not_used() {
 #[test]
 fun a_recorded_tuple_prices_its_snapshot() {
     let mut market_uid = object::new(&mut tx_context::dummy());
-    pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
 
     assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS)), precise());
     market_uid.delete();
@@ -261,7 +261,7 @@ fun without_a_cache_a_snapshot_prices_on_its_own_values() {
 #[test]
 fun a_tuple_from_another_publication_is_not_used() {
     let mut market_uid = object::new(&mut tx_context::dummy());
-    pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
 
     assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS + 1)), own());
     market_uid.delete();
@@ -273,27 +273,75 @@ fun a_tuple_that_does_not_round_to_the_snapshot_is_not_used() {
     let mut market_uid = object::new(&mut tx_context::dummy());
     let other_a = svi_with(2_400_000_000, B_1E9);
     let other_b = svi_with(PRECISE_A_1E18, B_1E9 + 1);
-    pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), other_a);
-    pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS + 1), other_b);
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), other_a);
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS + 1), other_b);
 
     assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS)), own());
     assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS + 1)), own());
     market_uid.delete();
 }
 
-/// One publication keeps the first tuple recorded for it, and recording again does not grow the cache.
+/// Recording a publication's tuple again does not grow the cache, and the entry still prices.
 #[test]
-fun the_first_tuple_recorded_for_a_publication_is_kept() {
+fun recording_the_same_tuple_again_keeps_one_entry() {
     let mut market_uid = object::new(&mut tx_context::dummy());
-    pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
-    pricing::cache_svi_for_testing(
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
+
+    assert_eq!(pricing::svi_cache_length_for_testing(&market_uid), 1);
+    assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS)), precise());
+    market_uid.delete();
+}
+
+/// Two different calibrations under one source time, as an SVI model switch can bring, round to the
+/// same snapshot here (`a = 1.4e-9` and `a = 1.2e-9` both round to one raw unit). Neither can be told
+/// apart from the snapshot, so the publication is held by neither and every order on it prices from
+/// its own 1e9 values, rather than one surface's order filling at the other's precision.
+#[test]
+fun a_second_calibration_under_one_publication_is_held_by_neither() {
+    let mut market_uid = object::new(&mut tx_context::dummy());
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
+    pricing::keep_svi_for_testing(
         &mut market_uid,
         &snapshot(CACHE_SOURCE_MS),
         svi_with(1_200_000_000, B_1E9),
     );
+    pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS), precise());
 
     assert_eq!(pricing::svi_cache_length_for_testing(&market_uid), 1);
-    assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS)), precise());
+    assert_eq!(pricing::svi_for_testing(&market_uid, &snapshot(CACHE_SOURCE_MS)), own());
+    market_uid.delete();
+}
+
+/// A slightly negative `a` rounds to a snapshot `a` of zero, which `i64::from_parts` makes
+/// nonnegative, so the cached tuple, whose sign is negative, still matches its own snapshot.
+#[test]
+fun a_negative_a_that_rounds_to_zero_matches_its_snapshot() {
+    let mut market_uid = object::new(&mut tx_context::dummy());
+    let negative = pricing::new_pricing_svi_for_testing(
+        400_000_000,
+        true,
+        (B_1E9 as u128) * SCALE,
+        i64::zero(),
+        i64::zero(),
+        SIGMA_1E9,
+    );
+    let rounds_to_zero = pricing::new_vol_snapshot_for_testing(
+        test_constants::pyth_feed_id(),
+        UNIT_FORWARD,
+        UNIT_FORWARD,
+        i64::from_parts(0, true),
+        B_1E9,
+        i64::zero(),
+        i64::zero(),
+        SIGMA_1E9,
+        CACHE_SOURCE_MS,
+        CACHE_SOURCE_MS,
+        CACHE_SOURCE_MS,
+    );
+    pricing::keep_svi_for_testing(&mut market_uid, &rounds_to_zero, negative);
+
+    assert_eq!(pricing::svi_for_testing(&market_uid, &rounds_to_zero), negative);
     market_uid.delete();
 }
 
@@ -303,7 +351,7 @@ fun the_oldest_entry_is_evicted_past_capacity() {
     let mut market_uid = object::new(&mut tx_context::dummy());
     let mut i = 0;
     while (i <= CACHE_CAPACITY) {
-        pricing::cache_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS + i), precise());
+        pricing::keep_svi_for_testing(&mut market_uid, &snapshot(CACHE_SOURCE_MS + i), precise());
         i = i + 1;
     };
 
