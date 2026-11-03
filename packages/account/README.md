@@ -210,6 +210,39 @@ transaction tries to settle the same coin in the same timestamp, the later
 transaction skips settlement instead of trying to withdraw the same accumulator
 funds again.
 
+### Receiving coins
+
+Some senders can only transfer a `Coin<T>` to an address, such as Circle's CCTP
+handler, which mints to the attested recipient. A coin sent to the wrapper address
+waits there as an owned object until anyone folds it into stored balance:
+
+```move
+public fun receive_coin<T>(wrapper: &mut AccountWrapper, coin: Receiving<Coin<T>>)
+```
+
+It takes no `Auth` because value only enters the account, and only the wrapper the
+coin was addressed to can receive it.
+
+The recipient should be `derived_wrapper_address(registry, owner)`, which equals
+`Account.receive_address()`. It is known before the account exists, so a coin can
+arrive first and wait until the owner creates the account. Only the owner can create
+it, and the creating transaction can receive the coin before sharing the wrapper. A
+coin at the owner's own address needs the owner's signature to deposit.
+
+The canonical account ID is the account's public identity, so it can get copied as a
+destination. A coin sent there can still reach the balance:
+
+```move
+public fun receive_coin_at_account_id<T>(wrapper: &mut AccountWrapper, coin: Receiving<Coin<T>>)
+```
+
+This covers coins only: `balance::send_funds` must still use the wrapper address. A
+`Receiving` cannot reveal its owner, so the caller picks the function from the coin's
+owner, and the wrong one aborts.
+
+The coin must already exist when the transaction is built, so a mint and its receive
+are two transactions.
+
 ## App Data
 
 Apps can attach one opaque data slot per app witness type:
