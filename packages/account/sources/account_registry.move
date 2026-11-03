@@ -55,7 +55,7 @@ public fun derived_address(registry: &AccountRegistry, owner: address): address 
     derived_object::derive_address(registry.id.to_inner(), AccountKey(owner))
 }
 
-/// Returns the deterministic wrapper address for external discovery, accumulator delivery, and PTB construction.
+/// Returns the deterministic wrapper address for external discovery, accumulator and coin delivery, and PTB construction.
 public fun derived_wrapper_address(registry: &AccountRegistry, owner: address): address {
     derived_object::derive_address(registry.id.to_inner(), AccountWrapperKey(owner))
 }
