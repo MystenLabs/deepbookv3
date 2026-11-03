@@ -3,7 +3,7 @@
 
 /// Owns shared account wrappers, typed coin custody, accumulator settlement, and application-scoped data.
 /// Consuming `Auth` is the mutable-borrow boundary: owner auth is checked against the account, while package-issued app auth yields the same full `&mut Account` and is not bound to an owner or operation.
-/// The wrapper address receives accumulator funds; a distinct derived account UID identifies the account and anchors app data, while typed balances remain embedded in the account.
+/// The wrapper address receives accumulator funds and transferred coins; a distinct derived account UID identifies the account and anchors app data, while typed balances remain embedded in the account.
 /// App data is namespaced by witness type, requires `Permit<App>` to mutate, and remains publicly readable.
 module account::account;
 
@@ -16,7 +16,8 @@ use sui::{
     clock::Clock,
     coin::Coin,
     derived_object,
-    dynamic_field as df
+    dynamic_field as df,
+    transfer::Receiving
 };
 
 use fun df::add as UID.add;
@@ -35,7 +36,7 @@ const AUTH_OWNER: u8 = 0;
 const AUTH_APP: u8 = 1;
 
 // === Structs ===
-/// Addressable shell that receives accumulator funds and gates mutable access to the embedded account.
+/// Addressable shell that receives accumulator funds and transferred coins, and gates mutable access to the embedded account.
 public struct AccountWrapper has key {
     id: UID,
     account: Account,
@@ -160,6 +161,20 @@ public fun settle<T>(wrapper: &mut AccountWrapper, root: &AccumulatorRoot, clock
         amount,
         wrapper.account.stored_balance<T>(),
     );
+}
+
+/// Permissionlessly folds a `Coin<T>` transferred to the wrapper address into stored account balance, for senders that can only transfer a coin and owners who have not signed.
+/// Value only enters the account, and only the wrapper UID the coin was addressed to can receive it. A coin may arrive before the account exists: `account_registry::derived_wrapper_address` is its recipient.
+public fun receive_coin<T>(wrapper: &mut AccountWrapper, coin: Receiving<Coin<T>>) {
+    let coin = transfer::public_receive(&mut wrapper.id, coin);
+    wrapper.account.deposit(coin);
+}
+
+/// `receive_coin` for a coin sent to the canonical account address, the account's public identity, which can get copied as a destination.
+/// Senders should still use the wrapper address, the one that also takes `send_funds`. A `Receiving` cannot reveal its owner, so the caller picks the function from the coin's owner; the wrong one aborts.
+public fun receive_coin_at_account_id<T>(wrapper: &mut AccountWrapper, coin: Receiving<Coin<T>>) {
+    let coin = transfer::public_receive(&mut wrapper.account.account_id, coin);
+    wrapper.account.deposit(coin);
 }
 
 /// Deposits into stored balance only; callers that include accumulator funds must settle through the wrapper first.
