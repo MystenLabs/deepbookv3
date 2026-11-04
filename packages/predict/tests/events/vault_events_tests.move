@@ -37,7 +37,7 @@ fun expiry_pnl_realized_layout() {
         amount: 4,
     };
 
-    vault_events::pnl_realized(
+    vault_events::pnl(
         expected.pool_vault_id,
         expected.expiry_market_id,
         expected.propbook_underlying_id,

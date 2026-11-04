@@ -429,7 +429,7 @@ public fun load_live_pricer(
 /// not defer a settlement attempt on this read.
 public fun is_pending_valuation(market: &ExpiryMarket, config: &ProtocolConfig): bool {
     market.valuation_stamp.is_some()
-        && config.is_cur_flush(market.valuation_stamp.borrow().flush_seq)
+        && config.is_cur(market.valuation_stamp.borrow().flush_seq)
 }
 
 /// Return live marked NAV as free expiry cash minus the exposure book's marked
@@ -942,7 +942,7 @@ public fun set_reference_tick(
     let tick_size = market.strike_exposure.tick_size();
     let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
-        config_events::ref_tick_set(
+        config_events::ref_set(
             market.id(),
             market.propbook_underlying_id,
             source_timestamp_ms,
@@ -1384,7 +1384,7 @@ public fun try_fill<W: drop>(
 ): (u8, Option<OrderReceipt>, Balance<USDC>, u64, u64, u64, u64, u64, u64, u64) {
     config.chk_flow<W>();
     config.chk_version();
-    config.chk_no_snap();
+    config.chk_ns();
     market.reconcile(config);
     assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
     let is_mint = receipt.stage == constants::receipt_stage_mint!();
@@ -1651,7 +1651,7 @@ public(package) fun free_incent(market: &mut ExpiryMarket): Balance<USDC> {
 }
 
 /// Release pool cash while preserving expiry-local payout backing.
-public(package) fun release_cash(market: &mut ExpiryMarket, amount: u64): Balance<USDC> {
+public(package) fun rel_cash(market: &mut ExpiryMarket, amount: u64): Balance<USDC> {
     if (amount == 0) {
         return balance::zero()
     };
@@ -1668,7 +1668,7 @@ public(package) fun free_settled(market: &mut ExpiryMarket): Balance<USDC> {
     market.cash.chk_backing(settled_liability);
 
     let returned_cash_amount = market.cash.balance() - reserved_cash;
-    market.release_cash(returned_cash_amount)
+    market.rel_cash(returned_cash_amount)
 }
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
@@ -1756,7 +1756,7 @@ public(package) fun receipt_state_for_testing(
 fun reconcile(market: &mut ExpiryMarket, config: &ProtocolConfig) {
     if (market.valuation_stamp.is_none()) return;
     let stamp_seq = market.valuation_stamp.borrow().flush_seq;
-    if (!config.is_cur_flush(stamp_seq)) {
+    if (!config.is_cur(stamp_seq)) {
         market.valuation_stamp = option::none();
         market.strike_exposure.stop_snap();
     };
@@ -1778,7 +1778,7 @@ fun assert_live_mint_allowed(
 // Trade flows are deliberately NOT gated on the whole-flush valuation lock: a
 // snapshotted market's state is captured (stamp cash + tree shadows), so trades
 // run unrecorded and unbudgeted while it awaits its `value_expiry`. They ARE
-// blocked while the atomic snapshot stage is open (`chk_no_snap`),
+// blocked while the atomic snapshot stage is open (`chk_ns`),
 // so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
 // mid-stamp cash move would skew the figures the seal freezes. That stage is one
 // PTB, so this never blocks a trade in any other transaction.
@@ -1790,7 +1790,7 @@ fun assert_live_flow_allowed(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.chk_no_snap();
+    config.chk_ns();
     market.chk_pricer(pricer);
     // Shared by every live mint, quote, and live redeem, so the pre-expiry block
     // lands once here. Settlement and settled redemption take other paths and stay
@@ -1813,7 +1813,7 @@ fun assert_live_flow_allowed(
 #[test_only]
 fun chk_settled(market: &ExpiryMarket, config: &ProtocolConfig) {
     config.chk_version();
-    config.chk_no_snap();
+    config.chk_ns();
     assert!(market.is_settled(), EMarketNotSettled);
 }
 
@@ -1901,7 +1901,7 @@ fun quote_exact_cost_terms(
     let subsidy_rate = config.fee_incentive_subsidy_rate();
 
     let mut lo = 0;
-    let mut hi = range.qty_for_prem(max_cost) / lot;
+    let mut hi = range.qty_prem(max_cost) / lot;
     while (lo < hi) {
         let mid = (lo + hi + 1) / 2;
         let cost = market.all_in_cost_at(
@@ -2548,7 +2548,7 @@ fun admit_sl(
 /// `(none, 0)` without one.
 fun bldr_terms(builder: &Option<BuilderFee>, config: &ProtocolConfig): (Option<ID>, u64) {
     if (builder.is_none()) return (option::none(), 0);
-    config.chk_bldr_cut();
+    config.chk_cut();
     let builder = builder.borrow();
     (option::some(builder.code_id()), capped_fee(config, builder.fee_per_contract()))
 }
@@ -2584,7 +2584,7 @@ fun admit_gates(
         config.chk_trading();
         assert!(!market.mint_paused, EMintPaused);
     };
-    config.chk_no_snap();
+    config.chk_ns();
     market.reconcile(config);
     let expiry = market.expiry;
     // τ sits on a supported channel's grid and at most one of its ticks before
@@ -2899,8 +2899,8 @@ fun unwind(market: &mut ExpiryMarket, receipt: &OrderReceipt, prune: bool) {
     unpin(&mut ledger.pins, receipt.lower_tick);
     unpin(&mut ledger.pins, receipt.higher_tick);
     if (prune) {
-        market.strike_exposure.prune_node(receipt.lower_tick, &ledger.pins);
-        market.strike_exposure.prune_node(receipt.higher_tick, &ledger.pins);
+        market.strike_exposure.prune_n(receipt.lower_tick, &ledger.pins);
+        market.strike_exposure.prune_n(receipt.higher_tick, &ledger.pins);
     };
 }
 
@@ -2922,7 +2922,7 @@ fun refund_order(
         reason == constants::fill_reason_limits!()
             || reason == constants::fill_reason_admission!()
     ) {
-        config.chk_no_snap();
+        config.chk_ns();
         market.cash.receive(escrow.split(receipt.order_fee));
     };
     market.fee_incentive_balance.join(escrow.split(receipt.subsidy_reserved));
@@ -3078,7 +3078,7 @@ fun price_mint(
     tick_ms: u64,
 ): (Option<MintTerms>, MintQuote, u64, u8) {
     assert!(kind <= constants::mint_kind_exact_cost!(), EInvalidOrderTerms);
-    let range = market.strike_exposure.try_mint_rng(pricer, lower_tick, higher_tick);
+    let range = market.strike_exposure.try_rng(pricer, lower_tick, higher_tick);
     if (range.is_none()) {
         return (option::none(), empty_mint_q(), 0, constants::fill_reason_admission!())
     };
@@ -3087,7 +3087,7 @@ fun price_mint(
     let quantity = if (exact_quantity) {
         quantity
     } else if (kind == constants::mint_kind_exact_amount!()) {
-        range.qty_for_prem(max_premium)
+        range.qty_prem(max_premium)
     } else {
         market.cost_qty_at(
             &range,
@@ -3151,7 +3151,7 @@ fun cost_qty_at(
 ): u64 {
     let lot = constants::position_lot_size!();
     let mut lo = 0;
-    let mut hi = range.qty_for_prem(max_cost) / lot;
+    let mut hi = range.qty_prem(max_cost) / lot;
     while (lo < hi) {
         let mid = (lo + hi + 1) / 2;
         let cost = market.cost_at_tick(

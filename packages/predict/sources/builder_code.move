@@ -97,7 +97,7 @@ public(package) fun create_and_share(registry_uid: &mut UID, index: u64, ctx: &T
     };
     let id = code.id();
     transfer::share_object(code);
-    builder_code_events::code_created(id, owner, index);
+    builder_code_events::created(id, owner, index);
     id
 }
 

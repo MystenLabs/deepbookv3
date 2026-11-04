@@ -117,7 +117,7 @@ public struct ProtocolConfig has key {
     /// market's snapshot state is captured, never recorded per trade (see `plp`).
     valuation_in_progress: bool,
     /// True ONLY while the atomic snapshot stage is open — set by `open_snap`
-    /// at `start_pool_valuation` and cleared by `end_snapshot` at
+    /// at `start_pool_valuation` and cleared by `end_snap` at
     /// `seal_valuation_snapshot`. Both live in one PTB (the `SnapshotStage` hot
     /// potato forces it), so this can never be observed across transactions: it
     /// blocks only a trade the keeper composes INTO its own snapshot PTB, where a
@@ -253,7 +253,7 @@ public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
 }
 
 /// Whether `operator` may call `plp::finish_flush`. For SDK, keeper, and
-/// devInspect reads; `finish_flush` gates through `chk_operator`.
+/// devInspect reads; `finish_flush` gates through `chk_op`.
 public fun is_flush_operator(config: &ProtocolConfig, operator: address): bool {
     let key = FlushOperatorsKey();
     if (!config.id.exists_(key)) return false;
@@ -283,8 +283,8 @@ public fun set_template_base_fee(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_base_fee(fee);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_base(fee);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -299,7 +299,7 @@ public fun set_template_min_fee(
 ) {
     config.chk_version();
     config.strike_exposure_template_config.set_min_fee(fee);
-    config_events::template_upd(
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -314,7 +314,7 @@ public fun set_template_expiry_fee_window_ms(
 ) {
     config.chk_version();
     config.strike_exposure_template_config.set_fee_win(value);
-    config_events::template_upd(
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -328,8 +328,8 @@ public fun set_template_expiry_fee_max_multiplier(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_fee_mult(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_mult(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -344,7 +344,7 @@ public fun set_template_backing_buffer_lambda(
 ) {
     config.chk_version();
     config.strike_exposure_template_config.set_lambda(value);
-    config_events::template_upd(
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -360,7 +360,7 @@ public fun set_template_inventory_impact_max_rate(
 ) {
     config.chk_version();
     config.strike_exposure_template_config.set_impact(value);
-    config_events::template_upd(
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -374,8 +374,8 @@ public fun set_template_min_entry_probability(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_min_prob(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_minp(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -389,8 +389,8 @@ public fun set_template_max_entry_probability(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_max_prob(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_maxp(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -411,7 +411,7 @@ public fun set_use_pyth_spot_for_forward(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_use_pyth_spot_for_forward(enabled);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Pyth spot freshness threshold. While `use_pyth_spot_for_forward`
@@ -430,7 +430,7 @@ public fun set_pyth_spot_freshness_ms(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Block Scholes spot/forward freshness threshold.
@@ -443,7 +443,7 @@ public fun set_block_scholes_price_freshness_ms(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_block_scholes_price_freshness_ms(value);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Block Scholes SVI freshness threshold.
@@ -456,7 +456,7 @@ public fun set_block_scholes_svi_freshness_ms(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets before it is
@@ -472,7 +472,7 @@ public fun set_lp_request_limit_flush_attempts(
     // The flush reads this value mid-PTB; refuse to move it under a valuation in
     // flight, as the other setters a flush reads from do.
     config.chk_no_val();
-    config_constants::chk_attempts(attempts);
+    config_constants::chk_att(attempts);
     config.lp_request_limit_flush_attempts = attempts;
 }
 
@@ -508,7 +508,7 @@ public fun set_max_lp_pool_value(
     config.chk_version();
     // The flush reads this mid-PTB, like the attempt count.
     config.chk_no_val();
-    config_constants::chk_max_pool(max_pool_value);
+    config_constants::chk_pool(max_pool_value);
     config.max_lp_pool_value = max_pool_value;
 }
 
@@ -551,9 +551,9 @@ public fun set_no_trade_window_ms(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_no_trade(value);
+    config_constants::chk_nt(value);
     config.no_trade_window_ms = value;
-    config_events::no_trade_upd(value, clock.timestamp_ms());
+    config_events::nt_upd(value, clock.timestamp_ms());
 }
 
 /// Set whether trading is paused.
@@ -619,7 +619,7 @@ public fun add_flush_operator(
     let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
     assert!(!operators.contains(&operator), EFlushOperatorAlreadyAdded);
     operators.insert(operator);
-    config_events::operator_upd(operator, true, clock.timestamp_ms());
+    config_events::op_upd(operator, true, clock.timestamp_ms());
 }
 
 /// Revoke `operator`'s access to `plp::finish_flush`. Admin-only. Bypasses the
@@ -635,7 +635,7 @@ public fun remove_flush_operator(
     assert!(config.is_flush_operator(operator), EFlushOperatorNotFound);
     let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
     operators.remove(&operator);
-    config_events::operator_upd(operator, false, clock.timestamp_ms());
+    config_events::op_upd(operator, false, clock.timestamp_ms());
 }
 
 /// Allowlist (`enabled = true`) or remove the witness type `W` of an order-flow
@@ -695,7 +695,7 @@ public fun set_protocol_reserve_profit_share(
 /// applies to subsequent mints without changing their all-in account withdrawal.
 public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
     config.chk_version();
-    config_constants::chk_referral(rate);
+    config_constants::chk_ref(rate);
     config.referral_fee_rate = rate;
 }
 
@@ -727,7 +727,7 @@ public fun set_fee_incentive_subsidy_rate(
     config.chk_version();
     config_constants::chk_subsidy(rate);
     config.set_u64(FeeIncentiveSubsidyRateKey(), rate);
-    config_events::subsidy_upd(rate, clock.timestamp_ms());
+    config_events::sub_upd(rate, clock.timestamp_ms());
 }
 
 /// Set the builder fee cap: the most a trade's builder fee can charge per
@@ -746,9 +746,9 @@ public fun set_builder_fee_cap(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_bldr_cap(cap);
+    config_constants::chk_bcap(cap);
     config.set_u64(BuilderFeeCapKey(), cap);
-    config_events::bldr_cap_upd(cap, clock.timestamp_ms());
+    config_events::bc_upd(cap, clock.timestamp_ms());
 }
 
 /// Set the share of an expiry's allocation cap each live rebalance tops its
@@ -772,7 +772,7 @@ public fun set_fee_incentive_live_target_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_live_tgt(rate);
+    config_constants::chk_live(rate);
     config.set_u64(FeeIncentiveLiveTargetRateKey(), rate);
     config.rates_upd(clock);
 }
@@ -792,7 +792,7 @@ public fun set_template_fee_incentive_lifetime_cap_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_life_cap(rate);
+    config_constants::chk_life(rate);
     config.set_u64(FeeIncentiveLifetimeCapRateKey(), rate);
     config.rates_upd(clock);
 }
@@ -810,7 +810,7 @@ public fun set_plp_supply_fee_rate(
     config.chk_no_val();
     config_constants::chk_sup_fee(rate);
     config.plp_supply_fee_rate = rate;
-    config_events::plp_fees_upd(
+    config_events::fee_upd(
         config.plp_supply_fee_rate,
         config.plp_withdraw_fee_rate,
         clock.timestamp_ms(),
@@ -829,7 +829,7 @@ public fun set_plp_withdraw_fee_rate(
     config.chk_no_val();
     config_constants::chk_wd_fee(rate);
     config.plp_withdraw_fee_rate = rate;
-    config_events::plp_fees_upd(
+    config_events::fee_upd(
         config.plp_supply_fee_rate,
         config.plp_withdraw_fee_rate,
         clock.timestamp_ms(),
@@ -854,7 +854,7 @@ public(package) fun rsv_share(config: &ProtocolConfig): u64 {
     config.protocol_reserve_profit_share
 }
 
-public(package) fun req_attempts(config: &ProtocolConfig): u64 {
+public(package) fun req_att(config: &ProtocolConfig): u64 {
     config.lp_request_limit_flush_attempts
 }
 
@@ -874,7 +874,7 @@ public(package) fun flush_seq(config: &ProtocolConfig): u64 {
 /// is in flight right now. False for a stale stamp (an aborted or completed
 /// flush's leftovers) and when no flush is in flight — the caller lazily discards
 /// the stamp in those cases.
-public(package) fun is_cur_flush(config: &ProtocolConfig, stamp_seq: u64): bool {
+public(package) fun is_cur(config: &ProtocolConfig, stamp_seq: u64): bool {
     config.valuation_in_progress && config.flush_seq == stamp_seq
 }
 
@@ -901,7 +901,7 @@ public(package) fun is_keeper(config: &ProtocolConfig, keeper: address): bool {
 
 /// Abort unless the transaction sender is a flush operator. An absent allowlist
 /// rejects everyone.
-public(package) fun chk_operator(config: &ProtocolConfig, ctx: &TxContext) {
+public(package) fun chk_op(config: &ProtocolConfig, ctx: &TxContext) {
     assert!(config.is_flush_operator(ctx.sender()), ENotFlushOperator);
 }
 
@@ -924,7 +924,7 @@ public(package) fun chk_cutover(config: &ProtocolConfig) {
 /// retires every package version whose fill ignores the builder fee a receipt
 /// records. Builder admission waits for it, so no older resolver that still
 /// shares the queue can fill a builder order at the legacy fee.
-public(package) fun chk_bldr_cut(config: &ProtocolConfig) {
+public(package) fun chk_cut(config: &ProtocolConfig) {
     assert!(
         config.version_watermark >= constants::builder_fee_version!(),
         EBuilderFeeCutoverNotReached,
@@ -985,7 +985,7 @@ public(package) fun chk_no_val(config: &ProtocolConfig) {
 
 /// Abort while the atomic snapshot stage is open — used by the trade gates so the
 /// keeper cannot compose a mint or redeem into its own snapshot PTB.
-public(package) fun chk_no_snap(config: &ProtocolConfig) {
+public(package) fun chk_ns(config: &ProtocolConfig) {
     assert!(!config.snapshot_in_progress, ESnapshotInProgress);
 }
 
@@ -1034,7 +1034,7 @@ public(package) fun open_snap(config: &mut ProtocolConfig) {
 
 /// Close the atomic snapshot stage — set at `seal_valuation_snapshot`, in the
 /// same PTB, so trading is live again the instant the snapshot is sealed.
-public(package) fun end_snapshot(config: &mut ProtocolConfig) {
+public(package) fun end_snap(config: &mut ProtocolConfig) {
     config.snapshot_in_progress = false;
 }
 

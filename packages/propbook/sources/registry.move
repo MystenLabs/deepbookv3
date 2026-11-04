@@ -364,8 +364,11 @@ public fun set_block_scholes_svi_model(
 /// first signed observation lands; decimals set back serve their last stored rows again, which
 /// consumers accept for as long as those rows are within their freshness windows. Stored rows carry
 /// no scale, so a consumer must read `svi_decimals` with each row: one that assumes `9` would read an
-/// `18`-decimal row as a value `1e9` times too large. Consumers linked to package versions before
-/// the decimals existed keep reading the `9`-decimal rows until those rows age out.
+/// `18`-decimal row as a value `1e9` times too large. A consumer linked to a package version before
+/// the decimals existed reads through that version, and the `9`-decimal rows until they age out,
+/// except in a transaction that also calls this version or later, directly or through a package
+/// linked to it: Sui then runs one Propbook version for the whole transaction, and the consumer reads
+/// the current decimals' rows.
 public fun set_block_scholes_svi_decimals(
     svi_store: &mut BlockScholesSVIStore,
     _admin_cap: &RegistryAdminCap,

@@ -161,7 +161,7 @@ public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
-public(package) fun settled_liab(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
+public(package) fun liab_at(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
     let limit_tick = range_codec::limit_tick(settlement, tick_size);
     prefix_pay(
         &tree.nodes,
@@ -344,11 +344,7 @@ public(package) fun remove_range(
 /// The refund routine's best-effort cleanup after it unpins. A missing tick,
 /// a sentinel, a node holding quantity, a pinned node, and a husk the active
 /// generation still needs are all left alone and return false.
-public(package) fun prune_node(
-    tree: &mut StrikePayoutTree,
-    tick: u64,
-    pins: &VecMap<u64, u64>,
-): bool {
+public(package) fun prune_n(tree: &mut StrikePayoutTree, tick: u64, pins: &VecMap<u64, u64>): bool {
     if (!tree.nodes.contains(tick) || pins.contains(&tick)) return false;
     let node = tree.nodes[tick];
     let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;

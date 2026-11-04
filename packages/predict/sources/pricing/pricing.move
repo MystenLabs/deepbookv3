@@ -236,13 +236,15 @@ public(package) macro fun price_monotonicity_tolerance(): u64 { 2 }
 /// Any other value than this and `9` aborts the load.
 macro fun precise_svi_decimals(): u8 { 18 }
 
-/// Recent full-precision tuples a market keeps for its fills. An admission reads SVI within the live
-/// SVI freshness window and the order fills within the policy's delay plus stall timeout, while the
-/// provider publishes about once a second, so 64 entries cover about a minute of publications. That
-/// bounds retention by publication rate, not by receipt lifetime: an entry evicted before its fill
-/// prices the order from its 1e9 snapshot, which the load gate checked prices unrolled
-/// (`chk_inputs`). The rolled snapshot can still lose an order, by crossing its limit or, on a
-/// surface whose minimum variance is a few 1e-18 units, by flooring to zero at the tick.
+/// Recent full-precision tuples a market keeps for its fills. An admission reads the latest
+/// publication, so the first admission on one inserts its entry and every later insertion is a newer
+/// publication. The companion fills or refunds an order by its deadline, at most its delay plus stall
+/// timeout after placement (about 15 s at their caps), and the provider publishes about once a
+/// second, so about 16 entries arrive between an admission and its fill, a quarter of the capacity.
+/// An entry evicted before its fill (publications faster than about four a second) or poisoned by a
+/// second tuple (`keep_svi`) prices the order from its 1e9 snapshot, which the load gate checked
+/// prices unrolled (`chk_inputs`). The rolled snapshot can still lose an order, by crossing its limit
+/// or, on a surface whose minimum variance is a few 1e-18 units, by flooring to zero at the tick.
 macro fun svi_cache_capacity(): u64 { 64 }
 
 // === Public Functions ===
@@ -418,7 +420,7 @@ public(package) fun load_vol(
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    assert!(config.pyth_forward(), EPythForwardRequired);
+    assert!(config.pyth_fwd(), EPythForwardRequired);
     let (snapshot, pricer, svi, precise) = resolve_live(
         config,
         pyth,
@@ -530,12 +532,12 @@ public(package) fun try_range(pricer: &Pricer, lower: Strike, higher: Strike): O
 /// forward, so there is nothing to reject and it always passes.
 #[test_only]
 public(package) fun assert_pyth_spot_fresh(pricer: &Pricer, config: &PricingConfig, clock: &Clock) {
-    if (!config.pyth_forward()) return;
+    if (!config.pyth_fwd()) return;
     assert!(pricer.pyth_spot_source_timestamp_ms > 0, EPythSpotUnavailable);
     assert!(
         is_fresh(
             pricer.pyth_spot_source_timestamp_ms,
-            config.pyth_age_ms(),
+            config.pyth_age(),
             clock,
         ),
         EPythSpotStale,
@@ -665,11 +667,11 @@ fun resolve_live(
     };
     let mut forward = snapshot.bs_forward;
     if (
-        config.pyth_forward()
+        config.pyth_fwd()
             && pyth_spot.is_some()
             && is_fresh(
                 pyth_spot_source_timestamp_ms,
-                config.pyth_age_ms(),
+                config.pyth_age(),
                 clock,
             )
     ) {
@@ -726,7 +728,7 @@ fun read_inputs(
     assert!(
         is_fresh(
             block_scholes_spot_source_timestamp_ms,
-            config.bs_age_ms(),
+            config.bs_age(),
             clock,
         ),
         EBlockScholesPriceStale,
@@ -737,7 +739,7 @@ fun read_inputs(
     assert!(
         is_fresh(
             block_scholes_forward_source_timestamp_ms,
-            config.bs_age_ms(),
+            config.bs_age(),
             clock,
         ),
         EBlockScholesPriceStale,
@@ -757,7 +759,7 @@ fun read_inputs(
     assert!(
         is_fresh(
             block_scholes_svi_source_timestamp_ms,
-            config.svi_age_ms(),
+            config.svi_age(),
             clock,
         ),
         EBlockScholesSVIStale,
