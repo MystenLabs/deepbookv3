@@ -16,6 +16,7 @@ use std::{string::String, type_name, unit_test::assert_eq};
 const EXPIRY_MS: u64 = 1_785_888_000_000;
 /// Block Scholes signs every Propbook scalar and SVI value at nine decimal places.
 const DECIMALS: u8 = 9;
+const HIGH_PRECISION_DECIMALS: u8 = 18;
 const SVI_REGIME: vector<u8> = b"SVI_REGIME";
 const ORACLE_VECTOR_SCOPE: address =
     @0x1111111111111111111111111111111111111111111111111111111111111111;
@@ -77,7 +78,10 @@ fun svi_matches_the_official_descriptor() {
         DECIMALS,
         b"ms".to_string(),
     );
-    assert_eq!(block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), EXPIRY_MS), expected);
+    assert_eq!(
+        block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), DECIMALS, EXPIRY_MS),
+        expected,
+    );
 }
 
 #[test]
@@ -92,11 +96,43 @@ fun svi_under_another_model_matches_that_models_descriptor() {
         DECIMALS,
         b"ms".to_string(),
     );
-    assert_eq!(block_scholes_sid::svi(&base_asset, &SVI_REGIME.to_string(), EXPIRY_MS), expected);
+    assert_eq!(
+        block_scholes_sid::svi(&base_asset, &SVI_REGIME.to_string(), DECIMALS, EXPIRY_MS),
+        expected,
+    );
 }
 
 #[test]
-fun base_asset_expiry_and_model_are_part_of_the_identity() {
+fun svi_at_high_precision_matches_that_scales_descriptor() {
+    let base_asset = btc();
+    let expected = sid::model_params(
+        oracle_package_id(),
+        b"option".to_string(),
+        copy base_asset,
+        SVI_REGIME.to_string(),
+        sid::expiry_at(EXPIRY_MS),
+        HIGH_PRECISION_DECIMALS,
+        b"ms".to_string(),
+    );
+    assert_eq!(
+        block_scholes_sid::svi(
+            &base_asset,
+            &SVI_REGIME.to_string(),
+            HIGH_PRECISION_DECIMALS,
+            EXPIRY_MS,
+        ),
+        expected,
+    );
+}
+
+#[test]
+fun the_svi_scales_are_nine_and_eighteen_decimals() {
+    assert_eq!(block_scholes_sid::default_svi_decimals!(), DECIMALS);
+    assert_eq!(block_scholes_sid::high_precision_svi_decimals!(), HIGH_PRECISION_DECIMALS);
+}
+
+#[test]
+fun base_asset_expiry_model_and_decimals_are_part_of_the_identity() {
     let btc = btc();
     let eth = b"ETH".to_string();
     assert!(block_scholes_sid::spot(&btc) != block_scholes_sid::spot(&eth));
@@ -105,8 +141,12 @@ fun base_asset_expiry_and_model_are_part_of_the_identity() {
         block_scholes_sid::forward(&btc, EXPIRY_MS + 1),
     );
     assert!(
-        block_scholes_sid::svi(&btc, &b"SVI".to_string(), EXPIRY_MS) !=
-        block_scholes_sid::svi(&btc, &SVI_REGIME.to_string(), EXPIRY_MS),
+        block_scholes_sid::svi(&btc, &b"SVI".to_string(), DECIMALS, EXPIRY_MS) !=
+        block_scholes_sid::svi(&btc, &SVI_REGIME.to_string(), DECIMALS, EXPIRY_MS),
+    );
+    assert!(
+        block_scholes_sid::svi(&btc, &SVI_REGIME.to_string(), DECIMALS, EXPIRY_MS) !=
+        block_scholes_sid::svi(&btc, &SVI_REGIME.to_string(), HIGH_PRECISION_DECIMALS, EXPIRY_MS),
     );
 }
 
@@ -115,7 +155,7 @@ fun series_shapes_are_distinct() {
     let base_asset = btc();
     let spot = block_scholes_sid::spot(&base_asset);
     let forward = block_scholes_sid::forward(&base_asset, EXPIRY_MS);
-    let svi = block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), EXPIRY_MS);
+    let svi = block_scholes_sid::svi(&base_asset, &b"SVI".to_string(), DECIMALS, EXPIRY_MS);
     assert!(spot != forward);
     assert!(spot != svi);
     assert!(forward != svi);

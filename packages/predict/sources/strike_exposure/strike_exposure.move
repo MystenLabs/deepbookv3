@@ -316,7 +316,7 @@ public(package) fun nodes_exist(
 /// `payout_liability` (and so `chk_backed`) reads after
 /// `allocate` applies the same terms to the same book.
 ///
-/// `range` must come from `try_mint_rng`, which always samples the
+/// `range` must come from `try_rng`, which always samples the
 /// reads. `quote_mint_range` skips them while inventory impact is off, and its
 /// zeros would understate the result. The point max after the mint is the
 /// larger of the old max and the candidate's own range peak plus `quantity`,
@@ -491,7 +491,7 @@ public(package) fun quote_mint_range(
 /// `none` covers every input `quote_mint_range` aborts on (an off-grid tick, a
 /// strike the pricer cannot price, the entry band) and also a tick pair no
 /// order can encode, which would otherwise abort later at allocation.
-public(package) fun try_mint_rng(
+public(package) fun try_rng(
     exposure: &StrikeExposure,
     pricer: &Pricer,
     lower_tick: u64,
@@ -562,7 +562,7 @@ public(package) fun try_terms(
     (option::some(terms), 0)
 }
 
-/// Non-aborting `quote_mint_terms`: `try_mint_rng`, then sizing, then
+/// Non-aborting `quote_mint_terms`: `try_rng`, then sizing, then
 /// `try_terms`, with the same reason codes. A range that cannot be quoted
 /// reports `2`; a budget too small for one lot sizes to zero and reports `1`.
 #[test_only]
@@ -575,13 +575,13 @@ public(package) fun try_quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
 ): (Option<MintTerms>, u8) {
-    let range = exposure.try_mint_rng(pricer, lower_tick, higher_tick);
+    let range = exposure.try_rng(pricer, lower_tick, higher_tick);
     if (range.is_none()) return (option::none(), constants::fill_reason_admission!());
     let range = range.destroy_some();
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        range.qty_for_prem(max_premium)
+        range.qty_prem(max_premium)
     };
     exposure.try_terms(range, quantity, min_quantity)
 }
@@ -590,7 +590,7 @@ public(package) fun try_quote_mint_terms(
 /// `max_premium`. The probe is the expression admission charges, so the result is
 /// exact; the search domain is the lot cap, so an oversized budget saturates
 /// instead of aborting.
-public(package) fun qty_for_prem(range: &MintRange, max_premium: u64): u64 {
+public(package) fun qty_prem(range: &MintRange, max_premium: u64): u64 {
     pmath::max_qty(
         range.price.probability(),
         max_premium,
@@ -631,7 +631,7 @@ public(package) fun mint_terms(
 
 /// Price a range, choose quantity under the requested bias, and run mint
 /// admission. Exact-quantity mode uses `min_quantity`. Budget mode sizes with
-/// `qty_for_prem`, then requires the result to meet `min_quantity`.
+/// `qty_prem`, then requires the result to meet `min_quantity`.
 #[test_only]
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
@@ -646,7 +646,7 @@ public(package) fun quote_mint_terms(
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        range.qty_for_prem(max_premium)
+        range.qty_prem(max_premium)
     };
     exposure.mint_terms(range, quantity, min_quantity)
 }
@@ -696,12 +696,12 @@ public(package) fun ensure_nodes(exposure: &mut StrikeExposure, lower_tick: u64,
 
 /// Detach the payout-tree node at `tick` if it is empty, unpinned, and not
 /// retained by the flush snapshot. Never aborts.
-public(package) fun prune_node(
+public(package) fun prune_n(
     exposure: &mut StrikeExposure,
     tick: u64,
     pins: &VecMap<u64, u64>,
 ): bool {
-    exposure.payout.prune_node(tick, pins)
+    exposure.payout.prune_n(tick, pins)
 }
 
 /// Non-aborting `quote_live_close`: `none` when the close cannot be priced, and
@@ -815,9 +815,7 @@ public(package) fun try_settled(exposure: &mut StrikeExposure, order: &Order): O
 public(package) fun set_settled(exposure: &mut StrikeExposure, settlement_price: u64) {
     if (exposure.is_settled()) return;
 
-    let settled_payout_liability = exposure
-        .payout
-        .settled_liab(settlement_price, exposure.tick_size);
+    let settled_payout_liability = exposure.payout.liab_at(settlement_price, exposure.tick_size);
     exposure.settlement_price = option::some(settlement_price);
     exposure.settled_payout_liability = settled_payout_liability;
 }

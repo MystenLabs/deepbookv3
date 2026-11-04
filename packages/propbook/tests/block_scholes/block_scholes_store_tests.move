@@ -72,6 +72,8 @@ const CLASSIC_SVI_MODEL: vector<u8> = b"SVI";
 const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
 /// Exactly 32 ASCII bytes, the longest accepted model spelling: eight groups of four.
 const THIRTY_TWO_BYTE_MODEL: vector<u8> = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";
+const DEFAULT_SVI_DECIMALS: u8 = 9;
+const HIGH_PRECISION_SVI_DECIMALS: u8 = 18;
 
 // === Accepting ===
 
@@ -1443,6 +1445,214 @@ fun a_migrated_store_takes_a_model() {
     scenario.end();
 }
 
+// === SVI decimals ===
+
+#[test]
+fun a_new_svi_store_serves_nine_decimal_series() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+
+    assert_eq!(svi_store.svi_decimals(), DEFAULT_SVI_DECIMALS);
+    assert_eq!(
+        svi_store.svi_sid(EXPIRY_A),
+        independent_svi_sid_at(CLASSIC_SVI_MODEL, DEFAULT_SVI_DECIMALS, EXPIRY_A),
+    );
+
+    return_shared(svi_store);
+    scenario.end();
+}
+
+/// The decimals are part of the signed series id, so setting them must move both what the store
+/// accepts and what it serves, and must say so on chain.
+#[test]
+fun setting_the_decimals_switches_the_series_the_store_accepts_and_serves() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_decimals(&mut svi_store, HIGH_PRECISION_SVI_DECIMALS);
+    apply_svis(
+        &mut svi_store,
+        BATCH_EARLY,
+        vector[
+            svi_update_with_sid(
+                independent_svi_sid_at(CLASSIC_SVI_MODEL, HIGH_PRECISION_SVI_DECIMALS, EXPIRY_A),
+                SOURCE_EARLY,
+            ),
+        ],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(svi_store.svi_decimals(), HIGH_PRECISION_SVI_DECIMALS);
+    assert_eq!(
+        svi_store.svi_sid(EXPIRY_A),
+        independent_svi_sid_at(CLASSIC_SVI_MODEL, HIGH_PRECISION_SVI_DECIMALS, EXPIRY_A),
+    );
+    let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
+    assert_eq!(read.read_source_timestamp_ms(), SOURCE_EARLY);
+    assert_eq!(read.read_value().svi_sigma(), SVI_SIGMA);
+    let events = event::events_by_type<store::BlockScholesSVIDecimalsSet>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let (event_underlying_id, event_store_id, event_decimals) = store::svi_decimals_set_fields(
+        &events[0],
+    );
+    assert_eq!(event_underlying_id, BTC_UNDERLYING_ID);
+    assert_eq!(event_store_id, svi_id);
+    assert_eq!(event_decimals, HIGH_PRECISION_SVI_DECIMALS);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = store::ESeriesIdMismatch)]
+fun a_batch_at_the_previous_decimals_aborts_after_a_switch() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_decimals(&mut svi_store, HIGH_PRECISION_SVI_DECIMALS);
+    apply_svis(
+        &mut svi_store,
+        BATCH_EARLY,
+        vector[svi_update(&btc(), EXPIRY_A, SOURCE_EARLY)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    abort
+}
+
+/// Switching decimals never deletes observations: each scale keeps its own rows, and setting a
+/// scale back serves that scale's last observation again.
+#[test]
+fun each_scales_observations_return_when_it_is_set_back() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_svis(
+        &mut svi_store,
+        BATCH_EARLY,
+        vector[svi_update(&btc(), EXPIRY_A, SOURCE_EARLY)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    store::set_svi_decimals(&mut svi_store, HIGH_PRECISION_SVI_DECIMALS);
+    assert!(store::svi(&svi_store, EXPIRY_A).is_none());
+
+    apply_svis(
+        &mut svi_store,
+        BATCH_MID,
+        vector[
+            svi_update_with_sid(
+                independent_svi_sid_at(CLASSIC_SVI_MODEL, HIGH_PRECISION_SVI_DECIMALS, EXPIRY_A),
+                SOURCE_MID,
+            ),
+        ],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    store::set_svi_decimals(&mut svi_store, DEFAULT_SVI_DECIMALS);
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_EARLY,
+    );
+    store::set_svi_decimals(&mut svi_store, HIGH_PRECISION_SVI_DECIMALS);
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_MID,
+    );
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+/// The model and the decimals are independent parts of one series id: a multi-expiry batch under
+/// both lands every expiry.
+#[test]
+fun a_multi_expiry_batch_under_a_switched_model_and_decimals_lands_every_expiry() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    store::set_svi_model(&mut svi_store, SVI_REGIME_MODEL.to_string());
+    store::set_svi_decimals(&mut svi_store, HIGH_PRECISION_SVI_DECIMALS);
+    store::apply_svi_batch(
+        &mut svi_store,
+        verify::new_svi_batch_for_testing(
+            BATCH_EARLY,
+            vector[
+                svi_update_with_sid(
+                    independent_svi_sid_at(SVI_REGIME_MODEL, HIGH_PRECISION_SVI_DECIMALS, EXPIRY_A),
+                    SOURCE_EARLY,
+                ),
+                svi_update_with_sid(
+                    independent_svi_sid_at(SVI_REGIME_MODEL, HIGH_PRECISION_SVI_DECIMALS, EXPIRY_B),
+                    SOURCE_MID,
+                ),
+            ],
+        ),
+        vector[EXPIRY_A, EXPIRY_B],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(
+        svi_store.svi_sid(EXPIRY_B),
+        independent_svi_sid_at(SVI_REGIME_MODEL, HIGH_PRECISION_SVI_DECIMALS, EXPIRY_B),
+    );
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_A).destroy_some().read_source_timestamp_ms(),
+        SOURCE_EARLY,
+    );
+    assert_eq!(
+        store::svi(&svi_store, EXPIRY_B).destroy_some().read_source_timestamp_ms(),
+        SOURCE_MID,
+    );
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = store::EInvalidSviDecimals)]
+fun decimals_between_the_two_scales_abort() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+
+    store::set_svi_decimals(&mut svi_store, 12);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = store::EInvalidSviDecimals)]
+fun zero_decimals_abort() {
+    let (scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+
+    store::set_svi_decimals(&mut svi_store, 0);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = store::EWrongVersion)]
+fun setting_the_decimals_on_an_unmigrated_store_aborts() {
+    let (scenario, value_id, svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    store::set_store_versions_for_testing(
+        &mut value_store,
+        &mut svi_store,
+        constants::current_version!() - 1,
+    );
+
+    store::set_svi_decimals(&mut svi_store, HIGH_PRECISION_SVI_DECIMALS);
+
+    abort
+}
+
 // === Store identity and version ===
 
 #[test]
@@ -1612,7 +1822,12 @@ fun forward_update(
 
 fun svi_update(base_asset: &String, expiry_ms: u64, source_timestamp_ms: u64): SviUpdate {
     svi_update_with_sid(
-        block_scholes_sid::svi(base_asset, &block_scholes_sid::default_svi_model!(), expiry_ms),
+        block_scholes_sid::svi(
+            base_asset,
+            &block_scholes_sid::default_svi_model!(),
+            block_scholes_sid::default_svi_decimals!(),
+            expiry_ms,
+        ),
         source_timestamp_ms,
     )
 }
@@ -1635,13 +1850,17 @@ fun svi_update_with_sid(sid: u256, source_timestamp_ms: u64): SviUpdate {
 /// Derives a BTC SVI series id straight from the provider's SID package, so model tests do not
 /// check the store against its own derivation.
 fun independent_svi_sid(svi_model: vector<u8>, expiry_ms: u64): u256 {
+    independent_svi_sid_at(svi_model, constants::float_scaling_decimals!() as u8, expiry_ms)
+}
+
+fun independent_svi_sid_at(svi_model: vector<u8>, svi_decimals: u8, expiry_ms: u64): u256 {
     sid::model_params(
         type_name::original_id<PackageMarker>(),
         b"option".to_string(),
         btc(),
         svi_model.to_string(),
         sid::expiry_at(expiry_ms),
-        constants::float_scaling_decimals!() as u8,
+        svi_decimals,
         b"ms".to_string(),
     )
 }
