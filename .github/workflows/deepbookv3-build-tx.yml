@@ -18,6 +18,7 @@ on:
           - Upgrade Margin Protocol and Enable Version
           - Upgrade Vault Protocol
           - Upgrade Vault Protocol and Set Traders
+          - Upgrade Account Protocol
           - Upgrade Predict Protocol
           - Upgrade Propbook Protocol
           - Upgrade Predict Math Protocol
@@ -166,6 +167,20 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgradeSetTraders.ts
+
+      # Upgrade only. account links only the Sui framework and has no version gate. Predict,
+      # predict_orders and sessions link the account package its Published.toml records, so
+      # commit that record before building them.
+      - name: Upgrade Account Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Account Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/accountPackageUpgrade.ts
 
       - name: Upgrade Predict Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Predict Protocol' }}
