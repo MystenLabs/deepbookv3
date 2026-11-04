@@ -34,6 +34,7 @@ use deepbook_predict::{
     order_events,
     protocol_config,
     test_constants,
+    test_helpers,
     usdc_deny_list
 };
 use deepbook_predict_math::lazer_price::{Self, LazerPrice};
@@ -145,6 +146,23 @@ const BUILDER_CODE_INDEX: u64 = 0;
 const BOUNDARY_CASH: u64 = 1_960_026;
 /// A settlement spot below the 100 strike, so the `(100, +inf]` position loses.
 const LOSING_SETTLEMENT: u64 = 99_000_000_000;
+/// The higher-precision Propbook SVI scale and its factor over 1e9.
+const HIGH_PRECISION_SVI_DECIMALS: u8 = 18;
+const SVI_SCALE: u128 = 1_000_000_000;
+/// `a = 1.4e-9` at 1e18. A 1e9 snapshot holds it as one raw unit.
+const PRECISE_SVI_A: u128 = 1_400_000_000;
+/// The `(100, +inf]` digital at LIMIT_SPOT a second into the fixture's year-long market, from
+/// Python stdlib math: on the precise surface (`w = 1.4005e-9`) and on the snapshot's (`w =
+/// 1.0005e-9`). The 32.9M-unit gap is the 1e9 rounding of `a` alone. Each budget is
+/// `generate_pricing_reference.up_error_budget` plus its 2-unit cushion at `d_k = 1e-7 * (ln(100) +
+/// ln(100.002)) + 2e-9`, the generators' `ln` model at real strikes; the two bands do not overlap.
+const PRECISE_FILL_PROBABILITY: u64 = 703_468_632;
+const PRECISE_FILL_BUDGET: u64 = 9_759_609;
+const SNAPSHOT_FILL_PROBABILITY: u64 = 736_396_519;
+/// The precise surface anchored at the fixture's 9-decimal SVI source time: what a receipt
+/// admitted at 9 decimals fills at once a later admission caches that publication at 18.
+const SAME_PUBLICATION_FILL_PROBABILITY: u64 = 703_468_635;
+const SNAPSHOT_FILL_BUDGET: u64 = 11_451_967;
 /// A half close's builder fee at BUILDER_FEE_PER_CONTRACT: 2e6 * 0.0005.
 const HALF_BUILDER_FEE: u64 = 1_000;
 /// HALF_REDEEM - HALF_FEE - HALF_BUILDER_FEE.
@@ -2112,7 +2130,132 @@ fun the_instant_mint_is_retired() {
     abort 999
 }
 
+// === SVI at 18 decimals ===
+
+/// At 18 decimals the admission records the full-precision tuple and the fill prices from it,
+/// not from the receipt's 1e9 snapshot: `a = 1.4e-9` is snapshotted as one raw unit, a 40%
+/// variance error on this surface.
+#[test]
+fun a_fill_on_an_eighteen_decimal_store_prices_from_the_recorded_tuple() {
+    let (mut fx, mut market, mut account) = setup();
+    fx.set_svi_decimals_bundle(&mut market, HIGH_PRECISION_SVI_DECIMALS);
+    seed_precise_svi(&mut fx, &mut market);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
+    let (reason, kept, change, _, _, _, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    test_helpers::assert_within(
+        last_minted_entry_probability(),
+        PRECISE_FILL_PROBABILITY,
+        PRECISE_FILL_BUDGET,
+    );
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// A receipt admitted while the store was at 9 decimals has no recorded tuple, so its fill prices
+/// from the snapshot as before, even after the store moves to 18.
+#[test]
+fun a_receipt_admitted_at_nine_decimals_fills_from_its_snapshot() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    fx.set_svi_decimals_bundle(&mut market, HIGH_PRECISION_SVI_DECIMALS);
+    seed_precise_svi(&mut fx, &mut market);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
+    let (reason, kept, change, _, _, _, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    test_helpers::assert_within(
+        last_minted_entry_probability(),
+        SNAPSHOT_FILL_PROBABILITY,
+        SNAPSHOT_FILL_BUDGET,
+    );
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// A receipt admitted at 9 decimals picks up full precision when a later admission caches the same
+/// publication at 18: the store switches, the provider's 18-decimal series carries the receipt's own
+/// SVI source time, and a second order admits on it. The fill keeps the receipt's `rho`, `m`, and
+/// `sigma` and takes `a` and `b` at 1e18, which round to the receipt's own, so it prices that
+/// calibration at full precision rather than its 1e9 rounding.
+#[test]
+fun a_nine_decimal_receipt_fills_at_full_precision_once_its_publication_is_cached() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    fx.set_svi_decimals_bundle(&mut market, HIGH_PRECISION_SVI_DECIMALS);
+    seed_precise_svi_at(&mut fx, &mut market, test_constants::live_source_timestamp_ms());
+    let second = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
+    let (reason, kept, change, _, _, _, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+
+    assert_eq!(reason, 0);
+    test_helpers::assert_within(
+        last_minted_entry_probability(),
+        SAME_PUBLICATION_FILL_PROBABILITY,
+        PRECISE_FILL_BUDGET,
+    );
+    destroy(second);
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
 // === Helpers ===
+
+/// The default surface at 18 decimals with `a = 1.4e-9`, which rounds to the default's one raw unit
+/// at 1e9, at the fixture's clock.
+fun seed_precise_svi(fx: &mut Fixture, market: &mut MarketBundle) {
+    let ts = fx.clock().timestamp_ms();
+    seed_precise_svi_at(fx, market, ts);
+}
+
+fun seed_precise_svi_at(fx: &mut Fixture, market: &mut MarketBundle, ts: u64) {
+    fx.seed_svi_wide_bundle(
+        market,
+        ts,
+        PRECISE_SVI_A,
+        false,
+        (test_constants::default_svi_b() as u128) * SVI_SCALE,
+        (test_constants::default_svi_sigma() as u128) * SVI_SCALE,
+        (test_constants::default_svi_rho_magnitude() as u128) * SVI_SCALE,
+        false,
+        (test_constants::default_svi_m() as u128) * SVI_SCALE,
+        false,
+    );
+}
+
+/// The entry probability of the latest `OrderMinted`, read through its BCS layout.
+fun last_minted_entry_probability(): u64 {
+    let events = event::events_by_type<order_events::OrderMinted>();
+    let mut fields = bcs::new(bcs::to_bytes(&events[events.length() - 1]));
+    fields.peel_address();
+    fields.peel_address();
+    fields.peel_u256();
+    fields.peel_u256();
+    fields.peel_address();
+    fields.peel_u64();
+    fields.peel_u64();
+    fields.peel_u64()
+}
 
 fun live_price(): u64 { test_constants::default_live_price() }
 

@@ -2982,6 +2982,62 @@ public fun create_foreign_block_scholes_stores(
 
 public fun propbook_admin_cap(self: &Fixture): &RegistryAdminCap { &self.propbook_admin_cap }
 
+/// Admin-set the decimals a market bundle's SVI store accepts and serves, through the production
+/// Propbook registry entry.
+public fun set_svi_decimals_bundle(self: &Fixture, market: &mut MarketBundle, decimals: u8) {
+    propbook_registry::set_block_scholes_svi_decimals(
+        market.bs.svi_mut(),
+        &self.propbook_admin_cap,
+        decimals,
+    );
+}
+
+/// Land one SVI row for the bundle's expiry with signed provider-native `u128` values, scaled at
+/// whatever decimals the store is set to, through the real ingest path.
+public fun seed_svi_wide_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    source_timestamp_ms: u64,
+    svi_a_magnitude: u128,
+    svi_a_is_negative: bool,
+    svi_b: u128,
+    svi_sigma: u128,
+    svi_rho_magnitude: u128,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u128,
+    svi_m_is_negative: bool,
+) {
+    let expiry = market.market.expiry();
+    let sid = market.bs.svi().svi_sid(expiry);
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    market
+        .bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                source_timestamp_ms,
+                vector[
+                    verify::new_svi_for_testing(
+                        sid,
+                        source_timestamp_ms,
+                        svi_a_magnitude,
+                        svi_a_is_negative,
+                        svi_b,
+                        svi_sigma,
+                        svi_rho_magnitude,
+                        svi_rho_is_negative,
+                        svi_m_magnitude,
+                        svi_m_is_negative,
+                    ),
+                ],
+            ),
+            vector[expiry],
+            &self.clock,
+            &ctx,
+        );
+    end_seed_tx(restore);
+}
+
 public fun bs_values_id(self: &Fixture): ID { self.bs_values_id }
 
 /// Tear down the fixture and all owned objects. The shared Registry/ProtocolConfig/

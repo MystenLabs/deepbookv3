@@ -75,11 +75,11 @@ fun set_ewma_params_and_enabled_update_config() {
 #[test]
 fun new_config_ships_with_no_retry() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.req_attempts(), 1);
+    assert_eq!(config.req_att(), 1);
 
     // And the admin path moves it, so the getter is not reading a frozen constant.
     config.set_lp_request_limit_flush_attempts(&admin_cap, 3);
-    assert_eq!(config.req_attempts(), 3);
+    assert_eq!(config.req_att(), 3);
 
     destroy(admin_cap);
     return_shared(reg);

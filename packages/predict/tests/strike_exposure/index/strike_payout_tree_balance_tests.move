@@ -81,7 +81,7 @@ fun build_checked(ticks: vector<u64>, ctx: &mut TxContext): StrikePayoutTree {
 /// Settlement above every boundary: every `(tick, +inf]` range is in the money, so
 /// the liability is one `QUANTITY` per surviving boundary.
 fun settled_above_all(tree: &StrikePayoutTree): u64 {
-    tree.settled_liab(constants::pos_inf_tick!() - 1, 1)
+    tree.liab_at(constants::pos_inf_tick!() - 1, 1)
 }
 
 #[test]

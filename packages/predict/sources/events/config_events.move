@@ -190,7 +190,7 @@ public struct MarketSettled has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun template_upd(config: &StrikeExposureConfig, onchain_timestamp_ms: u64) {
+public(package) fun se_upd(config: &StrikeExposureConfig, onchain_timestamp_ms: u64) {
     event::emit(StrikeExposureTemplateConfigUpdated {
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
@@ -204,12 +204,12 @@ public(package) fun template_upd(config: &StrikeExposureConfig, onchain_timestam
     });
 }
 
-public(package) fun pricing_upd(config: &PricingConfig, onchain_timestamp_ms: u64) {
+public(package) fun pr_upd(config: &PricingConfig, onchain_timestamp_ms: u64) {
     event::emit(PricingConfigUpdated {
-        use_pyth_spot_for_forward: config.pyth_forward(),
-        pyth_spot_freshness_ms: config.pyth_age_ms(),
-        block_scholes_price_freshness_ms: config.bs_age_ms(),
-        block_scholes_svi_freshness_ms: config.svi_age_ms(),
+        use_pyth_spot_for_forward: config.pyth_fwd(),
+        pyth_spot_freshness_ms: config.pyth_age(),
+        block_scholes_price_freshness_ms: config.bs_age(),
+        block_scholes_svi_freshness_ms: config.svi_age(),
         onchain_timestamp_ms,
     });
 }
@@ -228,7 +228,7 @@ public(package) fun emit_ewma_config_updated(
     });
 }
 
-public(package) fun plp_fees_upd(
+public(package) fun fee_upd(
     plp_supply_fee_rate: u64,
     plp_withdraw_fee_rate: u64,
     onchain_timestamp_ms: u64,
@@ -240,18 +240,18 @@ public(package) fun plp_fees_upd(
     });
 }
 
-public(package) fun no_trade_upd(no_trade_window_ms: u64, onchain_timestamp_ms: u64) {
+public(package) fun nt_upd(no_trade_window_ms: u64, onchain_timestamp_ms: u64) {
     event::emit(NoTradeWindowUpdated { no_trade_window_ms, onchain_timestamp_ms });
 }
 
-public(package) fun subsidy_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_ms: u64) {
+public(package) fun sub_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_ms: u64) {
     event::emit(FeeIncentiveSubsidyRateUpdated {
         fee_incentive_subsidy_rate,
         onchain_timestamp_ms,
     });
 }
 
-public(package) fun bldr_cap_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
+public(package) fun bc_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
     event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
 }
 
@@ -289,11 +289,11 @@ public(package) fun flow_upd(order_flow: TypeName, enabled: bool, onchain_timest
     event::emit(OrderFlowUpdated { order_flow, enabled, onchain_timestamp_ms });
 }
 
-public(package) fun operator_upd(operator: address, added: bool, onchain_timestamp_ms: u64) {
+public(package) fun op_upd(operator: address, added: bool, onchain_timestamp_ms: u64) {
     event::emit(FlushOperatorUpdated { operator, added, onchain_timestamp_ms });
 }
 
-public(package) fun mkt_created(
+public(package) fun mkt_new(
     expiry_market_id: ID,
     pool_vault_id: ID,
     propbook_underlying_id: u32,
@@ -324,7 +324,7 @@ public(package) fun mkt_created(
     });
 }
 
-public(package) fun cadence_upd(
+public(package) fun cad_upd(
     registry_id: ID,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -346,7 +346,7 @@ public(package) fun cadence_upd(
     });
 }
 
-public(package) fun cadence_add(registry_id: ID, cadence_id: u8, period_ms: u64) {
+public(package) fun cad_add(registry_id: ID, cadence_id: u8, period_ms: u64) {
     event::emit(CadenceAdded { registry_id, cadence_id, period_ms });
 }
 
@@ -357,7 +357,7 @@ public(package) fun mkt_paused(expiry_market_id: ID, paused: bool) {
     });
 }
 
-public(package) fun ref_tick_set(
+public(package) fun ref_set(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,

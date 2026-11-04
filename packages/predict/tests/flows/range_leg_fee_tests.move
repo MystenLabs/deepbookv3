@@ -161,7 +161,7 @@ fun assert_admissible_probability(config: &StrikeExposureConfig, probability: u6
 #[test]
 fun finite_boundaries_each_pay_the_floor() {
     let mut config = strike_exposure_config::new();
-    config.set_base_fee(1);
+    config.set_base(1);
     let price = bounded_range();
     assert_eq!(
         config.trading_fee(
@@ -178,7 +178,7 @@ fun finite_boundaries_each_pay_the_floor() {
 #[test]
 fun above_and_below_pay_one_floor_and_whole_line_pays_none() {
     let mut config = strike_exposure_config::new();
-    config.set_base_fee(1);
+    config.set_base(1);
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -255,7 +255,7 @@ fun finite_zero_and_one_probabilities_still_pay_two_floors() {
 #[test]
 fun leg_amounts_round_separately_before_summing() {
     let mut config = strike_exposure_config::new();
-    config.set_base_fee(1);
+    config.set_base(1);
     let price = bounded_range();
     // Each 0.022 * 75 = 1.65 rounds to 1, giving 2 rather than floor(3.3).
     assert_eq!(
@@ -268,7 +268,7 @@ fun leg_amounts_round_separately_before_summing() {
         2,
     );
     config.set_fee_win(RAMP_WINDOW_MS);
-    config.set_fee_mult(DOUBLE_MULTIPLIER);
+    config.set_mult(DOUBLE_MULTIPLIER);
     // Halfway through a 1x -> 2x ramp: each 0.033 * 75 floors to 2.
     assert_eq!(
         config.trading_fee(
@@ -337,7 +337,7 @@ fun upper_tail_invalidates_an_otherwise_admissible_range() {
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
 fun admissible_legs_do_not_rescue_a_too_narrow_range() {
     let mut config = strike_exposure_config::new();
-    config.set_min_prob(NARROW_MIN_PROBABILITY);
+    config.set_minp(NARROW_MIN_PROBABILITY);
     let price = bounded_range();
     assert_admissible_probability(&config, price.lower_up().destroy_some());
     assert_admissible_probability(&config, 1_000_000_000 - price.higher_up().destroy_some());
@@ -348,7 +348,7 @@ fun admissible_legs_do_not_rescue_a_too_narrow_range() {
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
 fun upper_leg_eligibility_uses_below_probability_under_asymmetric_bounds() {
     let mut config = strike_exposure_config::new();
-    config.set_max_prob(ASYMMETRIC_MAX_PROBABILITY);
+    config.set_maxp(ASYMMETRIC_MAX_PROBABILITY);
     let price = bounded_range();
     assert_admissible_probability(&config, price.lower_up().destroy_some());
     assert_admissible_probability(&config, price.higher_up().destroy_some());
