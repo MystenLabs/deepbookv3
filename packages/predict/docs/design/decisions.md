@@ -161,8 +161,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **No pool funding-cap earmark.** Each market's own cash covers its reserve, so
   solvency is self-contained per expiry at the floor and the pool owes no
   standing backing to live markets. The snapshotted per-expiry allocation cap remains
-  the per-flow funding ceiling, and the pool sync tops every market toward its
-  reserve target before an LP withdrawal pays out. *Superseded:* the idle earmark
+  the per-flow funding ceiling, and the permissionless `rebalance_expiry_cash`
+  (not the flush) tops live markets toward their reserve target. *Superseded:* the idle earmark
   (`idle ≥ Σ active (max_funding − net_funding)`), which pinned the full cap of
   pool capital per active market regardless of book shape and whose backing
   duty became void under the settlement-floor guarantee.
