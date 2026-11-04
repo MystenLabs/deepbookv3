@@ -446,7 +446,6 @@ fun chk_cadence(config: &CadenceConfig) {
     assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
     assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
     config_constants::chk_cad_win(window_size);
-    assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 
