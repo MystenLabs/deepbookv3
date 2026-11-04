@@ -3084,6 +3084,9 @@ fun price_mint(
         return (option::none(), empty_mint_q(), 0, constants::fill_reason_admission!())
     };
     let range = range.destroy_some();
+    // The band depends only on the range's price, so read it once here rather
+    // than from storage on every budget probe.
+    let mult = protocol_config::band_mult(&market.id, range.range_px().probability());
     let exact_quantity = kind == constants::mint_kind_exact_quantity!();
     let quantity = if (exact_quantity) {
         quantity
@@ -3093,6 +3096,7 @@ fun price_mint(
         market.cost_qty_at(
             &range,
             bfee,
+            mult,
             cost_cap,
             subsidy_rate,
             subsidy_cap,
@@ -3112,6 +3116,7 @@ fun price_mint(
             terms.premium(),
             terms.inventory_impact_charge(),
             bfee,
+            mult,
             subsidy_rate,
             subsidy_cap,
             tick_ms,
@@ -3145,6 +3150,7 @@ fun cost_qty_at(
     market: &ExpiryMarket,
     range: &MintRange,
     bfee: u64,
+    mult: u64,
     max_cost: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
@@ -3158,6 +3164,7 @@ fun cost_qty_at(
         let cost = market.cost_at_tick(
             range,
             bfee,
+            mult,
             mid * lot,
             subsidy_rate,
             subsidy_cap,
@@ -3175,6 +3182,7 @@ fun cost_qty_at(
             || market.cost_at_tick(
                 range,
                 bfee,
+                mult,
                 budget_quantity,
                 subsidy_rate,
                 subsidy_cap,
@@ -3190,6 +3198,7 @@ fun cost_qty_at(
         let cost = market.cost_at_tick(
             range,
             bfee,
+            mult,
             quantity,
             subsidy_rate,
             subsidy_cap,
@@ -3210,6 +3219,7 @@ fun cost_at_tick(
     market: &ExpiryMarket,
     range: &MintRange,
     bfee: u64,
+    mult: u64,
     quantity: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
@@ -3222,6 +3232,7 @@ fun cost_at_tick(
             range.range_prem(quantity),
             market.strike_exposure.mint_impact(range, quantity),
             bfee,
+            mult,
             subsidy_rate,
             subsidy_cap,
             tick_ms,
@@ -3231,12 +3242,12 @@ fun cost_at_tick(
 }
 
 /// `mint_quote_at` at a committed tick: no congestion penalty, the trading fee
-/// at `tick_ms` times the market's fee band for the contract price, and the
-/// subsidy capped by both `subsidy_rate` and the reserved `subsidy_cap`. The
-/// band depends on the price, not the quantity, so the fee stays nondecreasing
-/// in quantity for the budget search. Like `mint_quote_at` it applies neither admission nor the
-/// maximum-payout bound. `none` at or past expiry, where the fee ramp is
-/// undefined.
+/// at `tick_ms` times `mult`, the market's fee-band multiplier for `price`, and
+/// the subsidy capped by both `subsidy_rate` and the reserved `subsidy_cap`.
+/// `mult` depends on the price, not the quantity, so the fee stays
+/// nondecreasing in quantity for the budget search. Like `mint_quote_at` it
+/// applies neither admission nor the maximum-payout bound. `none` at or past
+/// expiry, where the fee ramp is undefined.
 fun mint_q_at(
     market: &ExpiryMarket,
     price: &RangePrice,
@@ -3244,15 +3255,15 @@ fun mint_q_at(
     premium: u64,
     inventory_impact_charge: u64,
     bfee: u64,
+    mult: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
     tick_ms: u64,
 ): Option<MintQuote> {
     if (tick_ms >= market.expiry) return option::none();
-    let trading_fee = protocol_config::band_fee(
-        &market.id,
-        price.probability(),
+    let trading_fee = math::mul_down(
         market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms),
+        mult,
     );
     let fee_incentive_subsidy = math::mul_down(trading_fee, subsidy_rate).min(subsidy_cap);
     let builder_fee = bldr_fee_amt(bfee, quantity);
@@ -3314,10 +3325,9 @@ fun rdm_q_at(
     tick_ms: u64,
 ): RedeemQuote {
     let redeem_amount = terms.redeem_amt();
-    let trading_fee = protocol_config::band_fee(
-        &market.id,
-        terms.close_prob(),
+    let trading_fee = math::mul_down(
         market.strike_exposure.fee_at(market.expiry, terms.close_price(), close_quantity, tick_ms),
+        protocol_config::band_mult(&market.id, terms.close_prob()),
     ).min(redeem_amount);
     let builder_fee = bldr_fee_amt(bfee, close_quantity).min(redeem_amount - trading_fee);
     let inventory_impact_rebate = terms.rebate();

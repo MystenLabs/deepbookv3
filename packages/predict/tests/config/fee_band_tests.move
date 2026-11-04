@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// The fee-band template on `ProtocolConfig`: the admin setter's validation
-/// envelope, its `FeeBandsUpdated` post-state event, and the lookup a market
-/// runs against the copy it takes at creation (`bands_to` then `band_fee`).
+/// envelope, its `FeeBandsUpdated` post-state event, and the multiplier a market
+/// looks up in the copy it takes at creation (`bands_to` then `band_mult`).
 /// Bands are `[low, high)` over the contract price, in FLOAT_SCALING; a price
-/// outside every band pays the fee once.
+/// outside every band gets 1x. `order_flow_tests` covers the fee a fill charges
+/// with it.
 #[test_only]
 module deepbook_predict::fee_band_tests;
 
@@ -26,19 +27,9 @@ const FIFTY_CENTS: u64 = 500_000_000;
 const SIXTY_CENTS: u64 = 600_000_000;
 const ONE_DOLLAR: u64 = 1_000_000_000;
 const ONE_X: u64 = 1_000_000_000;
-const ONE_AND_A_HALF_X: u64 = 1_500_000_000;
 const TWO_X: u64 = 2_000_000_000;
 const THREE_X: u64 = 3_000_000_000;
 const TEN_X: u64 = 10_000_000_000;
-
-/// A trading fee in USDC base units, and its multiples.
-const FEE: u64 = 20_000;
-const TWO_X_FEE: u64 = 40_000;
-const THREE_X_FEE: u64 = 60_000;
-const TEN_X_FEE: u64 = 200_000;
-/// 1.5 * 7 = 10.5, rounded down.
-const ODD_FEE: u64 = 7;
-const ODD_FEE_AT_ONE_AND_A_HALF_X: u64 = 10;
 
 /// The eight touching bands `[k/8, (k+1)/8)` of `$1`.
 const EIGHTH: u64 = 125_000_000;
@@ -71,14 +62,15 @@ fun finish(scenario: Scenario, admin_cap: AdminCap, config: ProtocolConfig, cloc
     scenario.end();
 }
 
-/// The fee a market created now would charge at `price`: copy the template onto
-/// a fresh UID, the way market creation does, and look the price up there.
-fun banded(config: &ProtocolConfig, scenario: &mut Scenario, price: u64, fee: u64): u64 {
+/// The multiplier a market created now would apply at `price`: copy the
+/// template onto a fresh UID, the way market creation does, and look the price
+/// up there.
+fun mult_at(config: &ProtocolConfig, scenario: &mut Scenario, price: u64): u64 {
     let mut id = object::new(scenario.ctx());
     config.bands_to(&mut id);
-    let charged = protocol_config::band_fee(&id, price, fee);
+    let mult = protocol_config::band_mult(&id, price);
     id.delete();
-    charged
+    mult
 }
 
 fun set(config: &mut ProtocolConfig, admin_cap: &AdminCap, bands: vector<u64>, clock: &Clock) {
@@ -88,12 +80,12 @@ fun set(config: &mut ProtocolConfig, admin_cap: &AdminCap, bands: vector<u64>, c
 // === Lookup ===
 
 #[test]
-fun no_template_charges_every_price_once() {
+fun no_template_gives_every_price_one_x() {
     let (mut scenario, admin_cap, config_id, clock) = new_shared_config();
     let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    assert_eq!(banded(&config, &mut scenario, ZERO_PRICE, FEE), FEE);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), FEE);
-    assert_eq!(banded(&config, &mut scenario, ONE_DOLLAR, FEE), FEE);
+    assert_eq!(mult_at(&config, &mut scenario, ZERO_PRICE), ONE_X);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), ONE_X);
+    assert_eq!(mult_at(&config, &mut scenario, ONE_DOLLAR), ONE_X);
     finish(scenario, admin_cap, config, clock);
 }
 
@@ -102,10 +94,10 @@ fun a_band_includes_its_low_and_excludes_its_high() {
     let (mut scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     set(&mut config, &admin_cap, vector[FIFTY_CENTS, SIXTY_CENTS, TWO_X], &clock);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS - 1, FEE), FEE);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), TWO_X_FEE);
-    assert_eq!(banded(&config, &mut scenario, SIXTY_CENTS - 1, FEE), TWO_X_FEE);
-    assert_eq!(banded(&config, &mut scenario, SIXTY_CENTS, FEE), FEE);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS - 1), ONE_X);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), TWO_X);
+    assert_eq!(mult_at(&config, &mut scenario, SIXTY_CENTS - 1), TWO_X);
+    assert_eq!(mult_at(&config, &mut scenario, SIXTY_CENTS), ONE_X);
     finish(scenario, admin_cap, config, clock);
 }
 
@@ -120,18 +112,8 @@ fun touching_bands_give_the_shared_edge_to_the_upper_band() {
         vector[FORTY_CENTS, FIFTY_CENTS, TWO_X, FIFTY_CENTS, SIXTY_CENTS, THREE_X],
         &clock,
     );
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS - 1, FEE), TWO_X_FEE);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), THREE_X_FEE);
-    finish(scenario, admin_cap, config, clock);
-}
-
-#[test]
-fun the_multiplied_fee_rounds_down() {
-    let (mut scenario, admin_cap, config_id, clock) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    set(&mut config, &admin_cap, vector[ZERO_PRICE, ONE_DOLLAR, ONE_AND_A_HALF_X], &clock);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, ODD_FEE), ODD_FEE_AT_ONE_AND_A_HALF_X);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, 0), 0);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS - 1), TWO_X);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), THREE_X);
     finish(scenario, admin_cap, config, clock);
 }
 
@@ -141,12 +123,12 @@ fun an_empty_table_clears_the_template() {
     let (mut scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     set(&mut config, &admin_cap, vector[ZERO_PRICE, ONE_DOLLAR, TWO_X], &clock);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), TWO_X_FEE);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), TWO_X);
     set(&mut config, &admin_cap, vector[], &clock);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), FEE);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), ONE_X);
     // Clearing an absent template is a no-op.
     set(&mut config, &admin_cap, vector[], &clock);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), FEE);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), ONE_X);
     finish(scenario, admin_cap, config, clock);
 }
 
@@ -160,8 +142,8 @@ fun a_copy_keeps_the_template_it_was_taken_from() {
     let mut earlier = object::new(scenario.ctx());
     config.bands_to(&mut earlier);
     set(&mut config, &admin_cap, vector[ZERO_PRICE, ONE_DOLLAR, THREE_X], &clock);
-    assert_eq!(protocol_config::band_fee(&earlier, FIFTY_CENTS, FEE), TWO_X_FEE);
-    assert_eq!(banded(&config, &mut scenario, FIFTY_CENTS, FEE), THREE_X_FEE);
+    assert_eq!(protocol_config::band_mult(&earlier, FIFTY_CENTS), TWO_X);
+    assert_eq!(mult_at(&config, &mut scenario, FIFTY_CENTS), THREE_X);
     earlier.delete();
     finish(scenario, admin_cap, config, clock);
 }
@@ -181,12 +163,12 @@ fun the_setter_accepts_its_boundaries() {
     });
     assert_eq!(bands[bands.length() - 2], ONE_DOLLAR);
     set(&mut config, &admin_cap, bands, &clock);
-    assert_eq!(banded(&config, &mut scenario, ZERO_PRICE, FEE), FEE);
-    assert_eq!(banded(&config, &mut scenario, ONE_DOLLAR - EIGHTH - 1, FEE), FEE);
-    assert_eq!(banded(&config, &mut scenario, ONE_DOLLAR - EIGHTH, FEE), TEN_X_FEE);
-    assert_eq!(banded(&config, &mut scenario, ONE_DOLLAR - 1, FEE), TEN_X_FEE);
+    assert_eq!(mult_at(&config, &mut scenario, ZERO_PRICE), ONE_X);
+    assert_eq!(mult_at(&config, &mut scenario, ONE_DOLLAR - EIGHTH - 1), ONE_X);
+    assert_eq!(mult_at(&config, &mut scenario, ONE_DOLLAR - EIGHTH), TEN_X);
+    assert_eq!(mult_at(&config, &mut scenario, ONE_DOLLAR - 1), TEN_X);
     // `high` is exclusive, so no band holds the whole `$1`.
-    assert_eq!(banded(&config, &mut scenario, ONE_DOLLAR, FEE), FEE);
+    assert_eq!(mult_at(&config, &mut scenario, ONE_DOLLAR), ONE_X);
     finish(scenario, admin_cap, config, clock);
 }
 

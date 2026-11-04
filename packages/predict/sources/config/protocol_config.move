@@ -911,19 +911,18 @@ public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
-/// `fee` times the multiplier of the band on `id` holding `price`, rounded down;
-/// `fee` when no band holds it.
-public(package) fun band_fee(id: &UID, price: u64, fee: u64): u64 {
-    if (!id.exists_(FeeBandsKey())) return fee;
-    let bands: &vector<u64> = id.borrow(FeeBandsKey());
-    let mut i = 0;
-    while (i < bands.length()) {
-        if (price >= bands[i] && price < bands[i + 1]) {
-            return fixed_math::math::mul_down(fee, bands[i + 2])
+/// The multiplier of the band on `id` holding `price`, in FLOAT_SCALING; 1.0
+/// when no band holds it.
+public(package) fun band_mult(id: &UID, price: u64): u64 {
+    if (id.exists_(FeeBandsKey())) {
+        let bands: &vector<u64> = id.borrow(FeeBandsKey());
+        let mut i = 0;
+        while (i < bands.length()) {
+            if (price >= bands[i] && price < bands[i + 1]) return bands[i + 2];
+            i = i + 3;
         };
-        i = i + 3;
     };
-    fee
+    fixed_math::math::float_scaling!()
 }
 
 /// Copy the fee-band template onto a new market's `id`. A market keeps its

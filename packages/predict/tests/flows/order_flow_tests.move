@@ -187,6 +187,14 @@ const BANDED_HALF_PROCEEDS: u64 = 979_987;
 /// digital's complement, priced at 1 - p, about 0.500006, above 50c while its
 /// one finite leg stays at p, below it.
 const NEG_INF_TICK: u64 = 0;
+/// One unit under 1.5x: 20_000 * 1.499_999_999 = 29_999.99998, rounded down.
+const JUST_UNDER_ONE_AND_A_HALF_X: u64 = 1_499_999_999;
+const ROUNDED_DOWN_FEE: u64 = 29_999;
+/// An exact-cost budget of BANDED_ALL_IN_COST under a 2x band buys exactly 4m:
+/// one more 10_000 lot costs floor(p * 4.01m) + 2 * floor(0.005 * 4.01m) =
+/// 2_004_974 + 40_100 = 2_045_074. Searched at 1x the same budget would buy
+/// 4.03m (2_014_974 + 20_150 = 2_035_124), whose 2x fee is over budget.
+const BANDED_BUDGET_QUANTITY: u64 = 4_000_000;
 
 // === Mints ===
 
@@ -2320,6 +2328,50 @@ fun a_fee_band_keys_on_the_contract_price() {
     );
     assert!(down.entry_probability() >= FIFTY_CENTS);
     assert_eq!(down.trading_fee(), BANDED_TRADING_FEE);
+    finish(fx, market, account);
+}
+
+/// The multiplied fee rounds down.
+#[test]
+fun a_banded_fee_rounds_down() {
+    let (mut fx, market, account) = banded_setup(vector[
+        FORTY_CENTS,
+        SIXTY_CENTS,
+        JUST_UNDER_ONE_AND_A_HALF_X,
+    ]);
+    let pricer = fx.load_pricer_bundle(&market);
+    let (clock, ctx) = fx.clock_and_ctx();
+    let quote = helpers::market(&market).quote_mint(
+        helpers::config(&market),
+        &pricer,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        0,
+        QUANTITY,
+        true,
+        clock,
+        ctx,
+    );
+    assert_eq!(quote.trading_fee(), ROUNDED_DOWN_FEE);
+    finish(fx, market, account);
+}
+
+/// An exact-cost budget search sizes against the banded fee, so the fill it
+/// picks fits the budget at the multiplied fee.
+#[test]
+fun an_exact_cost_mint_sizes_against_the_banded_fee() {
+    let (mut fx, market, account) = banded_setup(vector[FORTY_CENTS, SIXTY_CENTS, TWO_X]);
+    let quote = fx.production_quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BANDED_ALL_IN_COST,
+        QUANTITY,
+    );
+    assert_eq!(quote.quantity(), BANDED_BUDGET_QUANTITY);
+    assert_eq!(quote.trading_fee(), BANDED_TRADING_FEE);
+    assert_eq!(quote.all_in_cost(), BANDED_ALL_IN_COST);
     finish(fx, market, account);
 }
 
