@@ -4,7 +4,7 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the fee-incentive
-/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
+/// subsidy, live-target, and lifetime-cap rates, the fee-band template, the trading pause gate, the
 /// protocol-wide emergency freeze, the version watermark (reaching
 /// `constants::cutover_version!()` is also the delayed-execution cutover), the allowlists of
 /// keepers that may redeem settled orders without owner auth, of operators that
@@ -172,6 +172,12 @@ public struct OrderFlowKey<phantom W>() has copy, drop, store;
 /// reads as `config_constants::default_builder_fee_cap`.
 public struct BuilderFeeCapKey() has copy, drop, store;
 
+/// Dynamic-field key for the admin-set fee-band template on `ProtocolConfig`, and
+/// for the copy each expiry market takes at creation on its own UID: a flat
+/// `vector<u64>` of `[low, high, multiplier]` triples (see
+/// `config_constants::chk_bands`). An absent field charges every price 1x.
+public struct FeeBandsKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -288,6 +294,25 @@ public fun set_template_base_fee(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
+}
+
+/// Replace the fee-band template snapshotted by newly created expiry markets:
+/// flat `[low, high, multiplier]` triples, in FLOAT_SCALING. A trade whose
+/// contract price is in `[low, high)` pays its trading fee times the multiplier.
+/// Empty clears the template. Markets already created keep their copy.
+public fun set_template_fee_bands(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    bands: vector<u64>,
+    clock: &Clock,
+) {
+    config.chk_version();
+    config_constants::chk_bands(&bands);
+    if (config.id.exists_(FeeBandsKey())) {
+        let _: vector<u64> = config.id.remove(FeeBandsKey());
+    };
+    config_events::bands_upd(bands, clock.timestamp_ms());
+    if (!bands.is_empty()) config.id.add(FeeBandsKey(), bands);
 }
 
 /// Set the minimum fee floor snapshotted by newly created expiry markets.
@@ -884,6 +909,30 @@ public(package) fun se_template(config: &ProtocolConfig): &StrikeExposureConfig 
 
 public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
+}
+
+/// `fee` times the multiplier of the band on `id` holding `price`, rounded down;
+/// `fee` when no band holds it.
+public(package) fun band_fee(id: &UID, price: u64, fee: u64): u64 {
+    if (!id.exists_(FeeBandsKey())) return fee;
+    let bands: &vector<u64> = id.borrow(FeeBandsKey());
+    let mut i = 0;
+    while (i < bands.length()) {
+        if (price >= bands[i] && price < bands[i + 1]) {
+            return fixed_math::math::mul_down(fee, bands[i + 2])
+        };
+        i = i + 3;
+    };
+    fee
+}
+
+/// Copy the fee-band template onto a new market's `id`. A market keeps its
+/// copy for life, so a template change applies only to markets created after it.
+public(package) fun bands_to(config: &ProtocolConfig, id: &mut UID) {
+    if (config.id.exists_(FeeBandsKey())) {
+        let bands: vector<u64> = *config.id.borrow(FeeBandsKey());
+        id.add(FeeBandsKey(), bands);
+    }
 }
 
 #[test_only]

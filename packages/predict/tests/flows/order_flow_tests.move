@@ -168,6 +168,26 @@ const HALF_BUILDER_FEE: u64 = 1_000;
 /// HALF_REDEEM - HALF_FEE - HALF_BUILDER_FEE.
 const HALF_PROCEEDS_WITH_BUILDER: u64 = 988_987;
 
+/// Fee bands over contract prices, in FLOAT_SCALING: 40c, 50c, 60c and $1, and
+/// the 2x and 10x multipliers.
+const FORTY_CENTS: u64 = 400_000_000;
+const FIFTY_CENTS: u64 = 500_000_000;
+const SIXTY_CENTS: u64 = 600_000_000;
+const ONE_DOLLAR: u64 = 1_000_000_000;
+const TWO_X: u64 = 2_000_000_000;
+const TEN_X: u64 = 10_000_000_000;
+/// The digital at about 0.49999 inside a 2x band: 2 * 20_000 for the mint,
+/// PREMIUM + 40_000 all in, and 2 * 10_000 for the half close, so the half
+/// close's proceeds are 999_987 - 20_000.
+const BANDED_TRADING_FEE: u64 = 40_000;
+const BANDED_ALL_IN_COST: u64 = 2_039_974;
+const BANDED_HALF_FEE: u64 = 20_000;
+const BANDED_HALF_PROCEEDS: u64 = 979_987;
+/// Tick zero is the negative-infinity sentinel, so `(-inf, strike]` is the
+/// digital's complement, priced at 1 - p, about 0.500006, above 50c while its
+/// one finite leg stays at p, below it.
+const NEG_INF_TICK: u64 = 0;
+
 // === Mints ===
 
 #[test]
@@ -2219,6 +2239,117 @@ fun a_nine_decimal_receipt_fills_at_full_precision_once_its_publication_is_cache
     finish(fx, market, account);
 }
 
+// === Fee bands ===
+
+/// A market created under a 2x band holding its contract price charges twice
+/// the trading fee on the queued mint fill and on the queued sell fill, and
+/// admission bounds the subsidy by the banded fee.
+#[test]
+fun a_banded_market_doubles_the_fee_on_mint_and_sell_fills() {
+    let (mut fx, mut market, mut account) = banded_setup(vector[FORTY_CENTS, SIXTY_CENTS, TWO_X]);
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let (_, _, _, _, _, _, subsidy_bound, _) = expiry_market::receipt_info(&receipt);
+    assert_eq!(subsidy_bound, BANDED_TRADING_FEE);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let cash_before = helpers::market(&market).cash_balance();
+    let (reason, kept, change, quantity, amount, fee, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+    assert_eq!(reason, 0);
+    assert_eq!(quantity, QUANTITY);
+    assert_eq!(fee, BANDED_TRADING_FEE);
+    assert_eq!(amount, BANDED_ALL_IN_COST);
+    assert_eq!(change.value(), BUDGET - BANDED_ALL_IN_COST);
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        cash_before + PREMIUM + BANDED_TRADING_FEE + ORDER_FEE,
+    );
+    destroy(change);
+
+    let (proceeds, fee, kept) = sell(
+        &mut fx,
+        &mut market,
+        &mut account,
+        kept.destroy_some(),
+        HALF,
+        TAU,
+        SELL_TAU,
+    );
+    assert_eq!(fee, BANDED_HALF_FEE);
+    assert_eq!(proceeds, BANDED_HALF_PROCEEDS);
+    assert_canonical_open(kept.borrow(), QUANTITY - HALF);
+    helpers::assert_market_backed_bundle(&market);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
+/// The band keys on the contract's price, not its legs': under a 2x band from
+/// 50c, the digital at about 0.49999 pays once, and its complement at about
+/// 0.500006 pays twice even though its only finite leg is priced at 0.49999.
+#[test]
+fun a_fee_band_keys_on_the_contract_price() {
+    let (mut fx, market, account) = banded_setup(vector[FIFTY_CENTS, SIXTY_CENTS, TWO_X]);
+    let pricer = fx.load_pricer_bundle(&market);
+    let (clock, ctx) = fx.clock_and_ctx();
+    let up = helpers::market(&market).quote_mint(
+        helpers::config(&market),
+        &pricer,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        0,
+        QUANTITY,
+        true,
+        clock,
+        ctx,
+    );
+    assert!(up.entry_probability() < FIFTY_CENTS);
+    assert_eq!(up.trading_fee(), TRADING_FEE);
+    let down = helpers::market(&market).quote_mint(
+        helpers::config(&market),
+        &pricer,
+        NEG_INF_TICK,
+        helpers::strike_tick(),
+        0,
+        QUANTITY,
+        true,
+        clock,
+        ctx,
+    );
+    assert!(down.entry_probability() >= FIFTY_CENTS);
+    assert_eq!(down.trading_fee(), BANDED_TRADING_FEE);
+    finish(fx, market, account);
+}
+
+/// A template change reaches only markets created after it: a market created
+/// with no bands keeps charging the fee once after a 10x band over every price.
+#[test]
+fun a_market_keeps_the_fee_bands_it_was_created_with() {
+    let (mut fx, mut market, mut account) = setup();
+    let (admin_cap, clock, _) = fx.admin_parts();
+    helpers::config_mut(&mut market).set_template_fee_bands(
+        admin_cap,
+        vector[0, ONE_DOLLAR, TEN_X],
+        clock,
+    );
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let (reason, kept, change, _, amount, fee, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+    assert_eq!(reason, 0);
+    assert_eq!(fee, TRADING_FEE);
+    assert_eq!(amount, ALL_IN_COST);
+    destroy(change);
+    destroy(kept);
+    finish(fx, market, account);
+}
+
 // === Helpers ===
 
 /// The default surface at 18 decimals with `a = 1.4e-9`, which rounds to the default's one raw unit
@@ -2309,6 +2440,25 @@ fun referred_setup(): (Fixture, ID, helpers::Trader, helpers::Trader) {
     helpers::return_market_bundle(market);
     usdc_deny_list::setup(fx.scenario_mut());
     (fx, expiry_id, trader, referrer)
+}
+
+/// `setup` over a market created after the fee-band template is set to
+/// `bands`.
+fun banded_setup(bands: vector<u64>): (Fixture, MarketBundle, AccountBundle) {
+    let (mut fx, expiry_id, trader) = helpers::setup_banded_live_market(
+        test_constants::default_expiry_ms(),
+        live_price(),
+        bands,
+    );
+    fx.cutover();
+    let mut market = fx.take_market_bundle(expiry_id);
+    set_witness(&mut fx, &mut market, true);
+    helpers::return_market_bundle(market);
+    usdc_deny_list::setup(fx.scenario_mut());
+    fx.scenario_mut().next_tx(trader.owner());
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+    (fx, market, account)
 }
 
 /// `live_setup` at the default expiry, in the trader's transaction.

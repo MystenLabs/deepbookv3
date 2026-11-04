@@ -48,7 +48,7 @@ use deepbook_predict::{
     order_events,
     predict_account,
     pricing::{Self, Pricer, FrozenPricer, RangePrice, VolSnapshot},
-    protocol_config::ProtocolConfig,
+    protocol_config::{Self, ProtocolConfig},
     range_codec,
     strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure}
 };
@@ -1673,8 +1673,8 @@ public(package) fun free_settled(market: &mut ExpiryMarket): Balance<USDC> {
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
-/// starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
+/// The market snapshots the underlying, accounting/admission tick sizes, per-market config, and the
+/// fee-band template, and starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
 /// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
 /// priced flow.
 public(package) fun create_and_share(
@@ -1687,9 +1687,10 @@ public(package) fun create_and_share(
     inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): ID {
-    let id = object::new(ctx);
+    let mut id = object::new(ctx);
     let expiry_market_id = id.to_inner();
     let strike_exposure_config = config.se_snapshot();
+    config.bands_to(&mut id);
     let market = ExpiryMarket {
         id,
         propbook_underlying_id,
@@ -3230,8 +3231,10 @@ fun cost_at_tick(
 }
 
 /// `mint_quote_at` at a committed tick: no congestion penalty, the trading fee
-/// at `tick_ms`, and the subsidy capped by both `subsidy_rate` and the reserved
-/// `subsidy_cap`. Like `mint_quote_at` it applies neither admission nor the
+/// at `tick_ms` times the market's fee band for the contract price, and the
+/// subsidy capped by both `subsidy_rate` and the reserved `subsidy_cap`. The
+/// band depends on the price, not the quantity, so the fee stays nondecreasing
+/// in quantity for the budget search. Like `mint_quote_at` it applies neither admission nor the
 /// maximum-payout bound. `none` at or past expiry, where the fee ramp is
 /// undefined.
 fun mint_q_at(
@@ -3246,7 +3249,11 @@ fun mint_q_at(
     tick_ms: u64,
 ): Option<MintQuote> {
     if (tick_ms >= market.expiry) return option::none();
-    let trading_fee = market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms);
+    let trading_fee = protocol_config::band_fee(
+        &market.id,
+        price.probability(),
+        market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms),
+    );
     let fee_incentive_subsidy = math::mul_down(trading_fee, subsidy_rate).min(subsidy_cap);
     let builder_fee = bldr_fee_amt(bfee, quantity);
     option::some(MintQuote {
@@ -3295,8 +3302,9 @@ fun price_close(
     (terms, quote, 0)
 }
 
-/// Price a live close's fees at `tick_ms`: the trading fee capped at the redeem
-/// value and the builder fee at what remains, as `redeem_live` charged, with no
+/// Price a live close's fees at `tick_ms`: the trading fee times the market's
+/// fee band for the close price, capped at the redeem value, and the builder fee
+/// at what remains, as `redeem_live` charged, with no
 /// congestion penalty. Shared by queued sells and `quote_close`.
 fun rdm_q_at(
     market: &ExpiryMarket,
@@ -3306,10 +3314,11 @@ fun rdm_q_at(
     tick_ms: u64,
 ): RedeemQuote {
     let redeem_amount = terms.redeem_amt();
-    let trading_fee = market
-        .strike_exposure
-        .fee_at(market.expiry, terms.close_price(), close_quantity, tick_ms)
-        .min(redeem_amount);
+    let trading_fee = protocol_config::band_fee(
+        &market.id,
+        terms.close_prob(),
+        market.strike_exposure.fee_at(market.expiry, terms.close_price(), close_quantity, tick_ms),
+    ).min(redeem_amount);
     let builder_fee = bldr_fee_amt(bfee, close_quantity).min(redeem_amount - trading_fee);
     let inventory_impact_rebate = terms.rebate();
     RedeemQuote {

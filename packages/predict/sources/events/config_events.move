@@ -21,6 +21,13 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the fee-band template for future markets changes: flat
+/// `[low, high, multiplier]` triples, empty when cleared.
+public struct FeeBandsUpdated has copy, drop, store {
+    bands: vector<u64>,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when live pricing policy changes.
 public struct PricingConfigUpdated has copy, drop, store {
     use_pyth_spot_for_forward: bool,
@@ -253,6 +260,10 @@ public(package) fun sub_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_m
 
 public(package) fun bc_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
     event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
+}
+
+public(package) fun bands_upd(bands: vector<u64>, onchain_timestamp_ms: u64) {
+    event::emit(FeeBandsUpdated { bands, onchain_timestamp_ms });
 }
 
 public(package) fun rates_upd(
