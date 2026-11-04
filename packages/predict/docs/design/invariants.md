@@ -47,8 +47,9 @@ and contributors. For *how* each mechanism works, follow the links into
 - **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
   market that never receives another top-up still pays every settlement winner
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
-  on every funding move as a ceiling, and the pool sync tops every market up toward
-  its reserve target before an LP withdrawal pays out.
+  on every funding move as a ceiling. Live top-ups come from the permissionless
+  `rebalance_expiry_cash`, not the flush, so an LP withdrawal can draw idle down
+  before a market's next top-up.
 - **Custody.** USDC lives in exactly four places: account-package `Account`
   custody, each expiry's `ExpiryCash`, each queued order's escrow in its
   `deepbook_predict_orders` record, and the pool ledger's idle balance.
