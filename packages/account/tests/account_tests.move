@@ -10,7 +10,12 @@ use account::{
     accumulator_support
 };
 use std::{internal::permit, unit_test::{assert_eq, destroy}};
-use sui::{clock::Clock, coin, object, test_scenario::{Self as test, Scenario, return_shared}};
+use sui::{
+    clock::Clock,
+    coin::{Self, Coin},
+    object,
+    test_scenario::{Self as test, Scenario, return_shared}
+};
 
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
@@ -18,6 +23,8 @@ const BOB: address = @0xB0B;
 const INITIAL_DEPOSIT: u64 = 1_000;
 const WITHDRAW_AMOUNT: u64 = 350;
 const POST_WITHDRAW_BALANCE: u64 = 650;
+const RECEIVED_AMOUNT: u64 = 400;
+const POST_RECEIVE_BALANCE: u64 = 1_400;
 const DATA_INITIAL_VALUE: u64 = 17;
 const DATA_UPDATED_VALUE: u64 = 29;
 
@@ -290,6 +297,166 @@ fun deauthorizing_unknown_app_aborts() {
     registry.deauthorize_app<TestApp>(&admin_cap);
 
     abort 999
+}
+
+#[test]
+fun anyone_can_receive_coin_into_the_owners_balance() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(ALICE);
+    let mut wrapper = take_account_wrapper(&scenario, ALICE);
+    let auth = account::generate_auth(scenario.ctx());
+    wrapper
+        .load_account_mut(auth)
+        .deposit<TEST_COIN>(coin::mint_for_testing<TEST_COIN>(INITIAL_DEPOSIT, scenario.ctx()));
+    let coin_id = send_test_coin(&mut scenario, wrapper.load_account().receive_address());
+
+    scenario.next_tx(BOB);
+    wrapper.receive_coin(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+    assert_eq!(read_balance(&scenario, &wrapper), POST_RECEIVE_BALANCE);
+
+    scenario.next_tx(ALICE);
+    let auth = account::generate_auth(scenario.ctx());
+    let withdrawn = wrapper
+        .load_account_mut(auth)
+        .withdraw<TEST_COIN>(POST_RECEIVE_BALANCE, scenario.ctx());
+    assert_eq!(withdrawn.value(), POST_RECEIVE_BALANCE);
+    destroy(withdrawn);
+
+    return_shared(wrapper);
+    scenario.end();
+}
+
+#[test]
+fun coin_sent_to_derived_wrapper_address_before_the_account_exists_can_be_received() {
+    let mut scenario = setup();
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let recipient = registry.derived_wrapper_address(ALICE);
+    assert!(recipient != ALICE);
+    assert!(recipient != registry.derived_address(ALICE));
+    let coin_id = send_test_coin(&mut scenario, recipient);
+
+    scenario.next_tx(ALICE);
+    let wrapper = registry.new(scenario.ctx());
+    assert_eq!(wrapper.load_account().receive_address(), recipient);
+    wrapper.share();
+    return_shared(registry);
+
+    scenario.next_tx(BOB);
+    let mut wrapper = take_account_wrapper(&scenario, ALICE);
+    assert_eq!(read_balance(&scenario, &wrapper), 0);
+
+    scenario.next_tx(BOB);
+    wrapper.receive_coin(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+    assert_eq!(read_balance(&scenario, &wrapper), RECEIVED_AMOUNT);
+
+    return_shared(wrapper);
+    scenario.end();
+}
+
+#[test]
+fun owner_can_create_the_account_and_receive_a_waiting_coin_in_one_transaction() {
+    let mut scenario = setup();
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let coin_id = send_test_coin(&mut scenario, registry.derived_wrapper_address(ALICE));
+
+    scenario.next_tx(ALICE);
+    let mut wrapper = registry.new(scenario.ctx());
+    wrapper.receive_coin(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+    assert_eq!(read_balance(&scenario, &wrapper), RECEIVED_AMOUNT);
+    wrapper.share();
+
+    return_shared(registry);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = transfer::EUnableToReceiveObject)]
+fun another_accounts_wrapper_cannot_receive_the_coin() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(BOB);
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let mut bob_wrapper = registry.new(scenario.ctx());
+    let coin_id = send_test_coin(&mut scenario, registry.derived_wrapper_address(ALICE));
+
+    scenario.next_tx(BOB);
+    bob_wrapper.receive_coin(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+
+    abort 999
+}
+
+#[test]
+fun anyone_can_receive_a_coin_sent_to_the_account_id_before_the_account_exists() {
+    let mut scenario = setup();
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let recipient = registry.derived_address(ALICE);
+    let coin_id = send_test_coin(&mut scenario, recipient);
+
+    scenario.next_tx(ALICE);
+    let wrapper = registry.new(scenario.ctx());
+    assert_eq!(wrapper.load_account().account_id().to_address(), recipient);
+    wrapper.share();
+    return_shared(registry);
+
+    scenario.next_tx(BOB);
+    let mut wrapper = take_account_wrapper(&scenario, ALICE);
+    wrapper.receive_coin_at_account_id(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+    assert_eq!(read_balance(&scenario, &wrapper), RECEIVED_AMOUNT);
+
+    scenario.next_tx(ALICE);
+    let auth = account::generate_auth(scenario.ctx());
+    let withdrawn = wrapper
+        .load_account_mut(auth)
+        .withdraw<TEST_COIN>(RECEIVED_AMOUNT, scenario.ctx());
+    assert_eq!(withdrawn.value(), RECEIVED_AMOUNT);
+    destroy(withdrawn);
+
+    return_shared(wrapper);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = transfer::EUnableToReceiveObject)]
+fun another_account_cannot_receive_a_coin_at_the_account_id() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(BOB);
+    let mut registry = scenario.take_shared<AccountRegistry>();
+    let mut bob_wrapper = registry.new(scenario.ctx());
+    let coin_id = send_test_coin(&mut scenario, registry.derived_address(ALICE));
+
+    scenario.next_tx(BOB);
+    bob_wrapper.receive_coin_at_account_id(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = transfer::EUnableToReceiveObject)]
+fun receive_coin_cannot_take_a_coin_at_the_account_id() {
+    let mut scenario = setup_with_account(ALICE);
+    scenario.next_tx(BOB);
+    let registry = scenario.take_shared<AccountRegistry>();
+    let coin_id = send_test_coin(&mut scenario, registry.derived_address(ALICE));
+    return_shared(registry);
+
+    scenario.next_tx(BOB);
+    let mut wrapper = take_account_wrapper(&scenario, ALICE);
+    wrapper.receive_coin(test::receiving_ticket_by_id<Coin<TEST_COIN>>(coin_id));
+
+    abort 999
+}
+
+fun send_test_coin(scenario: &mut Scenario, recipient: address): ID {
+    let coin = coin::mint_for_testing<TEST_COIN>(RECEIVED_AMOUNT, scenario.ctx());
+    let coin_id = object::id(&coin);
+    transfer::public_transfer(coin, recipient);
+    coin_id
+}
+
+fun read_balance(scenario: &Scenario, wrapper: &AccountWrapper): u64 {
+    let root = accumulator_support::take_root(scenario);
+    let mut clock = scenario.take_shared<Clock>();
+    clock.increment_for_testing(1);
+    let balance = wrapper.load_account().balance<TEST_COIN>(&root, &clock);
+    return_shared(clock);
+    return_shared(root);
+    balance
 }
 
 fun setup(): Scenario {
