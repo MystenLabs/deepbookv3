@@ -7,9 +7,8 @@
 /// subsidy, live-target, and lifetime-cap rates, the fee-band template, the trading pause gate, the
 /// protocol-wide emergency freeze, the version watermark (reaching
 /// `constants::cutover_version!()` is also the delayed-execution cutover), the allowlists of
-/// keepers that may redeem settled orders without owner auth, of operators that
-/// may finish an LP flush, and of the order-flow companion witness types that may
-/// drive the order-flow primitives, and the full-pool valuation in-flight
+/// operators that may finish an LP flush and of the order-flow companion witness
+/// types that may drive the order-flow primitives, and the full-pool valuation in-flight
 /// state (flag + flush ordinal, held across the transactions a flush spans;
 /// keeper/config flows gate on it, trading flows read it only to discard stale
 /// stamps lazily). Flow modules decide which gates apply before they mutate expiry,
@@ -43,8 +42,6 @@ const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
 #[test_only]
 const ETradeWindowClosed: u64 = 7;
-const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
-const ESettledRedeemKeeperNotFound: u64 = 9;
 const EFlushOperatorAlreadyAdded: u64 = 10;
 const EFlushOperatorNotFound: u64 = 11;
 const ENotFlushOperator: u64 = 12;
@@ -52,6 +49,7 @@ const ECutoverNotReached: u64 = 13;
 const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
 const EBuilderFeeCutoverNotReached: u64 = 16;
+const ESettledRedeemRetired: u64 = 17;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -133,9 +131,10 @@ public struct ProtocolConfig has key {
 }
 
 /// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of keepers
-/// allowed to call `expiry_market::redeem_settled_permissionless`. The set was
-/// added after deploy, so it lives off the struct layout; an absent field is an
-/// empty set, which closes the keeper path.
+/// that package versions before 5 allowed to call
+/// `expiry_market::redeem_settled_permissionless`. Retired with that entrypoint:
+/// nothing reads or writes the set, and a set left by an earlier version stays
+/// in place.
 public struct SettledRedeemKeepersKey() has copy, drop, store;
 
 /// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
@@ -596,36 +595,24 @@ public fun set_frozen(config: &mut ProtocolConfig, _admin_cap: &AdminCap, frozen
     config.put_frozen(frozen);
 }
 
-/// Allow `keeper` to call `expiry_market::redeem_settled_permissionless`.
-/// Admin-only and version-gated. Aborts if `keeper` is already allowed.
+/// Retired with `redeem_settled_permissionless`, the only call the keeper
+/// allowlist gated. Always aborts `ESettledRedeemRetired`.
 public fun add_settled_redeem_keeper(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    keeper: address,
+    _keeper: address,
 ) {
-    config.chk_version();
-    if (!config.id.exists_(SettledRedeemKeepersKey())) {
-        config.id.add(SettledRedeemKeepersKey(), vec_set::empty<address>());
-    };
-    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
-    assert!(!keepers.contains(&keeper), ESettledRedeemKeeperAlreadyAdded);
-    keepers.insert(keeper);
-    config_events::keeper_upd(keeper, true);
+    abort ESettledRedeemRetired
 }
 
-/// Revoke `keeper`'s access to `expiry_market::redeem_settled_permissionless`.
-/// Admin-only. Bypasses the version gate, like the registry's cap revocations, so
-/// revocation stays available under the emergency freeze and from a package
-/// version below the runtime floor. Aborts if `keeper` is not allowed.
+/// Retired with `redeem_settled_permissionless`, the only call the keeper
+/// allowlist gated. Always aborts `ESettledRedeemRetired`.
 public fun remove_settled_redeem_keeper(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    keeper: address,
+    _keeper: address,
 ) {
-    assert!(config.is_keeper(keeper), ESettledRedeemKeeperNotFound);
-    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
-    keepers.remove(&keeper);
-    config_events::keeper_upd(keeper, false);
+    abort ESettledRedeemRetired
 }
 
 /// Allow `operator` to call `plp::finish_flush`. Admin-only and version-gated;
@@ -937,14 +924,6 @@ public(package) fun bands_to(config: &ProtocolConfig, id: &mut UID) {
 #[test_only]
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
-}
-
-/// Whether `keeper` may call `expiry_market::redeem_settled_permissionless`.
-public(package) fun is_keeper(config: &ProtocolConfig, keeper: address): bool {
-    let key = SettledRedeemKeepersKey();
-    if (!config.id.exists_(key)) return false;
-    let keepers: &VecSet<address> = config.id.borrow(key);
-    keepers.contains(&keeper)
 }
 
 /// Abort unless the transaction sender is a flush operator. An absent allowlist

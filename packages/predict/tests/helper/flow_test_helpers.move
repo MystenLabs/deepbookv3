@@ -600,15 +600,6 @@ public fun cancel_supply_request_bundle(
         );
 }
 
-/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
-public fun add_settled_redeem_keeper_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    keeper: address,
-) {
-    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
-}
-
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);
