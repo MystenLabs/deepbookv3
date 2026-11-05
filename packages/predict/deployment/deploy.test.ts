@@ -588,7 +588,7 @@ function completeStateFixture() {
         },
         linkedPackages: {
             deepbook: objectEvidence(
-                "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24",
+                "0x4b1c2a827983d8fa73f6dc366cfab23636ae52e81e499d8724b71408fe6a00a4",
             ),
             deep: objectEvidence(manifest.coinTypes.deep.split("::")[0]),
             pyth_lazer: objectEvidence(manifest.oracleDependencies.pythLazerPackage),
@@ -2279,7 +2279,7 @@ function mainnetVerificationFixture() {
     delete verification.packages.usdc;
     verification.linkedPackages = {
         deepbook: objectEvidence(
-            "0x0e735f8c93a95722efd73521aca7a7652c0bb71ed1daf41b26dfd7d1ff71f748",
+            "0xbca0cefe720330e7bb4f2283438b68de6a0e656688db4ac90d61e71fe6151fe8",
         ),
         deep: objectEvidence("0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270"),
         pyth_lazer: objectEvidence(
