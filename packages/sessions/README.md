@@ -134,13 +134,13 @@ The session can therefore submit adverse Predict orders and spot trades on allow
 ```move
 public fun allowed_pools(config: &SessionsConfig): vector<ID>
 
-public fun allow_pool(
+public fun admin_allow_pool(
     config: &mut SessionsConfig,
     admin_cap: &SessionsAdminCap,
     pool_id: ID,
 )
 
-public fun disallow_pool(
+public fun admin_disallow_pool(
     config: &mut SessionsConfig,
     admin_cap: &SessionsAdminCap,
     pool_id: ID,
@@ -149,7 +149,7 @@ public fun disallow_pool(
 
 A spot order placed through `deepbook_core_account` funds itself from the Account's entire base, quote and DEEP balance, and the session chooses the pool, the price and the quantity. Without a limit on pools, a session key could trade the whole balance on a pool its holder created or controls, such as one that pairs the Account's quote asset with a coin the holder minted, against a resting order at the holder's price. The allowlist confines session spot orders to the pools the `SessionsAdminCap` holder names, which should be the liquid pools the app offers.
 
-`allow_pool` adds a DeepBook pool ID and aborts if it is already listed. `disallow_pool` removes one and aborts `EPoolNotAllowed` if it is not listed, so a mistyped ID cannot pass for a removal. Both require the executing package version to be at or above the watermark. `allowed_pools` returns the list in the order the pools were added, for SDK and dev-inspect reads. The list lives in a dynamic field on `SessionsConfig`, because the config object was published without one. It is empty until the first `allow_pool`, and an empty list allows no pool.
+`admin_allow_pool` adds a DeepBook pool ID and aborts if it is already listed. `admin_disallow_pool` removes one and aborts `EPoolNotAllowed` if it is not listed, so a mistyped ID cannot pass for a removal. Both require the executing package version to be at or above the watermark. `allowed_pools` returns the list in the order the pools were added, for SDK and dev-inspect reads. The list lives in a dynamic field on `SessionsConfig`, because the config object was published without one. It is empty until the first `admin_allow_pool`, and an empty list allows no pool.
 
 The allowlist bounds where a session can trade, not how much it can lose. On an allowed pool a session can still move the full balance at a price it chooses. Its order fills against the best resting orders first, so a holder who wants to take the far side of the trade has to rest an order beyond all the real liquidity between the mid price and that order. The loss is bounded by that liquidity, which is why only liquid pools belong on the list.
 
@@ -175,7 +175,7 @@ public struct SessionRevoked has copy, drop {
 }
 ```
 
-`SessionPoolAllowed` and `SessionPoolDisallowed` are emitted by `allow_pool` and `disallow_pool`:
+`SessionPoolAllowed` and `SessionPoolDisallowed` are emitted by `admin_allow_pool` and `admin_disallow_pool`:
 
 ```move
 public struct SessionPoolAllowed has copy, drop {
