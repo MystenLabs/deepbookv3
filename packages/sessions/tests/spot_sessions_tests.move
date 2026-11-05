@@ -587,7 +587,7 @@ fun session_cannot_place_order_on_a_disallowed_pool() {
     let mut fixture = setup_spot_fixture();
     authorize_session(&mut fixture);
     let pool_id = fixture.pool_id;
-    disallow_pool(&mut fixture, pool_id);
+    admin_disallow_pool(&mut fixture, pool_id);
 
     session_market_order<BASE, QUOTE>(&mut fixture, pool_id, true);
     abort EUnexpectedSuccess
@@ -606,7 +606,7 @@ fun session_cancels_an_order_on_a_disallowed_pool() {
         false,
     );
     assert_eq!(order.status(), constants::live());
-    disallow_pool(&mut fixture, pool_id);
+    admin_disallow_pool(&mut fixture, pool_id);
 
     fixture.scenario.next_tx(SESSION);
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
@@ -645,7 +645,7 @@ fun session_cancels_an_order_on_a_disallowed_pool() {
 fun setup_spot_fixture(): SpotFixture {
     let mut fixture = setup_unlisted_spot_fixture();
     let pool_id = fixture.pool_id;
-    allow_pool(&mut fixture, pool_id);
+    admin_allow_pool(&mut fixture, pool_id);
     fixture
 }
 
@@ -715,25 +715,25 @@ fun revoke_session(fixture: &mut SpotFixture) {
     return_shared(wrapper);
 }
 
-fun allow_pool(fixture: &mut SpotFixture, pool_id: ID) {
+fun admin_allow_pool(fixture: &mut SpotFixture, pool_id: ID) {
     fixture.scenario.next_tx(ADMIN);
     let admin_cap = fixture.scenario.take_from_sender<SessionsAdminCap>();
     let mut sessions_config = fixture
         .scenario
         .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
-    sessions_config.allow_pool(&admin_cap, pool_id);
+    sessions_config.admin_allow_pool(&admin_cap, pool_id);
     assert!(sessions_config.allowed_pools().contains(&pool_id));
     return_shared(sessions_config);
     fixture.scenario.return_to_sender(admin_cap);
 }
 
-fun disallow_pool(fixture: &mut SpotFixture, pool_id: ID) {
+fun admin_disallow_pool(fixture: &mut SpotFixture, pool_id: ID) {
     fixture.scenario.next_tx(ADMIN);
     let admin_cap = fixture.scenario.take_from_sender<SessionsAdminCap>();
     let mut sessions_config = fixture
         .scenario
         .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
-    sessions_config.disallow_pool(&admin_cap, pool_id);
+    sessions_config.admin_disallow_pool(&admin_cap, pool_id);
     assert!(!sessions_config.allowed_pools().contains(&pool_id));
     return_shared(sessions_config);
     fixture.scenario.return_to_sender(admin_cap);

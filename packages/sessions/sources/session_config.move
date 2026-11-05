@@ -39,7 +39,7 @@ public struct SessionsAdminCap has key, store {
 
 /// Dynamic-field key on `SessionsConfig` for the spot pool allowlist, a
 /// `VecSet<ID>` of DeepBook pool IDs. `SessionsConfig` was published without
-/// it, so it is attached by the first `allow_pool`.
+/// it, so it is attached by the first `admin_allow_pool`.
 public struct AllowedPoolsKey() has copy, drop, store;
 
 /// A DeepBook pool was added to the session spot allowlist.
@@ -72,7 +72,7 @@ public fun version_watermark(config: &SessionsConfig): u64 {
 
 /// Return the DeepBook pool IDs session-key spot orders may trade on, in the
 /// order they were allowed, for SDK and devInspect reads. Empty until the first
-/// `allow_pool`.
+/// `admin_allow_pool`.
 public fun allowed_pools(config: &SessionsConfig): vector<ID> {
     if (!config.id.exists_(AllowedPoolsKey())) return vector[];
     *config.id.borrow<_, VecSet<ID>>(AllowedPoolsKey()).keys()
@@ -88,7 +88,11 @@ public fun bump_version_watermark(config: &mut SessionsConfig, _admin_cap: &Sess
 
 /// Let session-key spot orders trade on `pool_id`. Aborts through `vec_set` if
 /// the pool is already allowed.
-public fun allow_pool(config: &mut SessionsConfig, _admin_cap: &SessionsAdminCap, pool_id: ID) {
+public fun admin_allow_pool(
+    config: &mut SessionsConfig,
+    _admin_cap: &SessionsAdminCap,
+    pool_id: ID,
+) {
     config.assert_version();
     if (!config.id.exists_(AllowedPoolsKey())) {
         config.id.add(AllowedPoolsKey(), vec_set::empty<ID>());
@@ -100,7 +104,11 @@ public fun allow_pool(config: &mut SessionsConfig, _admin_cap: &SessionsAdminCap
 /// Stop session-key spot orders on `pool_id`. Aborts `EPoolNotAllowed` if the
 /// pool is not allowed, so a mistyped ID cannot pass for a removal. Session
 /// cancels and settled withdrawals on the pool keep working.
-public fun disallow_pool(config: &mut SessionsConfig, _admin_cap: &SessionsAdminCap, pool_id: ID) {
+public fun admin_disallow_pool(
+    config: &mut SessionsConfig,
+    _admin_cap: &SessionsAdminCap,
+    pool_id: ID,
+) {
     config.assert_version();
     config.assert_pool_allowed(pool_id);
     config.id.borrow_mut<_, VecSet<ID>>(AllowedPoolsKey()).remove(&pool_id);
