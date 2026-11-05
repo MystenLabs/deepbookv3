@@ -4,8 +4,9 @@
 /// Owns the canonical Block Scholes feed shapes accepted by Propbook stores.
 /// The upstream `bs_sid` package owns descriptor encoding and hashing; this
 /// module only fixes Propbook's chosen spot, forward, SVI, scaling, and timestamp spellings.
-/// The SVI model spelling is the one exception: each SVI store carries an admin-set model, and
-/// `default_svi_model` is what a store uses until one is set.
+/// The SVI model spelling and SVI scaling are the exceptions: each SVI store carries an admin-set
+/// model and decimals, and `default_svi_model` and `default_svi_decimals` are what a store uses
+/// until each is set.
 module propbook::block_scholes_sid;
 
 use bs_oracle::verify::PackageMarker;
@@ -24,6 +25,14 @@ macro fun svi_asset_class(): String { b"option".to_string() }
 /// The model Block Scholes publishes its SVI surface under, and every SVI store's model until the
 /// admin sets another.
 public(package) macro fun default_svi_model(): String { b"SVI".to_string() }
+
+/// The decimals Block Scholes signs SVI parameters at, and every SVI store's decimals until the
+/// admin sets another: the same `1e9` scale as Propbook's spot and forward values.
+public(package) macro fun default_svi_decimals(): u8 { constants::float_scaling_decimals!() as u8 }
+
+/// The higher-precision SVI scale a store may switch to: `1e18` units per whole parameter, the
+/// scale Predict carries rolled-down `a` and `b` in.
+public(package) macro fun high_precision_svi_decimals(): u8 { 18 }
 
 macro fun timestamp_precision(): String { b"ms".to_string() }
 
@@ -50,9 +59,12 @@ public(package) fun forward(block_scholes_base_asset: &String, expiry_ms: u64): 
     )
 }
 
+/// The SVI series id hashes one decimals value for all five parameters, so a store's decimals
+/// scale `a`, `b`, `rho`, `m`, and `sigma` together.
 public(package) fun svi(
     block_scholes_base_asset: &String,
     svi_model: &String,
+    svi_decimals: u8,
     expiry_ms: u64,
 ): u256 {
     sid::model_params(
@@ -61,7 +73,7 @@ public(package) fun svi(
         *block_scholes_base_asset,
         *svi_model,
         sid::expiry_at(expiry_ms),
-        constants::float_scaling_decimals!() as u8,
+        svi_decimals,
         timestamp_precision!(),
     )
 }

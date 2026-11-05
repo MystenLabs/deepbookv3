@@ -258,7 +258,7 @@ public fun add_cadence(
         registry.id.borrow_mut(CadencePeriodsKey()),
         period_ms,
     );
-    config_events::cadence_add(registry_id, cadence_id, period_ms);
+    config_events::cad_add(registry_id, cadence_id, period_ms);
     cadence_id
 }
 
@@ -292,7 +292,7 @@ public fun set_template_cadence_config(
             initial_expiry_cash,
             window_size,
         );
-    config_events::cadence_upd(
+    config_events::cad_upd(
         registry.id(),
         propbook_underlying_id,
         cadence_id,
@@ -416,7 +416,7 @@ fun create_mkt(
     registry.chk_lc_cap(lifecycle_cap);
     config.chk_trading();
     // Deliberately NOT gated on the valuation flag: creation moves no cash
-    // (`plp::register_exp` records targets; funding is a later rebalance), an
+    // (`plp::reg_exp` records targets; funding is a later rebalance), an
     // in-flight flush's expected set is frozen at its snapshot so the new market
     // is simply not part of it, and funding it mid-window cannot reach the mark
     // — every figure it reads was frozen at the snapshot instant, which counts
@@ -448,7 +448,7 @@ fun create_mkt(
         max_expiry_allocation,
         ctx,
     );
-    pool_vault.register_exp(
+    pool_vault.reg_exp(
         expiry_market_id,
         expiry,
         max_expiry_allocation,
@@ -459,7 +459,7 @@ fun create_mkt(
     registry
         .market_manager
         .note_expiry(&periods, propbook_underlying_id, cadence_id, expiry, expiry_market_id);
-    config_events::mkt_created(
+    config_events::mkt_new(
         expiry_market_id,
         pool_vault_id,
         propbook_underlying_id,

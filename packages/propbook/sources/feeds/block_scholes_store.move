@@ -10,8 +10,8 @@
 /// positive `u64`-representable values so an unusable observation cannot claim a permanent key.
 /// Value and SVI observations use separate stores because the verifier exposes distinct batch and
 /// value types. The registry creates and binds both stores atomically from one base-asset input.
-/// An SVI store also derives its series ids from an admin-set provider model, so the admin chooses
-/// which of the provider's SVI surfaces the store accepts and serves.
+/// An SVI store also derives its series ids from an admin-set provider model and decimals, so the
+/// admin chooses which of the provider's SVI surfaces the store accepts and serves, and at what scale.
 module propbook::block_scholes_store;
 
 use bs_oracle::verify::{ValueBatch, SviBatch};
@@ -29,6 +29,7 @@ const ENotNewerVersion: u64 = 1;
 const EUnexpectedBatchLength: u64 = 2;
 const ESeriesIdMismatch: u64 = 3;
 const EInvalidSviModel: u64 = 4;
+const EInvalidSviDecimals: u64 = 5;
 
 macro fun series_kind_spot(): u8 { 0 }
 
@@ -108,6 +109,13 @@ public struct BlockScholesSVIStore has key {
 /// silently re-key every store whose model was never set.
 public struct SviModelKey() has copy, drop, store;
 
+/// Dynamic-field key on `BlockScholesSVIStore` for its admin-set `u8` SVI decimals. Like the model,
+/// it lives off the struct layout; an absent field reads as `block_scholes_sid::default_svi_decimals`,
+/// the scale earlier package versions hardcoded. The key, its `u8` value, and the default are
+/// permanent for the same reason as `SviModelKey`. Stored rows carry no scale of their own, so a
+/// reader takes the scale from `svi_decimals` alongside the row it reads.
+public struct SviDecimalsKey() has copy, drop, store;
+
 /// Emitted only for observations that were stored, so its presence means the series advanced.
 public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy, drop {
     propbook_underlying_id: u32,
@@ -131,6 +139,13 @@ public struct BlockScholesSVIModelSet has copy, drop {
     propbook_underlying_id: u32,
     propbook_oracle_id: ID,
     svi_model: String,
+}
+
+/// Emitted when the admin sets the decimals an SVI store derives its series ids from.
+public struct BlockScholesSVIDecimalsSet has copy, drop {
+    propbook_underlying_id: u32,
+    propbook_oracle_id: ID,
+    svi_decimals: u8,
 }
 
 /// Emitted once per latest-path batch, whether or not anything was stored.
@@ -188,6 +203,17 @@ public fun svi_model(store: &BlockScholesSVIStore): String {
     }
 }
 
+/// Returns the decimals this store's SVI series ids derive from and its SVI rows are scaled at: `a`,
+/// `b`, `rho`, `m`, and `sigma` are each `value / 10^decimals`. For relayer subscription construction
+/// and for readers interpreting `svi` rows.
+public fun svi_decimals(store: &BlockScholesSVIStore): u8 {
+    if (store.id.exists_(SviDecimalsKey())) {
+        *store.id.borrow<_, u8>(SviDecimalsKey())
+    } else {
+        block_scholes_sid::default_svi_decimals!()
+    }
+}
+
 /// Returns the canonical spot series id for external subscription construction.
 public fun spot_sid(store: &BlockScholesValueStore): u256 {
     block_scholes_sid::spot(&store.block_scholes_base_asset)
@@ -198,10 +224,15 @@ public fun forward_sid(store: &BlockScholesValueStore, expiry_ms: u64): u256 {
     block_scholes_sid::forward(&store.block_scholes_base_asset, expiry_ms)
 }
 
-/// Returns one canonical SVI series id, under the store's current model, for external
+/// Returns one canonical SVI series id, under the store's current model and decimals, for external
 /// subscription construction.
 public fun svi_sid(store: &BlockScholesSVIStore, expiry_ms: u64): u256 {
-    block_scholes_sid::svi(&store.block_scholes_base_asset, &store.svi_model(), expiry_ms)
+    block_scholes_sid::svi(
+        &store.block_scholes_base_asset,
+        &store.svi_model(),
+        store.svi_decimals(),
+        expiry_ms,
+    )
 }
 
 /// Returns the latest canonical spot observation, or `none` if none has landed.
@@ -376,11 +407,17 @@ public fun apply_svi_batch(
     ctx: &TxContext,
 ) {
     let svi_model = store.svi_model();
+    let svi_decimals = store.svi_decimals();
     let mut expected_sids = vector[];
     let mut i = 0;
     while (i < expiries_ms.length()) {
         expected_sids.push_back(
-            block_scholes_sid::svi(&store.block_scholes_base_asset, &svi_model, expiries_ms[i]),
+            block_scholes_sid::svi(
+                &store.block_scholes_base_asset,
+                &svi_model,
+                svi_decimals,
+                expiries_ms[i],
+            ),
         );
         i = i + 1;
     };
@@ -438,6 +475,29 @@ public(package) fun set_svi_model(store: &mut BlockScholesSVIStore, svi_model: S
         propbook_underlying_id: store.propbook_underlying_id,
         propbook_oracle_id: store.svi_store_id(),
         svi_model,
+    });
+}
+
+/// Set the decimals this store derives its SVI series ids from; writes and reads switch together.
+/// Only `block_scholes_sid::default_svi_decimals` and `high_precision_svi_decimals` are accepted.
+/// Rows stored at other decimals stay keyed by their own series ids. The public contract lives on
+/// `registry::set_block_scholes_svi_decimals`.
+public(package) fun set_svi_decimals(store: &mut BlockScholesSVIStore, svi_decimals: u8) {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    assert!(
+        svi_decimals == block_scholes_sid::default_svi_decimals!()
+            || svi_decimals == block_scholes_sid::high_precision_svi_decimals!(),
+        EInvalidSviDecimals,
+    );
+    if (store.id.exists_(SviDecimalsKey())) {
+        *store.id.borrow_mut(SviDecimalsKey()) = svi_decimals;
+    } else {
+        store.id.add(SviDecimalsKey(), svi_decimals);
+    };
+    event::emit(BlockScholesSVIDecimalsSet {
+        propbook_underlying_id: store.propbook_underlying_id,
+        propbook_oracle_id: store.svi_store_id(),
+        svi_decimals,
     });
 }
 
@@ -732,6 +792,11 @@ public fun observation_recorded_fields<Observation: copy + drop>(
 #[test_only]
 public fun svi_model_set_fields(event: &BlockScholesSVIModelSet): (u32, ID, String) {
     (event.propbook_underlying_id, event.propbook_oracle_id, event.svi_model)
+}
+
+#[test_only]
+public fun svi_decimals_set_fields(event: &BlockScholesSVIDecimalsSet): (u32, ID, u8) {
+    (event.propbook_underlying_id, event.propbook_oracle_id, event.svi_decimals)
 }
 
 #[test_only]

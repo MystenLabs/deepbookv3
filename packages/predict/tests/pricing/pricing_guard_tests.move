@@ -400,7 +400,7 @@ fun live_quote_with_stale_block_scholes_surface_aborts() {
     // stale and the quote aborts before any pricing.
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     live_quote(
@@ -417,7 +417,7 @@ fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
@@ -436,7 +436,7 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::now_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().svi_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
@@ -463,7 +463,7 @@ fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.retransmit_bs_spot_for_testing(
@@ -489,7 +489,7 @@ fun live_quote_with_a_retransmitted_aged_forward_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
@@ -520,7 +520,7 @@ fun live_quote_with_a_retransmitted_aged_svi_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms()
+        + oracle_fixture::config(&oracle).pricing_cfg().svi_age()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
