@@ -1,6 +1,6 @@
 # Fees and rebates
 
-Every Predict trade — a mint or an early sell — carries a trading fee, and may also carry a builder fee. From package version 4 every trade is a queued order, which also pays a flat order fee, and the congestion surcharge of the retired immediate paths no longer applies. A referred mint redirects a configured share of the protocol-collected trading fee to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or an early sell — carries a trading fee, and may also carry a builder fee. From package version 4 every trade is a queued order, which also pays a flat order fee, and the congestion surcharge of the retired immediate paths no longer applies. A referred mint redirects a configured share of the protocol-collected trading fee to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp and, where the admin sets one, a price-band multiplier. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
 
@@ -18,7 +18,7 @@ The fee's terms live in `StrikeExposureConfig`, which each expiry snapshots at c
 leg_base_rate   = max( base_fee * sqrt(p_leg * (1 - p_leg)) , min_fee )
 leg_ramped_rate = leg_base_rate * expiry_fee_multiplier(time_to_expiry)
 leg_fee        = leg_ramped_rate * quantity
-trading_fee    = sum(leg_fee for each finite boundary)
+trading_fee    = band_multiplier(p) * sum(leg_fee for each finite boundary)
 
 builder_fee     = quantity * min( named_fee_per_contract , builder_fee_cap )
 referral_fee    = referral_fee_rate * (trading_fee - sponsor_subsidy)
@@ -61,6 +61,22 @@ fee_rate   = base_fee_rate * multiplier
 Outside the window (`time_to_expiry ≥ expiry_fee_window_ms`) the multiplier is exactly 1.0 and the ramp is inert. Inside the window the multiplier rises **linearly** from 1.0 toward `expiry_fee_max_multiplier` as expiry approaches. Setting `expiry_fee_max_multiplier` to 1.0 disables the ramp entirely. Both the window length and the peak multiplier are configured per expiry (snapshotted at creation).
 
 The ramp applies identically to mints and early sells, since both create or unwind risk against the pool in the final window. A queued order's ramp is evaluated at its committed tick, not at the clock of the transaction that fills it.
+
+### Price-band multiplier
+
+An admin can make contracts in chosen price ranges pay a multiple of the trading fee, for example twice the fee for contracts priced from 50c to 60c. The bands are a table of `[low, high, multiplier]` entries over the contract price `p`, in 1e9 scaling:
+
+```text
+band_multiplier(p) = multiplier  if low <= p < high for some band
+                   = 1.0         otherwise
+trading_fee        = floor(band_multiplier(p) * sum(leg_fee))
+```
+
+The band reads the price of the contract being traded, the range probability that sets its premium or redeem value, not the probabilities of its legs. A below contract at 55c is in a 50c to 60c band even though its one finite leg is priced at 45c. The multiplier applies to the whole trading fee after the minimum fee and the expiry ramp, on mints and early sells alike, at the order's committed tick. It never lowers a fee: multipliers run from 1x to 10x, and a price outside every band pays 1x.
+
+The table is a template on `ProtocolConfig` that each market copies when it is created, like the rest of the fee policy, so a change applies only to markets created afterwards. A table holds at most eight bands, sorted and not overlapping. Each band includes its low and excludes its high, so where two bands touch the shared price belongs to the upper one, and no band holds a contract priced at exactly $1. An empty table clears the template.
+
+A larger trading fee raises everything computed from it: the referral share and the sponsor subsidy, which stays capped by the reserve the order's commit set aside. On a mint it counts toward the maximum-payout bound, so a large multiplier can make a mint on a very likely range refused, or make an exact-cost mint size down. On an early sell it is still capped at the redeem value.
 
 ## 3. Builder fee add-on
 
@@ -194,7 +210,8 @@ The full flow for a single trade:
 flowchart TD
     P[Range probability p] --> BF["Base fee: max(base_fee * sqrt(p(1-p)), min_fee)"]
     BF --> RAMP["x expiry ramp multiplier (>= 1)"]
-    RAMP --> FEE[trading fee = rate x quantity]
+    RAMP --> BAND["x price-band multiplier (>= 1)"]
+    BAND --> FEE[trading fee = rate x quantity]
     NAMED[builder fee the trade names] --> BUILD["builder fee = quantity x min(named fee, builder_fee_cap)"]
     BUILD --> BUILDER[builder fee -> builder code address]
     FEE --> ROUTE[protocol fee routing]
@@ -226,7 +243,7 @@ Before package version 4, the immediate `mint_exact_*` entrypoints withdrew the 
 A queued order pays the components above with four differences (see [delayed execution](./delayed-execution.md)).
 
 - **A flat order fee.** Each queued mint or early sell escrows `order_fee` at placement, 0.02 USDC at launch. It is per order, not per contract. A fill moves it into market cash. A refund for the order's own limits (reason 1) or for admission (reason 2) also keeps it in market cash, and every other refund returns it.
-- **Fees at the committed tick.** The trading fee, including the expiry ramp, is computed at the order's committed tick, so a late fill pays the same fee as a prompt one.
+- **Fees at the committed tick.** The trading fee, including the expiry ramp and the price band, is computed at the order's committed tick, so a late fill pays the same fee as a prompt one.
 - **No congestion surcharge.** The fill's `OrderMinted` or `LiveOrderRedeemed` reports `penalty_fee` 0, and the referral basis is the trader-paid trading fee alone.
 - **A reserved subsidy.** Commit reserves `min(subsidy_bound × fee_incentive_subsidy_rate, the market's incentive balance)` from the market's incentive balance, where `subsidy_bound` is the placement dry run's trading fee capped at the order's budget. The fill uses `min(trading_fee × rate, reservation)`, and the unused part returns to the incentive balance.
 
