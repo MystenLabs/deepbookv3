@@ -60,7 +60,7 @@ Each package upgrade must increment `current_version!()`. After clients have mov
 
 Advancing the watermark retires authorization and trading entrypoints in older package versions. Account-level deauthorization of `SessionsApp` remains the lineage-wide emergency stop because it prevents every version of the app from generating Account authorization.
 
-The `SessionsAdminCap` holder also maintains the spot pool allowlist. Package version 4 is the first to check it. Fill it before clients move to version 4, because a version 4 session spot order on a pool not on the list aborts. Older versions do not check it, so the allowlist binds every session spot order only once the watermark reaches 4.
+The `SessionsAdminCap` holder also maintains the spot pool allowlist. Package version 4 is the first to check it. Fill it before clients move to version 4, because a version 4 session spot order on a pool not on the list aborts. It applies to every session spot order once the watermark reaches 4.
 
 ## Predict wrappers
 
@@ -147,11 +147,9 @@ public fun admin_disallow_pool(
 )
 ```
 
-A spot order placed through `deepbook_core_account` funds itself from the Account's entire base, quote and DEEP balance, and the session chooses the pool, the price and the quantity. Without a limit on pools, a session key could trade the whole balance on a pool its holder created or controls, such as one that pairs the Account's quote asset with a coin the holder minted, against a resting order at the holder's price. The allowlist confines session spot orders to the pools the `SessionsAdminCap` holder names, which should be the liquid pools the app offers.
+The allowlist confines session spot orders to the pools the `SessionsAdminCap` holder names, which should be the liquid pools the app offers.
 
 `admin_allow_pool` adds a DeepBook pool ID and aborts if it is already listed. `admin_disallow_pool` removes one and aborts `EPoolNotAllowed` if it is not listed, so a mistyped ID cannot pass for a removal. Both require the executing package version to be at or above the watermark. `allowed_pools` returns the list in the order the pools were added, for SDK and dev-inspect reads. The list lives in a dynamic field on `SessionsConfig`, because the config object was published without one. It is empty until the first `admin_allow_pool`, and an empty list allows no pool.
-
-The allowlist bounds where a session can trade, not how much it can lose. On an allowed pool a session can still move the full balance at a price it chooses. Its order fills against the best resting orders first, so a holder who wants to take the far side of the trade has to rest an order beyond all the real liquidity between the mid price and that order. The loss is bounded by that liquidity, which is why only liquid pools belong on the list.
 
 ## Events
 
