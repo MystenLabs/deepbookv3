@@ -4,12 +4,11 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the fee-incentive
-/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
+/// subsidy, live-target, and lifetime-cap rates, the fee-band template, the trading pause gate, the
 /// protocol-wide emergency freeze, the version watermark (reaching
 /// `constants::cutover_version!()` is also the delayed-execution cutover), the allowlists of
-/// keepers that may redeem settled orders without owner auth, of operators that
-/// may finish an LP flush, and of the order-flow companion witness types that may
-/// drive the order-flow primitives, and the full-pool valuation in-flight
+/// operators that may finish an LP flush and of the order-flow companion witness
+/// types that may drive the order-flow primitives, and the full-pool valuation in-flight
 /// state (flag + flush ordinal, held across the transactions a flush spans;
 /// keeper/config flows gate on it, trading flows read it only to discard stale
 /// stamps lazily). Flow modules decide which gates apply before they mutate expiry,
@@ -41,10 +40,8 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
-#[allow(unused_const)]
+#[test_only]
 const ETradeWindowClosed: u64 = 7;
-const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
-const ESettledRedeemKeeperNotFound: u64 = 9;
 const EFlushOperatorAlreadyAdded: u64 = 10;
 const EFlushOperatorNotFound: u64 = 11;
 const ENotFlushOperator: u64 = 12;
@@ -52,6 +49,7 @@ const ECutoverNotReached: u64 = 13;
 const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
 const EBuilderFeeCutoverNotReached: u64 = 16;
+const ESettledRedeemRetired: u64 = 17;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -133,9 +131,10 @@ public struct ProtocolConfig has key {
 }
 
 /// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of keepers
-/// allowed to call `expiry_market::redeem_settled_permissionless`. The set was
-/// added after deploy, so it lives off the struct layout; an absent field is an
-/// empty set, which closes the keeper path.
+/// that package versions before 5 allowed to call
+/// `expiry_market::redeem_settled_permissionless`. Retired with that entrypoint:
+/// nothing reads or writes the set, and a set left by an earlier version stays
+/// in place.
 public struct SettledRedeemKeepersKey() has copy, drop, store;
 
 /// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
@@ -171,6 +170,12 @@ public struct OrderFlowKey<phantom W>() has copy, drop, store;
 /// stored off the struct layout because it was added after deploy. An absent field
 /// reads as `config_constants::default_builder_fee_cap`.
 public struct BuilderFeeCapKey() has copy, drop, store;
+
+/// Dynamic-field key for the admin-set fee-band template on `ProtocolConfig`, and
+/// for the copy each expiry market takes at creation on its own UID: a flat
+/// `vector<u64>` of `[low, high, multiplier]` triples (see
+/// `config_constants::chk_bands`). An absent field charges every price 1x.
+public struct FeeBandsKey() has copy, drop, store;
 
 // === Public Functions ===
 
@@ -290,6 +295,25 @@ public fun set_template_base_fee(
     );
 }
 
+/// Replace the fee-band template snapshotted by newly created expiry markets:
+/// flat `[low, high, multiplier]` triples, in FLOAT_SCALING. A trade whose
+/// contract price is in `[low, high)` pays its trading fee times the multiplier.
+/// Empty clears the template. Markets already created keep their copy.
+public fun set_template_fee_bands(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    bands: vector<u64>,
+    clock: &Clock,
+) {
+    config.chk_version();
+    config_constants::chk_bands(&bands);
+    if (config.id.exists_(FeeBandsKey())) {
+        let _: vector<u64> = config.id.remove(FeeBandsKey());
+    };
+    config_events::bands_upd(bands, clock.timestamp_ms());
+    if (!bands.is_empty()) config.id.add(FeeBandsKey(), bands);
+}
+
 /// Set the minimum fee floor snapshotted by newly created expiry markets.
 public fun set_template_min_fee(
     config: &mut ProtocolConfig,
@@ -298,7 +322,7 @@ public fun set_template_min_fee(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_min_fee(fee);
+    config.strike_exposure_template_config.set_mfee(fee);
     config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
@@ -313,7 +337,7 @@ public fun set_template_expiry_fee_window_ms(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_fee_win(value);
+    config.strike_exposure_template_config.set_win(value);
     config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
@@ -491,7 +515,7 @@ public fun set_max_valuation_window_ms(
     // The deadline is read against a flush already in flight; refuse to move it
     // under one, so a started flush cannot have its escape hatch shifted.
     config.chk_no_val();
-    config_constants::chk_val_win(window_ms);
+    config_constants::chk_vw(window_ms);
     config.max_valuation_window_ms = window_ms;
 }
 
@@ -571,36 +595,24 @@ public fun set_frozen(config: &mut ProtocolConfig, _admin_cap: &AdminCap, frozen
     config.put_frozen(frozen);
 }
 
-/// Allow `keeper` to call `expiry_market::redeem_settled_permissionless`.
-/// Admin-only and version-gated. Aborts if `keeper` is already allowed.
+/// Retired with `redeem_settled_permissionless`, the only call the keeper
+/// allowlist gated. Always aborts `ESettledRedeemRetired`.
 public fun add_settled_redeem_keeper(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    keeper: address,
+    _keeper: address,
 ) {
-    config.chk_version();
-    if (!config.id.exists_(SettledRedeemKeepersKey())) {
-        config.id.add(SettledRedeemKeepersKey(), vec_set::empty<address>());
-    };
-    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
-    assert!(!keepers.contains(&keeper), ESettledRedeemKeeperAlreadyAdded);
-    keepers.insert(keeper);
-    config_events::keeper_upd(keeper, true);
+    abort ESettledRedeemRetired
 }
 
-/// Revoke `keeper`'s access to `expiry_market::redeem_settled_permissionless`.
-/// Admin-only. Bypasses the version gate, like the registry's cap revocations, so
-/// revocation stays available under the emergency freeze and from a package
-/// version below the runtime floor. Aborts if `keeper` is not allowed.
+/// Retired with `redeem_settled_permissionless`, the only call the keeper
+/// allowlist gated. Always aborts `ESettledRedeemRetired`.
 public fun remove_settled_redeem_keeper(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    keeper: address,
+    _keeper: address,
 ) {
-    assert!(config.is_keeper(keeper), ESettledRedeemKeeperNotFound);
-    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
-    keepers.remove(&keeper);
-    config_events::keeper_upd(keeper, false);
+    abort ESettledRedeemRetired
 }
 
 /// Allow `operator` to call `plp::finish_flush`. Admin-only and version-gated;
@@ -687,7 +699,7 @@ public fun set_protocol_reserve_profit_share(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_rsv_shr(protocol_reserve_profit_share);
+    config_constants::chk_rsv(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
@@ -725,7 +737,7 @@ public fun set_fee_incentive_subsidy_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_subsidy(rate);
+    config_constants::chk_sub(rate);
     config.set_u64(FeeIncentiveSubsidyRateKey(), rate);
     config_events::sub_upd(rate, clock.timestamp_ms());
 }
@@ -808,7 +820,7 @@ public fun set_plp_supply_fee_rate(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_sup_fee(rate);
+    config_constants::chk_sup(rate);
     config.plp_supply_fee_rate = rate;
     config_events::fee_upd(
         config.plp_supply_fee_rate,
@@ -838,7 +850,7 @@ public fun set_plp_withdraw_fee_rate(
 
 // === Public-Package Functions ===
 
-public(package) fun pricing_cfg(config: &ProtocolConfig): &PricingConfig {
+public(package) fun pr_cfg(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
@@ -862,7 +874,7 @@ public(package) fun max_pool(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
-public(package) fun val_window(config: &ProtocolConfig): u64 {
+public(package) fun val_win(config: &ProtocolConfig): u64 {
     config.max_valuation_window_ms
 }
 
@@ -878,25 +890,40 @@ public(package) fun is_cur(config: &ProtocolConfig, stamp_seq: u64): bool {
     config.valuation_in_progress && config.flush_seq == stamp_seq
 }
 
-public(package) fun se_template(config: &ProtocolConfig): &StrikeExposureConfig {
+public(package) fun se_tmpl(config: &ProtocolConfig): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 
-public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
+public(package) fun se_snap(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
+}
+
+/// The multiplier of the band on `id` holding `price`, in FLOAT_SCALING; 1.0
+/// when no band holds it.
+public(package) fun band_mult(id: &UID, price: u64): u64 {
+    if (id.exists_(FeeBandsKey())) {
+        let bands: &vector<u64> = id.borrow(FeeBandsKey());
+        let mut i = 0;
+        while (i < bands.length()) {
+            if (price >= bands[i] && price < bands[i + 1]) return bands[i + 2];
+            i = i + 3;
+        };
+    };
+    fixed_math::math::float_scaling!()
+}
+
+/// Copy the fee-band template onto a new market's `id`. A market keeps its
+/// copy for life, so a template change applies only to markets created after it.
+public(package) fun bands_to(config: &ProtocolConfig, id: &mut UID) {
+    if (config.id.exists_(FeeBandsKey())) {
+        let bands: vector<u64> = *config.id.borrow(FeeBandsKey());
+        id.add(FeeBandsKey(), bands);
+    }
 }
 
 #[test_only]
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
-}
-
-/// Whether `keeper` may call `expiry_market::redeem_settled_permissionless`.
-public(package) fun is_keeper(config: &ProtocolConfig, keeper: address): bool {
-    let key = SettledRedeemKeepersKey();
-    if (!config.id.exists_(key)) return false;
-    let keepers: &VecSet<address> = config.id.borrow(key);
-    keepers.contains(&keeper)
 }
 
 /// Abort unless the transaction sender is a flush operator. An absent allowlist
