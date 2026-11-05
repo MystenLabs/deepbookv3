@@ -45,7 +45,9 @@ const MINT_CASH: u64 = 2_039_974;
 const RESERVED_SUBSIDY: u64 = 4_000;
 /// ALL_IN_COST - RESERVED_SUBSIDY: the trader pays the fee less the subsidy.
 const SUBSIDIZED_COST: u64 = 2_015_974;
-/// min(0.1 * 20_000, 0.005 * 4m).
+/// A trade's builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, and that
+/// fee on 4m: 4m * 0.0005.
+const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
 const BUILDER_FEE: u64 = 2_000;
 /// 10% of the trader-paid 20_000 fee.
 const REFERRAL_FEE: u64 = 2_000;
@@ -180,8 +182,8 @@ fun a_limits_refund_returns_the_reservation_and_keeps_the_fee() {
 
 #[test]
 fun a_builder_fee_is_charged_to_the_trader_and_leaves_the_market() {
-    let (mut q, _) = fixture::new().link_builder_code(BUILDER_CODE_INDEX);
-    q.enqueue_atm(QUANTITY, MAX_COST);
+    let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
+    q.enqueue_atm_with_builder(QUANTITY, MAX_COST, code_id, BUILDER_FEE_PER_CONTRACT);
     q.commit_at(TAU, fixture::live_price());
     let cash_before = q.market().cash_balance();
 

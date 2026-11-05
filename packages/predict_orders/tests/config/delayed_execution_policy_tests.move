@@ -29,7 +29,10 @@ use sui::{event, test_scenario::{most_recent_id_shared, return_shared}};
 const EVENT_TIMESTAMP_MS: u64 = 1_750_000_000_000;
 const ONE_EVENT: u64 = 1;
 const THREE_EVENTS: u64 = 3;
-const LAUNCH_VERSION: u64 = 1;
+// The companion version this source publishes: `init` seeds the desk's floor at
+// it. The Mainnet and Testnet desks were shared at version 1 and keep that floor
+// until a bump.
+const LAUNCH_VERSION: u64 = 2;
 
 // Spec defaults.
 const DEFAULT_DELAY_MS: u64 = 800;
