@@ -270,7 +270,7 @@ fun leg_amounts_round_separately_before_summing() {
         ),
         2,
     );
-    config.set_fee_win(RAMP_WINDOW_MS);
+    config.set_win(RAMP_WINDOW_MS);
     config.set_mult(DOUBLE_MULTIPLIER);
     // Halfway through a 1x -> 2x ramp: each 0.033 * 75 floors to 2.
     assert_eq!(

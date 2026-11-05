@@ -59,7 +59,7 @@ public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<USDC>) {
 }
 
 /// Release caller-approved surplus while preserving payout and escrow backing.
-public(package) fun free_surplus(
+public(package) fun free_sur(
     cash: &mut ExpiryCash,
     amount: u64,
     payout_liability: u64,
@@ -93,6 +93,6 @@ public(package) fun pay_rebate(cash: &mut ExpiryCash, amount: u64): Balance<USDC
 
 /// Release the residual inventory-impact escrow after settlement, when no live
 /// close can earn another rebate. Its cash then becomes normal expiry surplus.
-public(package) fun free_impact(cash: &mut ExpiryCash) {
+public(package) fun free_imp(cash: &mut ExpiryCash) {
     cash.inventory_impact_reserve = 0;
 }

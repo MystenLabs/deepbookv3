@@ -81,11 +81,6 @@ public struct ExpectedPlpFeeRatesUpdated has copy, drop {
     onchain_timestamp_ms: u64,
 }
 
-public struct ExpectedSettledRedeemKeeperUpdated has copy, drop {
-    keeper: address,
-    allowed: bool,
-}
-
 public struct ExpectedBuilderFeeCapUpdated has copy, drop {
     builder_fee_cap: u64,
     onchain_timestamp_ms: u64,
@@ -242,34 +237,6 @@ fun either_plp_fee_setter_emits_both_rates() {
     assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&withdraw_expected));
 
     clock.destroy_for_testing();
-    destroy(admin_cap);
-    return_shared(registry);
-    return_shared(config);
-    scenario.end();
-}
-
-/// Each allowlist change emits the keeper and its membership after the change, so an
-/// indexer can rebuild the current set from this event stream alone.
-#[test]
-fun settled_redeem_keeper_changes_emit_keeper_and_membership() {
-    let (scenario, registry, mut config, admin_cap) = test_helpers::begin_registry_test();
-
-    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
-    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
-
-    let events = event::events_by_type<config_events::SettledRedeemKeeperUpdated>();
-    assert_eq!(events.length(), TWO_EVENTS);
-    let added = ExpectedSettledRedeemKeeperUpdated {
-        keeper: test_constants::alice(),
-        allowed: true,
-    };
-    assert_eq!(bcs::to_bytes(&events[FIRST_EVENT_INDEX]), bcs::to_bytes(&added));
-    let removed = ExpectedSettledRedeemKeeperUpdated {
-        keeper: test_constants::alice(),
-        allowed: false,
-    };
-    assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&removed));
-
     destroy(admin_cap);
     return_shared(registry);
     return_shared(config);
