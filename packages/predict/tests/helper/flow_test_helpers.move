@@ -319,8 +319,28 @@ public fun setup_everything_with_expiry(expiry_ms: u64): (Fixture, ID, Trader) {
     )
 }
 
-fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+/// `setup_live_market` over a market created after the fee-band template is
+/// set to `bands`, so the market snapshots them.
+public fun setup_banded_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+    bands: vector<u64>,
+): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
+    fx.set_template_fee_bands(bands);
+    live_market_on(fx, expiry_ms, live_price, test_constants::mint_deposit())
+}
+
+fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+    live_market_on(setup_market_default(), expiry_ms, live_price, deposit)
+}
+
+fun live_market_on(
+    mut fx: Fixture,
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+): (Fixture, ID, Trader) {
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -580,15 +600,6 @@ public fun cancel_supply_request_bundle(
         );
 }
 
-/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
-public fun add_settled_redeem_keeper_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    keeper: address,
-) {
-    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
-}
-
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);
@@ -724,6 +735,16 @@ public fun set_template_min_fee(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_min_fee(&self.admin_cap, value, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Replace the fee-band template through the real admin path. Only markets
+/// created afterwards snapshot it.
+public fun set_template_fee_bands(self: &mut Fixture, bands: vector<u64>) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_fee_bands(&self.admin_cap, bands, &self.clock);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -2118,7 +2139,7 @@ public fun load_pricer_bound_to_bundle(
     expiry_market_id: ID,
 ): pricing::Pricer {
     pricing::load_live_pricer(
-        market.config.pricing_cfg(),
+        market.config.pr_cfg(),
         &market.oracle_registry,
         &market.pyth,
         market.bs.values(),

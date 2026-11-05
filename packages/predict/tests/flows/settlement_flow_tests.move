@@ -627,14 +627,13 @@ fun the_owner_settled_redeem_is_retired() {
     abort 999
 }
 
-/// The keeper settled redeem is retired with it: a sender admin allowlisted
-/// still aborts, so the allowlist gates nothing.
+/// The keeper settled redeem is retired with it and aborts for any sender. Its
+/// allowlist setters are retired too (`protocol_config_tests`).
 #[test, expected_failure(abort_code = expiry_market::EDelayedExecutionRequired)]
 fun the_keeper_settled_redeem_is_retired() {
     let (mut fx, expiry_id, order_id, trader) = settled_account_winner();
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    fx.add_settled_redeem_keeper_bundle(&mut market, test_constants::alice());
     let account_registry = fx.scenario_mut().take_shared<AccountRegistry>();
     let (em, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();

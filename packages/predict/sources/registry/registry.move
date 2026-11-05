@@ -61,7 +61,7 @@ public struct Registry has key {
 
 /// Dynamic-field key of the registry's cadence table: a `vector<u64>` of cadence
 /// periods in milliseconds, indexed by cadence ID. Absent until the first
-/// `add_cadence`, when it is created from `market_manager::base_periods`.
+/// `add_cadence`, when it is created from `market_manager::base_per`.
 public struct CadencePeriodsKey() has copy, drop, store;
 
 // === Public Functions ===
@@ -258,7 +258,7 @@ public fun add_cadence(
     config.chk_version();
     let registry_id = registry.id();
     if (!registry.id.exists_(CadencePeriodsKey())) {
-        registry.id.add(CadencePeriodsKey(), market_manager::base_periods());
+        registry.id.add(CadencePeriodsKey(), market_manager::base_per());
     };
     let cadence_id = market_manager::add_period(
         registry.id.borrow_mut(CadencePeriodsKey()),
@@ -409,7 +409,7 @@ public fun create_and_share_expiry_market_with_band(
     // that cash as the idle it then was. The market joins the next flush's
     // snapshot. Gating here would gap a fast market cadence for as long as a
     // stalled flush holds the flag.
-    let mut strike_exposure_config = config.se_snapshot();
+    let mut strike_exposure_config = config.se_snap();
     let (min_entry_probability, max_entry_probability) = strike_exposure_config.narrow(
         min_entry_probability,
         max_entry_probability,
@@ -430,6 +430,7 @@ public fun create_and_share_expiry_market_with_band(
     let initial_expiry_cash = deployable.init_cash();
     let pool_vault_id = pool_vault.id();
     let expiry_market_id = expiry_market::create_and_share(
+        config,
         strike_exposure_config,
         propbook_underlying_id,
         expiry,
@@ -459,7 +460,7 @@ public fun create_and_share_expiry_market_with_band(
         admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
-        config.se_template(),
+        config.se_tmpl(),
         min_entry_probability,
         max_entry_probability,
     );
@@ -523,7 +524,7 @@ fun chk_pv_cap(registry: &Registry, cap: &PoolValuationCap) {
 /// built-in six.
 fun cad_periods(registry: &Registry): vector<u64> {
     if (registry.id.exists_(CadencePeriodsKey())) *registry.id.borrow(CadencePeriodsKey())
-    else market_manager::base_periods()
+    else market_manager::base_per()
 }
 
 // === Test-Only Functions ===
