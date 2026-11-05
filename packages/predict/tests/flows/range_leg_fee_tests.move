@@ -44,6 +44,9 @@ const QUOTABLE_WIDE_HIGHER_TICK: u64 = 130;
 const TOO_WIDE_HIGHER_TICK: u64 = 140;
 const WIDE_RANGE_SPOT: u64 = 90_000_000_000;
 const WIDE_RANGE_VARIANCE: u64 = 40_000_000;
+// A creation-time band of [25c, 50c], in FLOAT_SCALING.
+const CREATION_BAND_MIN_PROBABILITY: u64 = 250_000_000;
+const CREATION_BAND_MAX_PROBABILITY: u64 = 500_000_000;
 
 fun prepare_wide_range(fx: &mut helpers::Fixture, market: &mut helpers::MarketBundle) {
     let timestamp_ms = fx.clock().timestamp_ms() + 1;
@@ -430,6 +433,51 @@ fun public_mint_rejects_a_range_with_an_ineligible_lower_leg() {
         LOWER_TICK - 10,
         LOWER_TICK,
         test_constants::mint_quantity(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
+fun a_band_narrowed_at_creation_refuses_a_range_the_template_admits() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry_with_band(
+        test_constants::short_expiry_ms(),
+        CREATION_BAND_MIN_PROBABILITY,
+        CREATION_BAND_MAX_PROBABILITY,
+    );
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    helpers::return_market_bundle(market);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    range_test_helpers::prepare_range(&mut fx, &mut market);
+    // Fixture prerequisite: the template band admits this range (the unbanded market
+    // in `range_quote_mint_and_partial_close_conserve_cash_with_two_fees` mints it), so
+    // only the market's own band can refuse it. Under a 50c cap no finite range is
+    // admissible: both legs at most 50c put the range at most 50c + 50c - 100c = 0.
+    let template = strike_exposure_config::new();
+    let price = fx
+        .load_pricer_bundle(&market)
+        .range_price(
+            strike(LOWER_TICK * test_constants::default_tick_size()),
+            strike(HIGHER_TICK * test_constants::default_tick_size()),
+        );
+    assert!(template.range_ok(&price));
+    destroy(template);
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        LOWER_TICK,
+        HIGHER_TICK,
+        test_constants::mint_quantity(),
+        std::u64::max_value!(),
+        std::u64::max_value!(),
     );
     abort 999
 }
