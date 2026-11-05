@@ -18,7 +18,7 @@ Every trading wrapper requires both of these conditions:
 - The transaction sender has a stored session grant for the supplied Account.
 - The current clock timestamp is strictly less than the stored expiration.
 
-At the exact expiration timestamp, the session is no longer authorized. Spot order placement also requires the pool to be on the spot pool allowlist, described under [DeepBook spot wrappers](#deepbook-spot-wrappers).
+At the exact expiration timestamp, the session is no longer authorized. Spot order placement also requires the pool to be on the spot pool allowlist and the order to fit the session's spend budgets, both described under [DeepBook spot wrappers](#deepbook-spot-wrappers).
 
 ## Session lifecycle
 
@@ -60,7 +60,7 @@ Each package upgrade must increment `current_version!()`. After clients have mov
 
 Advancing the watermark retires authorization and trading entrypoints in older package versions. Account-level deauthorization of `SessionsApp` remains the lineage-wide emergency stop because it prevents every version of the app from generating Account authorization.
 
-The `SessionsAdminCap` holder also maintains the spot pool allowlist. Package version 4 is the first to check it. Fill it before clients move to version 4, because a version 4 session spot order on a pool not on the list aborts. It applies to every session spot order once the watermark reaches 4.
+The `SessionsAdminCap` holder also maintains the spot pool allowlist. Package version 4 is the first to check it and the first to charge spend budgets. Fill the allowlist before clients move to version 4, because a version 4 session spot order on a pool not on the list aborts, and note that a version 4 session spot order that spends an asset without a budget aborts. Owners can approve budgets only once the watermark reaches 4, so session spot trading resumes for each Account after the bump when its owner approves one. Both rules apply to every session spot order once the watermark reaches 4.
 
 ## Predict wrappers
 
@@ -125,7 +125,7 @@ An active session may call these Account-backed DeepBook spot wrappers:
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
 
-`place_limit_order` and `place_market_order` also require the pool to be on the spot pool allowlist, and abort `session_config::EPoolNotAllowed` otherwise. `cancel_live_order`, `cancel_live_orders` and `withdraw_settled_amounts` work on any pool, so a session can still clear its orders on a pool that was removed from the list.
+`place_limit_order` and `place_market_order` also require the pool to be on the spot pool allowlist, and abort `session_config::EPoolNotAllowed` otherwise. They then charge the order against the session's spend budgets, described below. `cancel_live_order`, `cancel_live_orders` and `withdraw_settled_amounts` work on any pool, so a session can still clear its orders on a pool that was removed from the list.
 
 The session can therefore submit adverse Predict orders and spot trades on allowed pools, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed. A queued Predict order placed through a session still fills or refunds after the session ends.
 
@@ -150,6 +150,26 @@ public fun admin_disallow_pool(
 The allowlist confines session spot orders to the pools the `SessionsAdminCap` holder names, which should be the liquid pools the app offers.
 
 `admin_allow_pool` adds a DeepBook pool ID and aborts if it is already listed. `admin_disallow_pool` removes one and aborts `EPoolNotAllowed` if it is not listed, so a mistyped ID cannot pass for a removal. Both require the executing package version to be at or above the watermark. `allowed_pools` returns the list in the order the pools were added, for SDK and dev-inspect reads. The list lives in a dynamic field on `SessionsConfig`, because the config object was published without one. It is empty until the first `admin_allow_pool`, and an empty list allows no pool.
+
+### Spot spend budgets
+
+```move
+public fun approve_session_spend<T>(
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    session: address,
+    amount: u64,
+    ctx: &mut TxContext,
+)
+
+public fun session_spend_remaining<T>(wrapper: &AccountWrapper, session: address): u64
+```
+
+The Account owner approves how much of each asset a session may spend on spot orders. `approve_session_spend` takes owner authorization from the transaction sender, opens only once the `SessionsConfig` watermark reaches version 4 (`ESpendApprovalsNotEnabled`), works only for a session already authorized (`ESessionNotAuthorized`), and sets the session's remaining budget for `T`, in `T`'s raw units, replacing any earlier amount. Zero removes the budget. An app calls it right after `authorize_session` in the same transaction, once for each asset the session will spend: the base and quote assets of the pools it trades, and DEEP when orders pay fees in DEEP. `session_spend_remaining` returns what is left, or zero when no budget is set, for SDK and dev-inspect reads.
+
+Each session spot order is charged what DeepBook takes from the Account for it, read from the order's `OrderInfo`: the quote a bid pays on fills or the base an ask sells, the funds its resting remainder locks, and its taker and maker fees. Fees are charged in DEEP when the order pays them in DEEP, and otherwise in the asset the order spends. Nothing the order receives is netted against the charge, including fills against the Account's own orders, and nothing adds back to a budget later: not the proceeds of a fill, and not the funds a cancel returns. An order that would spend more of an asset than the session has left, or an asset with no budget, aborts `ESpendLimitExceeded`. A session therefore spends at most the approved amounts until the owner approves more.
+
+The budgets live in their own Account data slot. `revoke_session` removes them, and a new grant for an address that is not currently authorized starts without them, because the pre-upgrade `revoke_session` removes a session without its budgets. The pre-upgrade `authorize_session` would not clear them, which is why approvals wait for the watermark to retire that version, as builder approvals do. Re-authorizing a session that was not revoked keeps them.
 
 ## Events
 
@@ -185,11 +205,27 @@ public struct SessionPoolDisallowed has copy, drop {
 }
 ```
 
+`SessionSpendApproved` is emitted by `approve_session_spend`, including when it removes a budget with zero, and `SessionSpendCleared` when `revoke_session` or a new grant removes a session's budgets:
+
+```move
+public struct SessionSpendApproved has copy, drop {
+    account_id: ID,
+    session: address,
+    asset: TypeName,
+    amount: u64,
+}
+
+public struct SessionSpendCleared has copy, drop {
+    account_id: ID,
+    session: address,
+}
+```
+
 Expiration emits no event, and a no-op revocation emits no event. Predict and DeepBook core continue to emit their underlying trading events; the wrappers do not duplicate them.
 
 ## Integration requirements
 
-Before Sessions can be used, the package must be published against the intended Account, Predict, `deepbook_predict_orders`, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Each pool the app offers for session spot trading must be on the spot pool allowlist. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
+Before Sessions can be used, the package must be published against the intended Account, Predict, `deepbook_predict_orders`, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Each pool the app offers for session spot trading must be on the spot pool allowlist, and the owner must approve a spend budget for each asset a session spends. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
 
 Custody of `SessionsAdminCap` and any package upgrade capability is part of the trust boundary: the admin cap can retire older package versions and chooses the pools session spot orders can reach, while an upgrade can change the behavior of an authorized Account app.
 
