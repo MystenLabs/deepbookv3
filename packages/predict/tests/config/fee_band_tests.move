@@ -12,7 +12,6 @@ module deepbook_predict::fee_band_tests;
 
 use deepbook_predict::{
     admin::{Self, AdminCap},
-    config_constants,
     config_events,
     protocol_config::{Self, ProtocolConfig},
     test_constants
@@ -172,7 +171,7 @@ fun the_setter_accepts_its_boundaries() {
     finish(scenario, admin_cap, config, clock);
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun a_partial_triple_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -180,7 +179,7 @@ fun a_partial_triple_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun nine_bands_abort() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -190,7 +189,7 @@ fun nine_bands_abort() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun an_empty_band_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -198,7 +197,7 @@ fun an_empty_band_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun a_high_above_one_dollar_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -206,7 +205,7 @@ fun a_high_above_one_dollar_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun a_multiplier_below_one_x_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -214,7 +213,7 @@ fun a_multiplier_below_one_x_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun a_multiplier_above_ten_x_aborts() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -222,7 +221,7 @@ fun a_multiplier_above_ten_x_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun overlapping_bands_abort() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
@@ -235,7 +234,7 @@ fun overlapping_bands_abort() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidFeeBands)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidFeeBands)]
 fun unsorted_bands_abort() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);

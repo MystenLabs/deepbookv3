@@ -41,7 +41,6 @@ const EInvalidFeeIncentiveSubsidyRate: u64 = 25;
 const EInvalidFeeIncentiveLiveTargetRate: u64 = 26;
 const EInvalidFeeIncentiveLifetimeCapRate: u64 = 27;
 const EInvalidBuilderFeeCap: u64 = 28;
-const EInvalidFeeBands: u64 = 29;
 
 // === Fees ===
 
@@ -154,33 +153,6 @@ public(package) fun chk_bcap(value: u64) {
         value >= min_builder_fee_cap!() && value <= max_builder_fee_cap!(),
         EInvalidBuilderFeeCap,
     );
-}
-
-/// Most fee bands one table can hold. Every fee lookup walks the table, so this
-/// bounds its cost.
-public(package) macro fun max_fee_bands(): u64 { 8 }
-
-/// Highest fee-band multiplier, in FLOAT_SCALING (10x). A higher value is a typo.
-public(package) macro fun max_fee_band_mult(): u64 { 10_000_000_000 }
-
-/// Check a fee-band table: `[low, high, multiplier]` triples over contract
-/// prices in FLOAT_SCALING, sorted and disjoint, each `low < high <= 1.0` and
-/// `1.0 <= multiplier <= 10.0`. Empty clears the table.
-public(package) fun chk_bands(bands: &vector<u64>) {
-    let n = bands.length();
-    assert!(n % 3 == 0 && n <= 3 * max_fee_bands!(), EInvalidFeeBands);
-    let one = fixed_math::math::float_scaling!();
-    let mut prev = 0;
-    let mut i = 0;
-    while (i < n) {
-        let (lo, hi, mult) = (bands[i], bands[i + 1], bands[i + 2]);
-        assert!(
-            lo >= prev && lo < hi && hi <= one && mult >= one && mult <= max_fee_band_mult!(),
-            EInvalidFeeBands,
-        );
-        prev = hi;
-        i = i + 3;
-    };
 }
 
 /// Fee charged on an executed PLP *supply* fill, in FLOAT_SCALING. Ships at zero:
