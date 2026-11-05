@@ -970,13 +970,13 @@ fun var_ok(svi: &PricingSVI): bool {
 fun eval_range(pricer: &Pricer, lower: Strike, higher: Strike): (Option<RangePrice>, u64) {
     if (lower.value() >= higher.value()) return (option::none(), EInvalidRange);
     let mut lower_up = option::none();
-    if (!lower.is_neg_inf()) {
+    if (!lower.is_ninf()) {
         let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, lower);
         if (price.is_none()) return (option::none(), abort_code);
         lower_up = price;
     };
     let mut higher_up = option::none();
-    if (!higher.is_pos_inf()) {
+    if (!higher.is_pinf()) {
         let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, higher);
         if (price.is_none()) return (option::none(), abort_code);
         higher_up = price;
@@ -988,8 +988,8 @@ fun eval_range(pricer: &Pricer, lower: Strike, higher: Strike): (Option<RangePri
 /// `none` with the abort code `up_price` raises. The code is meaningless alongside
 /// a price. The infinite sentinels price before any surface check.
 fun eval_up(svi: &PricingSVI, forward: u64, strike: Strike): (Option<u64>, u64) {
-    if (strike.is_neg_inf()) return (option::some(math::float_scaling!()), 0);
-    if (strike.is_pos_inf()) return (option::some(0), 0);
+    if (strike.is_ninf()) return (option::some(math::float_scaling!()), 0);
+    if (strike.is_pinf()) return (option::some(0), 0);
     pmath::digital(
         svi.a_magnitude,
         svi.a_is_negative,

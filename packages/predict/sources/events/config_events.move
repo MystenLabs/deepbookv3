@@ -388,7 +388,7 @@ public(package) fun ref_set(
     });
 }
 
-public(package) fun mkt_settled(
+public(package) fun mkt_stl(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     expiry: u64,

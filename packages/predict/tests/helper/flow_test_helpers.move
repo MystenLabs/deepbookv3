@@ -2139,7 +2139,7 @@ public fun load_pricer_bound_to_bundle(
     expiry_market_id: ID,
 ): pricing::Pricer {
     pricing::load_live_pricer(
-        market.config.pricing_cfg(),
+        market.config.pr_cfg(),
         &market.oracle_registry,
         &market.pyth,
         market.bs.values(),

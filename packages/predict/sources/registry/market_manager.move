@@ -247,7 +247,7 @@ public(package) fun cad_period(periods: &vector<u64>, cadence_id: u8): u64 {
 
 /// The cadence table every registry starts with: the six built-in cadences'
 /// periods, indexed by their built-in IDs.
-public(package) fun base_periods(): vector<u64> {
+public(package) fun base_per(): vector<u64> {
     vector[
         constants::one_minute_ms!(),
         constants::five_minutes_ms!(),
@@ -292,8 +292,8 @@ public(package) fun register_underlying(manager: &mut MarketManager, propbook_un
         .add(
             propbook_underlying_id,
             UnderlyingMarketConfig {
-                cadences: vector::tabulate!(base_periods().length(), |_| cad_disabled()),
-                last_deployed_expiries: vector::tabulate!(base_periods().length(), |_| 0),
+                cadences: vector::tabulate!(base_per().length(), |_| cad_disabled()),
+                last_deployed_expiries: vector::tabulate!(base_per().length(), |_| 0),
             },
         );
 }
@@ -445,7 +445,7 @@ fun chk_cadence(config: &CadenceConfig) {
     config_constants::chk_ticks(admission_tick_size);
     assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
     assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
-    config_constants::chk_cad_win(window_size);
+    config_constants::chk_cad(window_size);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }
 

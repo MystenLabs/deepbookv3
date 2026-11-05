@@ -208,7 +208,7 @@ fun try_quote_mint_range_samples_the_book_with_inventory_impact_off() {
     exposure.allocate_mint_order(terms_a);
 
     let range = exposure.try_rng(&pricer, STRIKE, pos_inf()).destroy_some();
-    assert_eq!(exposure.liab_minted(&range, Q_B), LIABILITY_A_B);
+    assert_eq!(exposure.liab_add(&range, Q_B), LIABILITY_A_B);
     let (terms_b, reason) = exposure.try_terms(range, Q_B, Q_B);
     assert_eq!(reason, REASON_FILL);
     let terms_b = terms_b.destroy_some();
@@ -234,13 +234,13 @@ fun try_quote_live_close_matches_quote_live_close() {
     let full = exposure.try_close(&pricer, &order, Q_A).destroy_some();
     assert_eq!(full.rebate(), IMPACT_AT_Q_A);
     assert_eq!(full.rebate(), expected_full.rebate());
-    assert_eq!(full.redeem_amt(), expected_full.redeem_amt());
+    assert_eq!(full.rdm_amt(), expected_full.rdm_amt());
     assert_eq!(full.close_prob(), expected_full.close_prob());
 
     let expected_partial = exposure.quote_live_close(&pricer, &order, Q_B);
     let partial = exposure.try_close(&pricer, &order, Q_B).destroy_some();
     assert_eq!(partial.rebate(), expected_partial.rebate());
-    assert_eq!(partial.redeem_amt(), expected_partial.redeem_amt());
+    assert_eq!(partial.rdm_amt(), expected_partial.rdm_amt());
 
     // The try terms drive the same mutation as the aborting ones.
     let survivor = exposure.apply_close(partial, &vec_map::empty()).destroy_some();

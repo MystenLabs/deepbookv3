@@ -24,7 +24,6 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
-use deepbook_predict_math::math as pmath;
 use std::type_name;
 use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
 
@@ -51,7 +50,6 @@ const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
 const EBuilderFeeCutoverNotReached: u64 = 16;
 const ESettledRedeemRetired: u64 = 17;
-const EInvalidFeeBands: u64 = 18;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -176,7 +174,7 @@ public struct BuilderFeeCapKey() has copy, drop, store;
 /// Dynamic-field key for the admin-set fee-band template on `ProtocolConfig`, and
 /// for the copy each expiry market takes at creation on its own UID: a flat
 /// `vector<u64>` of `[low, high, multiplier]` triples (see
-/// `deepbook_predict_math::math::bands_ok`). An absent field charges every price 1x.
+/// `config_constants::chk_bands`). An absent field charges every price 1x.
 public struct FeeBandsKey() has copy, drop, store;
 
 // === Public Functions ===
@@ -308,7 +306,7 @@ public fun set_template_fee_bands(
     clock: &Clock,
 ) {
     config.chk_version();
-    assert!(pmath::bands_ok(&bands), EInvalidFeeBands);
+    config_constants::chk_bands(&bands);
     if (config.id.exists_(FeeBandsKey())) {
         let _: vector<u64> = config.id.remove(FeeBandsKey());
     };
@@ -324,7 +322,7 @@ public fun set_template_min_fee(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_min_fee(fee);
+    config.strike_exposure_template_config.set_mfee(fee);
     config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
@@ -339,7 +337,7 @@ public fun set_template_expiry_fee_window_ms(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_fee_win(value);
+    config.strike_exposure_template_config.set_win(value);
     config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
@@ -517,7 +515,7 @@ public fun set_max_valuation_window_ms(
     // The deadline is read against a flush already in flight; refuse to move it
     // under one, so a started flush cannot have its escape hatch shifted.
     config.chk_no_val();
-    config_constants::chk_val_win(window_ms);
+    config_constants::chk_vw(window_ms);
     config.max_valuation_window_ms = window_ms;
 }
 
@@ -701,7 +699,7 @@ public fun set_protocol_reserve_profit_share(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_rsv_shr(protocol_reserve_profit_share);
+    config_constants::chk_rsv(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
@@ -739,7 +737,7 @@ public fun set_fee_incentive_subsidy_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_subsidy(rate);
+    config_constants::chk_sub(rate);
     config.set_u64(FeeIncentiveSubsidyRateKey(), rate);
     config_events::sub_upd(rate, clock.timestamp_ms());
 }
@@ -822,7 +820,7 @@ public fun set_plp_supply_fee_rate(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_sup_fee(rate);
+    config_constants::chk_sup(rate);
     config.plp_supply_fee_rate = rate;
     config_events::fee_upd(
         config.plp_supply_fee_rate,
@@ -852,7 +850,7 @@ public fun set_plp_withdraw_fee_rate(
 
 // === Public-Package Functions ===
 
-public(package) fun pricing_cfg(config: &ProtocolConfig): &PricingConfig {
+public(package) fun pr_cfg(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
@@ -876,7 +874,7 @@ public(package) fun max_pool(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
-public(package) fun val_window(config: &ProtocolConfig): u64 {
+public(package) fun val_win(config: &ProtocolConfig): u64 {
     config.max_valuation_window_ms
 }
 
@@ -892,19 +890,26 @@ public(package) fun is_cur(config: &ProtocolConfig, stamp_seq: u64): bool {
     config.valuation_in_progress && config.flush_seq == stamp_seq
 }
 
-public(package) fun se_template(config: &ProtocolConfig): &StrikeExposureConfig {
+public(package) fun se_tmpl(config: &ProtocolConfig): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 
-public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
+public(package) fun se_snap(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
 /// The multiplier of the band on `id` holding `price`, in FLOAT_SCALING; 1.0
 /// when no band holds it.
 public(package) fun band_mult(id: &UID, price: u64): u64 {
-    if (!id.exists_(FeeBandsKey())) return fixed_math::math::float_scaling!();
-    pmath::band_mult(id.borrow(FeeBandsKey()), price)
+    if (id.exists_(FeeBandsKey())) {
+        let bands: &vector<u64> = id.borrow(FeeBandsKey());
+        let mut i = 0;
+        while (i < bands.length()) {
+            if (price >= bands[i] && price < bands[i + 1]) return bands[i + 2];
+            i = i + 3;
+        };
+    };
+    fixed_math::math::float_scaling!()
 }
 
 /// Copy the fee-band template onto a new market's `id`. A market keeps its

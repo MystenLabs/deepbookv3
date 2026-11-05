@@ -137,11 +137,11 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
     terms.inventory_impact_charge
 }
 
-public(package) fun mint_price(terms: &MintTerms): &RangePrice {
+public(package) fun mint_px(terms: &MintTerms): &RangePrice {
     &terms.price
 }
 
-public(package) fun redeem_amt(terms: &LiveCloseTerms): u64 {
+public(package) fun rdm_amt(terms: &LiveCloseTerms): u64 {
     terms.redeem_amount
 }
 
@@ -153,7 +153,7 @@ public(package) fun rebate(terms: &LiveCloseTerms): u64 {
     terms.inventory_impact_rebate
 }
 
-public(package) fun close_price(terms: &LiveCloseTerms): &RangePrice {
+public(package) fun close_px(terms: &LiveCloseTerms): &RangePrice {
     &terms.price
 }
 
@@ -321,7 +321,7 @@ public(package) fun nodes_exist(
 /// zeros would understate the result. The point max after the mint is the
 /// larger of the old max and the candidate's own range peak plus `quantity`,
 /// since only points inside the range move.
-public(package) fun liab_minted(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
+public(package) fun liab_add(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
     exposure.liab_of(
         range.max_payout.max(range.range_max_payout + quantity),
         range.total_payout + quantity,
@@ -334,7 +334,7 @@ public(package) fun liab_minted(exposure: &StrikeExposure, range: &MintRange, qu
 /// drops by `close_quantity` and every point outside keeps its payout, so the
 /// new point max is the larger of the lowered range peak and the complement
 /// peak. The closing order is in the book, so neither subtraction can underflow.
-public(package) fun liab_closed(
+public(package) fun liab_sub(
     exposure: &StrikeExposure,
     lower_tick: u64,
     higher_tick: u64,
@@ -342,7 +342,7 @@ public(package) fun liab_closed(
 ): u64 {
     let (_, total_payout) = exposure.payout.rsv_terms();
     let range_max = exposure.payout.range_max(lower_tick, higher_tick);
-    let complement_max = exposure.payout.outside_max(lower_tick, higher_tick);
+    let complement_max = exposure.payout.out_max(lower_tick, higher_tick);
     exposure.liab_of(
         (range_max - close_quantity).max(complement_max),
         total_payout - close_quantity,
@@ -414,7 +414,7 @@ public(package) fun impact_pot(exposure: &StrikeExposure): u64 {
 /// switch `q = M - R` both arms evaluate to `M + lambda * (T - R)` exactly. The
 /// two arms therefore agree where they meet and neither falls, independently of
 /// `backing_buffer_lambda`, and the potential is nondecreasing in liability.
-public(package) fun mint_impact(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
+public(package) fun mint_imp(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
     if (exposure.config.inventory_impact_max_rate() == 0 || quantity == 0) return 0;
 
     let before = exposure.liab_of(range.max_payout, range.total_payout);
@@ -428,7 +428,7 @@ public(package) fun mint_impact(exposure: &StrikeExposure, range: &MintRange, qu
 
 /// Price one live close of `payout` over `(lower_tick, higher_tick]` as the exact
 /// decrease of the book-level potential mints are charged against
-/// (`mint_impact`).
+/// (`mint_imp`).
 public(package) fun close_impact(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -442,7 +442,7 @@ public(package) fun close_impact(
     // Every live order contributes its complete payout at every point in its
     // range, so the pre-close range maximum is at least `payout`.
     let range_max = exposure.payout.range_max(lower_tick, higher_tick);
-    let complement_max = exposure.payout.outside_max(lower_tick, higher_tick);
+    let complement_max = exposure.payout.out_max(lower_tick, higher_tick);
     let before = exposure.liab_of(max_payout, total_payout);
     let after = exposure.liab_of(
         (range_max - payout).max(complement_max),
@@ -548,7 +548,7 @@ public(package) fun try_terms(
         return (option::none(), constants::fill_reason_admission!())
     };
 
-    let inventory_impact_charge = exposure.mint_impact(&range, quantity);
+    let inventory_impact_charge = exposure.mint_imp(&range, quantity);
     let MintRange { expiry_market_id, lower_tick, higher_tick, price, .. } = range;
     let terms = MintTerms {
         expiry_market_id,
@@ -616,7 +616,7 @@ public(package) fun mint_terms(
     let premium = exposure.config.assert_mint_admission(range.price.probability(), quantity);
     // Preserve the mutation path's validation order.
     order::chk_quantity(quantity);
-    let inventory_impact_charge = exposure.mint_impact(&range, quantity);
+    let inventory_impact_charge = exposure.mint_imp(&range, quantity);
     let MintRange { expiry_market_id, lower_tick, higher_tick, price, .. } = range;
     MintTerms {
         expiry_market_id,
@@ -671,7 +671,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 }
 
 /// Allocate a queued mint at resolve: `allocate_mint_order` over nodes placement
-/// already pinned, so the fill creates no tree node (`insert_exist`).
+/// already pinned, so the fill creates no tree node (`ins_old`).
 /// Aborts `strike_payout_tree::ENodeMissing` if a boundary is missing; resolve
 /// checks `nodes_exist` first and refunds instead.
 public(package) fun allocate(exposure: &mut StrikeExposure, terms: MintTerms): Order {
@@ -682,16 +682,16 @@ public(package) fun allocate(exposure: &mut StrikeExposure, terms: MintTerms): O
     let allocated_order = order::from_ticks(lower_tick, higher_tick, quantity, sequence);
     exposure.next_order_sequence = sequence + 1;
 
-    exposure.payout.insert_exist(lower_tick, higher_tick, quantity);
+    exposure.payout.ins_old(lower_tick, higher_tick, quantity);
 
     allocated_order
 }
 
 /// Ensure both finite boundaries of a mint range exist as tree nodes, so a
 /// later resolve fill inserts over existing nodes only.
-public(package) fun ensure_nodes(exposure: &mut StrikeExposure, lower_tick: u64, higher_tick: u64) {
-    exposure.payout.ensure_node(lower_tick);
-    exposure.payout.ensure_node(higher_tick);
+public(package) fun ens_nodes(exposure: &mut StrikeExposure, lower_tick: u64, higher_tick: u64) {
+    exposure.payout.ens_node(lower_tick);
+    exposure.payout.ens_node(higher_tick);
 }
 
 /// Detach the payout-tree node at `tick` if it is empty, unpinned, and not
@@ -803,7 +803,7 @@ public(package) fun settle_close(exposure: &mut StrikeExposure, order: &Order): 
 /// `none`, with nothing changed, when the payout would underflow settled
 /// liability, or when the exposure is not settled yet. A losing order returns
 /// `some(0)`.
-public(package) fun try_settled(exposure: &mut StrikeExposure, order: &Order): Option<u64> {
+public(package) fun try_pay(exposure: &mut StrikeExposure, order: &Order): Option<u64> {
     if (!exposure.is_settled()) return option::none();
     let payout = exposure.settled_order_payout(order);
     if (payout > exposure.settled_payout_liability) return option::none();

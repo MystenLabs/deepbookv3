@@ -191,8 +191,8 @@ public(package) fun set_base(config: &mut StrikeExposureConfig, value: u64) {
     config.base_fee = value;
 }
 
-public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_min_fee(value);
+public(package) fun set_mfee(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_mfee(value);
     config.min_fee = value;
 }
 
@@ -226,8 +226,8 @@ public(package) fun narrow(
     (min, max)
 }
 
-public(package) fun set_fee_win(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_fee_win(value);
+public(package) fun set_win(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_win(value);
     config.expiry_fee_window_ms = value;
 }
 
