@@ -208,6 +208,24 @@ public(package) fun set_maxp(config: &mut StrikeExposureConfig, value: u64) {
     config.max_entry_probability = value;
 }
 
+/// Narrow a new market's snapshot to the overlap of its entry band and
+/// `[min_entry_probability, max_entry_probability]`, and return the resulting
+/// `(min, max)` for the creation event. Each side keeps the tighter value, so a
+/// market can never be looser than the template it copied, and the band stays
+/// inside the template's validated envelope. Aborts when the overlap is empty.
+public(package) fun narrow(
+    config: &mut StrikeExposureConfig,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+): (u64, u64) {
+    let min = min_entry_probability.max(config.min_entry_probability);
+    let max = max_entry_probability.min(config.max_entry_probability);
+    assert!(min < max, EInvalidEntryProbabilityBound);
+    config.min_entry_probability = min;
+    config.max_entry_probability = max;
+    (min, max)
+}
+
 public(package) fun set_fee_win(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::chk_fee_win(value);
     config.expiry_fee_window_ms = value;

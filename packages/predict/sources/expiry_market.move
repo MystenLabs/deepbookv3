@@ -50,7 +50,8 @@ use deepbook_predict::{
     pricing::{Self, Pricer, FrozenPricer, RangePrice, VolSnapshot},
     protocol_config::ProtocolConfig,
     range_codec,
-    strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure}
+    strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure},
+    strike_exposure_config::StrikeExposureConfig
 };
 use deepbook_predict_math::{lazer_price::{Self, LazerPrice}, math as pmath};
 use fixed_math::math;
@@ -1673,12 +1674,12 @@ public(package) fun free_settled(market: &mut ExpiryMarket): Balance<USDC> {
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
-/// starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
-/// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
-/// priced flow.
+/// The market stores the underlying, accounting/admission tick sizes, and `strike_exposure_config`
+/// (the caller's snapshot of the template) and starts with zero expiry cash; it needs no live spot
+/// at creation (strikes are absolute ticks, so there is no grid to center). Current oracle bindings
+/// stay in Propbook and are resolved on every priced flow.
 public(package) fun create_and_share(
-    config: &ProtocolConfig,
+    strike_exposure_config: StrikeExposureConfig,
     propbook_underlying_id: u32,
     expiry: u64,
     tick_size: u64,
@@ -1689,7 +1690,6 @@ public(package) fun create_and_share(
 ): ID {
     let id = object::new(ctx);
     let expiry_market_id = id.to_inner();
-    let strike_exposure_config = config.se_snapshot();
     let market = ExpiryMarket {
         id,
         propbook_underlying_id,

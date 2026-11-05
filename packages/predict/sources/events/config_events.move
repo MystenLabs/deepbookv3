@@ -130,6 +130,8 @@ public struct MarketCreated has copy, drop, store {
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
+    /// The market's own mint entry band: the template's, or narrower when the
+    /// lifecycle-cap holder narrowed it at creation.
     min_entry_probability: u64,
     max_entry_probability: u64,
     expiry_fee_window_ms: u64,
@@ -303,6 +305,8 @@ public(package) fun mkt_new(
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     strike_exposure_config: &StrikeExposureConfig,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -316,8 +320,8 @@ public(package) fun mkt_new(
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),
         min_fee: strike_exposure_config.min_fee(),
-        min_entry_probability: strike_exposure_config.min_prob(),
-        max_entry_probability: strike_exposure_config.max_prob(),
+        min_entry_probability,
+        max_entry_probability,
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
