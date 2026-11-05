@@ -22,6 +22,15 @@ use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_s
 
 const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
+// Entry bands for `narrow`, in FLOAT_SCALING: 15c is 150_000_000.
+const TEMPLATE_MIN_PROBABILITY: u64 = 150_000_000;
+const TEMPLATE_MAX_PROBABILITY: u64 = 500_000_000;
+const NARROW_MIN_PROBABILITY: u64 = 250_000_000;
+const NARROW_MAX_PROBABILITY: u64 = 400_000_000;
+const LOOSE_MIN_PROBABILITY: u64 = 50_000_000;
+const LOOSE_MAX_PROBABILITY: u64 = 750_000_000;
+const DISJOINT_MIN_PROBABILITY: u64 = 600_000_000;
+const DISJOINT_MAX_PROBABILITY: u64 = 900_000_000;
 const DEFAULT_BACKING_BUFFER_LAMBDA: u64 = 310_000_000;
 const DEFAULT_BASE_FEE: u64 = 100_000_000;
 const DEFAULT_MIN_FEE: u64 = 22_000_000;
@@ -111,7 +120,7 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
         &clock,
     );
 
-    let snapshot = config.se_snapshot();
+    let snapshot = config.se_snap();
     assert_eq!(snapshot.min_prob(), config_constants::default_max_entry_probability!() - 1);
     assert_eq!(snapshot.max_prob(), config_constants::default_max_entry_probability!());
     destroy(snapshot);
@@ -170,6 +179,85 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
         test_constants::mint_quantity(),
     );
     abort 999
+}
+
+// === narrow (a market's entry band, narrowed at creation) ===
+
+#[test]
+fun narrow_takes_a_band_inside_the_template() {
+    let mut config = band_template();
+
+    let (min, max) = config.narrow(NARROW_MIN_PROBABILITY, NARROW_MAX_PROBABILITY);
+    assert_eq!(min, NARROW_MIN_PROBABILITY);
+    assert_eq!(max, NARROW_MAX_PROBABILITY);
+    assert_eq!(config.min_prob(), NARROW_MIN_PROBABILITY);
+    assert_eq!(config.max_prob(), NARROW_MAX_PROBABILITY);
+    destroy(config);
+}
+
+#[test]
+fun narrow_keeps_the_template_on_each_side_a_request_would_loosen() {
+    // A floor below the template's keeps the template floor; the cap still narrows.
+    let mut low = band_template();
+    let (min, max) = low.narrow(LOOSE_MIN_PROBABILITY, NARROW_MAX_PROBABILITY);
+    assert_eq!(min, TEMPLATE_MIN_PROBABILITY);
+    assert_eq!(max, NARROW_MAX_PROBABILITY);
+    assert_eq!(low.min_prob(), TEMPLATE_MIN_PROBABILITY);
+    assert_eq!(low.max_prob(), NARROW_MAX_PROBABILITY);
+    destroy(low);
+
+    // A cap above the template's keeps the template cap; the floor still narrows.
+    let mut high = band_template();
+    let (min, max) = high.narrow(NARROW_MIN_PROBABILITY, LOOSE_MAX_PROBABILITY);
+    assert_eq!(min, NARROW_MIN_PROBABILITY);
+    assert_eq!(max, TEMPLATE_MAX_PROBABILITY);
+    assert_eq!(high.min_prob(), NARROW_MIN_PROBABILITY);
+    assert_eq!(high.max_prob(), TEMPLATE_MAX_PROBABILITY);
+    destroy(high);
+}
+
+#[test]
+fun narrow_with_open_bounds_keeps_the_template() {
+    let mut config = band_template();
+
+    // The unbanded creation entrypoints pass [0, u64::MAX].
+    let (min, max) = config.narrow(0, std::u64::max_value!());
+    assert_eq!(min, TEMPLATE_MIN_PROBABILITY);
+    assert_eq!(max, TEMPLATE_MAX_PROBABILITY);
+    destroy(config);
+}
+
+#[test]
+fun narrow_accepts_a_band_one_unit_wide() {
+    let mut config = band_template();
+
+    let (min, max) = config.narrow(NARROW_MIN_PROBABILITY, NARROW_MIN_PROBABILITY + 1);
+    assert_eq!(min, NARROW_MIN_PROBABILITY);
+    assert_eq!(max, NARROW_MIN_PROBABILITY + 1);
+    destroy(config);
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
+fun narrow_to_a_single_point_aborts() {
+    let mut config = band_template();
+    config.narrow(NARROW_MIN_PROBABILITY, NARROW_MIN_PROBABILITY);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
+fun narrow_to_a_band_above_the_template_aborts() {
+    let mut config = band_template();
+    // [60c, 90c] against [15c, 50c]: the overlap would be [60c, 50c], which is empty.
+    config.narrow(DISJOINT_MIN_PROBABILITY, DISJOINT_MAX_PROBABILITY);
+    abort 999
+}
+
+/// A template band like Mainnet's [15c, 50c].
+fun band_template(): strike_exposure_config::StrikeExposureConfig {
+    let mut config = strike_exposure_config::new();
+    config.set_minp(TEMPLATE_MIN_PROBABILITY);
+    config.set_maxp(TEMPLATE_MAX_PROBABILITY);
+    config
 }
 
 // === EPremiumBelowMinimum (mint admission) ===

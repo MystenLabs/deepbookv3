@@ -35,7 +35,7 @@ use propbook::{
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
-use std::unit_test::destroy;
+use std::{string::String, unit_test::destroy};
 use sui::{
     clock::{Self, Clock},
     test_scenario::{Self as test, Scenario, return_shared},
@@ -57,6 +57,8 @@ public struct OracleFixture {
     bs_svi_id: ID,
     expiry_id: ID,
     expiry: u64,
+    /// A UID standing in for a market's, for `pricing::pricer_at` reads of a market's SVI cache.
+    market_uid: UID,
 }
 
 /// Transaction-local oracle/config objects used by pricing tests.
@@ -153,6 +155,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
 
     scenario.next_tx(test_constants::admin());
 
+    let market_uid = object::new(scenario.ctx());
     OracleFixture {
         scenario,
         admin_cap,
@@ -164,6 +167,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         bs_svi_id,
         expiry_id,
         expiry,
+        market_uid,
     }
 }
 
@@ -303,7 +307,7 @@ public fun load_pricer_bound_to(
     expiry_market_id: ID,
 ): Pricer {
     pricing::load_live_pricer(
-        config.pricing_cfg(),
+        config.pr_cfg(),
         oracle_registry,
         pyth,
         bs_values,
@@ -677,6 +681,51 @@ public fun set_bs_svi_raw_for_testing_bundle(
     end_seed_tx(restore);
 }
 
+/// Overwrite the BS SVI row with signed provider-native `u128` values, scaled at whatever decimals
+/// the store is set to, through the real ingest path.
+public fun set_bs_svi_wide_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    svi_a_magnitude: u128,
+    svi_a_is_negative: bool,
+    svi_b: u128,
+    svi_sigma: u128,
+    svi_rho_magnitude: u128,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u128,
+    svi_m_is_negative: bool,
+) {
+    let sid = oracle.bs.svi().svi_sid(self.expiry);
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    oracle
+        .bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                source_timestamp_ms,
+                vector[
+                    verify::new_svi_for_testing(
+                        sid,
+                        source_timestamp_ms,
+                        svi_a_magnitude,
+                        svi_a_is_negative,
+                        svi_b,
+                        svi_sigma,
+                        svi_rho_magnitude,
+                        svi_rho_is_negative,
+                        svi_m_magnitude,
+                        svi_m_is_negative,
+                    ),
+                ],
+            ),
+            vector[self.expiry],
+            &self.clock,
+            &ctx,
+        );
+    end_seed_tx(restore);
+}
+
 /// Re-send an unchanged SVI tuple in a later batch. The batch timestamp advances while the tuple
 /// keeps its original source timestamp, so the stored observation and its roll-down anchor do not
 /// change.
@@ -817,6 +866,34 @@ public fun set_use_pyth_spot_for_forward_bundle(
 
 // === Accessors ===
 
+/// Admin-set the provider model the bundle's SVI store accepts and serves, through the production
+/// Propbook registry entry.
+public fun set_bs_svi_model_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    svi_model: String,
+) {
+    propbook_registry::set_block_scholes_svi_model(
+        oracle.bs.svi_mut(),
+        &self.propbook_admin_cap,
+        svi_model,
+    );
+}
+
+/// Admin-set the decimals the bundle's SVI store accepts and serves, through the production
+/// Propbook registry entry.
+public fun set_bs_svi_decimals_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    decimals: u8,
+) {
+    propbook_registry::set_block_scholes_svi_decimals(
+        oracle.bs.svi_mut(),
+        &self.propbook_admin_cap,
+        decimals,
+    );
+}
+
 public fun pyth(oracle: &OracleBundle): &PythFeed { &oracle.pyth }
 
 public fun bs(oracle: &OracleBundle): &BlockScholesFeed { &oracle.bs }
@@ -855,6 +932,8 @@ public fun expiry_id(self: &OracleFixture): ID { self.expiry_id }
 
 public fun expiry(self: &OracleFixture): u64 { self.expiry }
 
+public fun market_uid(self: &OracleFixture): &UID { &self.market_uid }
+
 /// Tear down the fixture and all owned objects. Shared objects are released via
 /// `return_oracle_bundle` in the test and reclaimed by `end`.
 public fun finish(self: OracleFixture) {
@@ -869,7 +948,9 @@ public fun finish(self: OracleFixture) {
         bs_svi_id: _,
         expiry_id: _,
         expiry: _,
+        market_uid,
     } = self;
+    market_uid.delete();
     lifecycle_cap.destroy();
     destroy(propbook_admin_cap);
     destroy(admin_cap);

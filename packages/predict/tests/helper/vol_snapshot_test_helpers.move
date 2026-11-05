@@ -59,8 +59,9 @@ public fun load_snapshot_with_stores(
     clock.set_for_testing(fx.clock().timestamp_ms());
     let expiry_market_id = fx.expiry_id();
     let expiry = fx.expiry();
+    let mut market_uid = object::new(fx.scenario_mut().ctx());
     let (snapshot, pricer) = pricing::load_vol(
-        config.pricing_cfg(),
+        config.pr_cfg(),
         oracle_registry,
         pyth,
         bs_values,
@@ -69,9 +70,11 @@ public fun load_snapshot_with_stores(
         test_constants::propbook_underlying_id(),
         expiry,
         svi_max_age_ms,
+        &mut market_uid,
         &clock,
         fx.scenario_mut().ctx(),
     );
+    market_uid.delete();
     clock.destroy_for_testing();
     (snapshot, pricer)
 }

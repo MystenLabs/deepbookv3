@@ -20,11 +20,11 @@ const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
 const EInvalidExpiryFeeWindowMs: u64 = 8;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 9;
 const EInvalidMarketTickSize: u64 = 10;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidEwmaAlpha: u64 = 11;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidEwmaZScoreThreshold: u64 = 12;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidEwmaPenaltyRate: u64 = 13;
 const EInvalidBackingBufferLambda: u64 = 14;
 const EInvalidCadenceWindowSize: u64 = 15;
@@ -40,6 +40,8 @@ const EInvalidNoTradeWindowMs: u64 = 24;
 const EInvalidFeeIncentiveSubsidyRate: u64 = 25;
 const EInvalidFeeIncentiveLiveTargetRate: u64 = 26;
 const EInvalidFeeIncentiveLifetimeCapRate: u64 = 27;
+const EInvalidBuilderFeeCap: u64 = 28;
+const EInvalidFeeBands: u64 = 29;
 
 // === Fees ===
 
@@ -53,7 +55,7 @@ public(package) macro fun max_protocol_reserve_profit_share(): u64 {
     fixed_math::math::float_scaling!()
 }
 
-public(package) fun chk_rsv_shr(value: u64) {
+public(package) fun chk_rsv(value: u64) {
     assert!(
         value >= min_protocol_reserve_profit_share!()
             && value <= max_protocol_reserve_profit_share!(),
@@ -69,7 +71,7 @@ public(package) macro fun min_referral_fee_rate(): u64 { 0 }
 
 public(package) macro fun max_referral_fee_rate(): u64 { 250_000_000 }
 
-public(package) fun chk_referral(value: u64) {
+public(package) fun chk_ref(value: u64) {
     assert!(
         value >= min_referral_fee_rate!() && value <= max_referral_fee_rate!(),
         EInvalidReferralFeeRate,
@@ -91,7 +93,7 @@ public(package) macro fun min_fee_incentive_subsidy_rate(): u64 { 0 }
 /// nondecreasing in quantity and `mint_exact_cost`'s budget search exact (RP-36).
 public(package) macro fun max_fee_incentive_subsidy_rate(): u64 { 500_000_000 }
 
-public(package) fun chk_subsidy(value: u64) {
+public(package) fun chk_sub(value: u64) {
     assert!(
         value >= min_fee_incentive_subsidy_rate!() && value <= max_fee_incentive_subsidy_rate!(),
         EInvalidFeeIncentiveSubsidyRate,
@@ -109,7 +111,7 @@ public(package) macro fun max_fee_incentive_live_target_rate(): u64 {
     fixed_math::math::float_scaling!()
 }
 
-public(package) fun chk_live_tgt(value: u64) {
+public(package) fun chk_live(value: u64) {
     assert!(
         value >= min_fee_incentive_live_target_rate!()
             && value <= max_fee_incentive_live_target_rate!(),
@@ -128,12 +130,57 @@ public(package) macro fun max_fee_incentive_lifetime_cap_rate(): u64 {
     fixed_math::math::float_scaling!()
 }
 
-public(package) fun chk_life_cap(value: u64) {
+public(package) fun chk_life(value: u64) {
     assert!(
         value >= min_fee_incentive_lifetime_cap_rate!()
             && value <= max_fee_incentive_lifetime_cap_rate!(),
         EInvalidFeeIncentiveLifetimeCapRate,
     );
+}
+
+/// Most a trade's builder fee can charge per contract, in FLOAT_SCALING of a
+/// contract's $1 payout (5c). An order that names a higher fee pays the cap. `0`
+/// stops builder fees.
+public(package) macro fun default_builder_fee_cap(): u64 { 50_000_000 }
+
+public(package) macro fun min_builder_fee_cap(): u64 { 0 }
+
+/// A contract's whole $1 payout. No fee can usefully exceed it, so a higher
+/// value is a typo.
+public(package) macro fun max_builder_fee_cap(): u64 { fixed_math::math::float_scaling!() }
+
+public(package) fun chk_bcap(value: u64) {
+    assert!(
+        value >= min_builder_fee_cap!() && value <= max_builder_fee_cap!(),
+        EInvalidBuilderFeeCap,
+    );
+}
+
+/// Most fee bands one table can hold. Every fee lookup walks the table, so this
+/// bounds its cost.
+public(package) macro fun max_fee_bands(): u64 { 8 }
+
+/// Highest fee-band multiplier, in FLOAT_SCALING (10x). A higher value is a typo.
+public(package) macro fun max_fee_band_mult(): u64 { 10_000_000_000 }
+
+/// Check a fee-band table: `[low, high, multiplier]` triples over contract
+/// prices in FLOAT_SCALING, sorted and disjoint, each `low < high <= 1.0` and
+/// `1.0 <= multiplier <= 10.0`. Empty clears the table.
+public(package) fun chk_bands(bands: &vector<u64>) {
+    let n = bands.length();
+    assert!(n % 3 == 0 && n <= 3 * max_fee_bands!(), EInvalidFeeBands);
+    let one = fixed_math::math::float_scaling!();
+    let mut prev = 0;
+    let mut i = 0;
+    while (i < n) {
+        let (lo, hi, mult) = (bands[i], bands[i + 1], bands[i + 2]);
+        assert!(
+            lo >= prev && lo < hi && hi <= one && mult >= one && mult <= max_fee_band_mult!(),
+            EInvalidFeeBands,
+        );
+        prev = hi;
+        i = i + 3;
+    };
 }
 
 /// Fee charged on an executed PLP *supply* fill, in FLOAT_SCALING. Ships at zero:
@@ -157,7 +204,7 @@ public(package) macro fun min_plp_fee_rate(): u64 { 0 }
 
 public(package) macro fun max_plp_fee_rate(): u64 { 50_000_000 }
 
-public(package) fun chk_sup_fee(value: u64) {
+public(package) fun chk_sup(value: u64) {
     assert!(value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(), EInvalidPlpSupplyFeeRate);
 }
 
@@ -187,7 +234,7 @@ public(package) macro fun min_lp_request_limit_flush_attempts(): u64 { 1 }
 
 public(package) macro fun max_lp_request_limit_flush_attempts(): u64 { 3 }
 
-public(package) fun chk_attempts(value: u64) {
+public(package) fun chk_att(value: u64) {
     assert!(
         value >= min_lp_request_limit_flush_attempts!()
             && value <= max_lp_request_limit_flush_attempts!(),
@@ -218,7 +265,7 @@ public(package) macro fun max_max_valuation_window_ms(): u64 {
     4 * deepbook_predict::constants::one_hour_ms!()
 }
 
-public(package) fun chk_val_win(value: u64) {
+public(package) fun chk_vw(value: u64) {
     assert!(
         value >= min_max_valuation_window_ms!() && value <= max_max_valuation_window_ms!(),
         EInvalidMaxValuationWindowMs,
@@ -250,7 +297,7 @@ public(package) macro fun min_max_lp_pool_value(): u64 {
 
 public(package) macro fun max_max_lp_pool_value(): u64 { std::u64::max_value!() }
 
-public(package) fun chk_max_pool(value: u64) {
+public(package) fun chk_pool(value: u64) {
     assert!(
         value >= min_max_lp_pool_value!() && value <= max_max_lp_pool_value!(),
         EInvalidMaxLpPoolValue,
@@ -305,7 +352,7 @@ public(package) macro fun min_base_fee(): u64 { 1 }
 
 public(package) macro fun max_base_fee(): u64 { fixed_math::math::float_scaling!() }
 
-public(package) fun chk_base_fee(value: u64) {
+public(package) fun chk_base(value: u64) {
     assert!(value >= min_base_fee!() && value <= max_base_fee!(), EInvalidBaseFee);
 }
 
@@ -315,7 +362,7 @@ public(package) macro fun min_min_fee(): u64 { 0 }
 
 public(package) macro fun max_min_fee(): u64 { fixed_math::math::float_scaling!() }
 
-public(package) fun chk_min_fee(value: u64) {
+public(package) fun chk_mfee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
 }
 
@@ -333,7 +380,7 @@ public(package) macro fun max_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::one_year_ms!()
 }
 
-public(package) fun chk_fee_win(value: u64) {
+public(package) fun chk_win(value: u64) {
     assert!(
         value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
         EInvalidExpiryFeeWindowMs,
@@ -354,7 +401,7 @@ public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
     10 * fixed_math::math::float_scaling!()
 }
 
-public(package) fun chk_fee_mult(value: u64) {
+public(package) fun chk_mult(value: u64) {
     assert!(
         value >= min_expiry_fee_max_multiplier!() && value <= max_expiry_fee_max_multiplier!(),
         EInvalidExpiryFeeMaxMultiplier,
@@ -377,7 +424,7 @@ public(package) fun chk_ticks(value: u64) {
 
 public(package) macro fun max_cadence_window_size(): u64 { 10 }
 
-public(package) fun chk_cad_win(value: u64) {
+public(package) fun chk_cad(value: u64) {
     assert!(value <= max_cadence_window_size!(), EInvalidCadenceWindowSize);
 }
 
@@ -392,7 +439,7 @@ public(package) macro fun max_min_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun chk_min_prob(value: u64) {
+public(package) fun chk_minp(value: u64) {
     assert!(
         value >= min_min_entry_probability!()
             && value <= max_min_entry_probability!(),
@@ -408,7 +455,7 @@ public(package) macro fun max_max_entry_probability(): u64 {
     fixed_math::math::float_scaling!() - 1
 }
 
-public(package) fun chk_max_prob(value: u64) {
+public(package) fun chk_maxp(value: u64) {
     assert!(
         value >= min_max_entry_probability!()
             && value <= max_max_entry_probability!(),
@@ -442,7 +489,7 @@ public(package) macro fun max_pyth_spot_freshness_ms(): u64 {
     deepbook_predict::constants::one_minute_ms!()
 }
 
-public(package) fun chk_pyth_age(value: u64) {
+public(package) fun chk_pyage(value: u64) {
     assert!(
         value >= min_pyth_spot_freshness_ms!() && value <= max_pyth_spot_freshness_ms!(),
         EInvalidPythSpotFreshnessMs,
@@ -478,7 +525,7 @@ public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 {
     2 * deepbook_predict::constants::one_minute_ms!()
 }
 
-public(package) fun chk_svi_age(value: u64) {
+public(package) fun chk_svi(value: u64) {
     assert!(
         value >= min_block_scholes_svi_freshness_ms!()
             && value <= max_block_scholes_svi_freshness_ms!(),
@@ -503,7 +550,7 @@ public(package) macro fun max_no_trade_window_ms(): u64 {
     deepbook_predict::constants::one_minute_ms!() / 4
 }
 
-public(package) fun chk_no_trade(value: u64) {
+public(package) fun chk_nt(value: u64) {
     assert!(
         value >= min_no_trade_window_ms!() && value <= max_no_trade_window_ms!(),
         EInvalidNoTradeWindowMs,

@@ -13,11 +13,11 @@ use deepbook_predict::{config_constants, pricing::RangePrice};
 use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 
-#[allow(unused_const)]
+#[test_only]
 const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
-#[allow(unused_const)]
+#[test_only]
 const EPremiumBelowMinimum: u64 = 3;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
@@ -186,35 +186,53 @@ public(package) fun set_lambda(config: &mut StrikeExposureConfig, value: u64) {
     config.backing_buffer_lambda = value;
 }
 
-public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_base_fee(value);
+public(package) fun set_base(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_base(value);
     config.base_fee = value;
 }
 
-public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_min_fee(value);
+public(package) fun set_mfee(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_mfee(value);
     config.min_fee = value;
 }
 
-public(package) fun set_min_prob(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_min_prob(value);
+public(package) fun set_minp(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_minp(value);
     assert!(value < config.max_entry_probability, EInvalidEntryProbabilityBound);
     config.min_entry_probability = value;
 }
 
-public(package) fun set_max_prob(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_max_prob(value);
+public(package) fun set_maxp(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_maxp(value);
     assert!(value > config.min_entry_probability, EInvalidEntryProbabilityBound);
     config.max_entry_probability = value;
 }
 
-public(package) fun set_fee_win(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_fee_win(value);
+/// Narrow a new market's snapshot to the overlap of its entry band and
+/// `[min_entry_probability, max_entry_probability]`, and return the resulting
+/// `(min, max)` for the creation event. Each side keeps the tighter value, so a
+/// market can never be looser than the template it copied, and the band stays
+/// inside the template's validated envelope. Aborts when the overlap is empty.
+public(package) fun narrow(
+    config: &mut StrikeExposureConfig,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+): (u64, u64) {
+    let min = min_entry_probability.max(config.min_entry_probability);
+    let max = max_entry_probability.min(config.max_entry_probability);
+    assert!(min < max, EInvalidEntryProbabilityBound);
+    config.min_entry_probability = min;
+    config.max_entry_probability = max;
+    (min, max)
+}
+
+public(package) fun set_win(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_win(value);
     config.expiry_fee_window_ms = value;
 }
 
-public(package) fun set_fee_mult(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_fee_mult(value);
+public(package) fun set_mult(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_mult(value);
     config.expiry_fee_max_multiplier = value;
 }
 

@@ -29,7 +29,7 @@ public struct BuilderFeesClaimed has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun code_created(builder_code_id: ID, owner: address, builder_code_index: u64) {
+public(package) fun created(builder_code_id: ID, owner: address, builder_code_index: u64) {
     event::emit(BuilderCodeCreated {
         builder_code_id,
         owner,
@@ -45,7 +45,7 @@ public(package) fun code_set(account_id: ID, owner: address, builder_code_id: Op
     });
 }
 
-public(package) fun fees_claimed(builder_code_id: ID, owner: address, amount: u64) {
+public(package) fun fees_out(builder_code_id: ID, owner: address, amount: u64) {
     event::emit(BuilderFeesClaimed {
         builder_code_id,
         owner,

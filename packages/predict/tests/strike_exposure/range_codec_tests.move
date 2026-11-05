@@ -24,22 +24,22 @@ fun strike_from_tick_finite_tick_scales_by_tick_size() {
     // 100 ticks at 1e9 raw per tick = 100e9 raw.
     let strike = range_codec::strike_from_tick(100, TICK_SIZE);
     assert_eq!(strike.value(), 100_000_000_000);
-    assert!(!strike.is_neg_inf());
-    assert!(!strike.is_pos_inf());
+    assert!(!strike.is_ninf());
+    assert!(!strike.is_pinf());
 }
 
 #[test]
 fun strike_from_tick_maps_tick_zero_to_neg_inf() {
     let strike = range_codec::strike_from_tick(0, TICK_SIZE);
     assert_eq!(strike.value(), constants::neg_inf!());
-    assert!(strike.is_neg_inf());
+    assert!(strike.is_ninf());
 }
 
 #[test]
 fun strike_from_tick_maps_pos_inf_tick_to_pos_inf() {
     let strike = range_codec::strike_from_tick(POS_INF_TICK, TICK_SIZE);
     assert_eq!(strike.value(), constants::pos_inf!());
-    assert!(strike.is_pos_inf());
+    assert!(strike.is_pinf());
 }
 
 #[test]
@@ -47,7 +47,7 @@ fun strike_from_tick_max_finite_tick_stays_finite() {
     // One tick below the sentinel is an ordinary finite conversion.
     let strike = range_codec::strike_from_tick(POS_INF_TICK - 1, TICK_SIZE);
     assert_eq!(strike.value(), (POS_INF_TICK - 1) * TICK_SIZE);
-    assert!(!strike.is_pos_inf());
+    assert!(!strike.is_pinf());
 }
 
 // === limit_tick (settlement prefix threshold = ceil(settlement / tick_size)) ===

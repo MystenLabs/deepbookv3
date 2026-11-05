@@ -29,7 +29,7 @@ use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
-    builder_code::BuilderCode,
+    builder_code::{Self, BuilderCode, BuilderFee},
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
@@ -193,10 +193,6 @@ public fun setup_market(tick: u64): Fixture {
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
     config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
-    // Allowlist the default trader as a settled-redeem keeper so flow tests can
-    // compose `redeem_settled_permissionless` inside the trader's own transaction.
-    // The allowlist's own gating is covered with unlisted senders elsewhere.
-    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     // Model the production window between the package upgrade and its watermark
     // bump: this package runs while the watermark still names the previous
     // version, so the immediate mint and redeem paths stay live for the legacy
@@ -323,8 +319,28 @@ public fun setup_everything_with_expiry(expiry_ms: u64): (Fixture, ID, Trader) {
     )
 }
 
-fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+/// `setup_live_market` over a market created after the fee-band template is
+/// set to `bands`, so the market snapshots them.
+public fun setup_banded_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+    bands: vector<u64>,
+): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
+    fx.set_template_fee_bands(bands);
+    live_market_on(fx, expiry_ms, live_price, test_constants::mint_deposit())
+}
+
+fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+    live_market_on(setup_market_default(), expiry_ms, live_price, deposit)
+}
+
+fun live_market_on(
+    mut fx: Fixture,
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+): (Fixture, ID, Trader) {
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -351,6 +367,43 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
+        &creation_clock,
+        self.scenario.ctx(),
+    );
+    creation_clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(registry);
+    return_shared(vault);
+    self.scenario.next_tx(test_constants::admin());
+    expiry_id
+}
+
+/// `create_expiry` through `create_and_share_expiry_market_with_band`, narrowing the
+/// new market's entry band to `[min_entry_probability, max_entry_probability]`.
+public fun create_expiry_with_band(
+    self: &mut Fixture,
+    expiry: u64,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+): ID {
+    self.scenario.next_tx(test_constants::admin());
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
+    creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
+    let expiry_id = registry.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &self.lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
+        option::some(expiry),
+        min_entry_probability,
+        max_entry_probability,
         &creation_clock,
         self.scenario.ctx(),
     );
@@ -411,6 +464,11 @@ public fun set_plp_withdraw_fee_rate(self: &Fixture, config: &mut ProtocolConfig
 /// Set the live protocol-wide referral fee rate through the real admin path.
 public fun set_referral_fee_rate_bundle(self: &Fixture, market: &mut MarketBundle, rate: u64) {
     market.config.set_referral_fee_rate(&self.admin_cap, rate);
+}
+
+/// Set the builder fee cap through the real admin path.
+public fun set_builder_fee_cap_bundle(self: &Fixture, market: &mut MarketBundle, cap: u64) {
+    market.config.set_builder_fee_cap(&self.admin_cap, cap, &self.clock);
 }
 
 /// Set the live fee-incentive subsidy rate through the real admin path.
@@ -542,24 +600,6 @@ public fun cancel_supply_request_bundle(
         );
 }
 
-/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
-public fun add_settled_redeem_keeper_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    keeper: address,
-) {
-    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
-}
-
-/// Revoke `keeper`'s access to `redeem_settled_permissionless`, through the real admin path.
-public fun remove_settled_redeem_keeper_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    keeper: address,
-) {
-    market.config.remove_settled_redeem_keeper(&self.admin_cap, keeper);
-}
-
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);
@@ -628,9 +668,9 @@ public fun set_ewma_penalty_bundle(
     self.set_ewma_penalty(&mut market.config, alpha, z_score_threshold, penalty_rate);
 }
 
-/// Create and share a builder code, then set it as the trader's sticky
-/// attribution. Runs its own transactions; call before taking bundles.
-public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
+/// Create and share a builder code owned by `trader`'s owner. Runs its own
+/// transaction; call before taking bundles.
+public fun create_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
     self.scenario.next_tx(trader.owner);
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
@@ -641,7 +681,23 @@ public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, tra
     );
     return_shared(registry);
     return_shared(config);
+    code_id
+}
 
+/// Name the shared code `code_id` and `fee_per_contract` for one trade, inside
+/// the current transaction.
+public fun builder_fee(self: &mut Fixture, code_id: ID, fee_per_contract: u64): BuilderFee {
+    let code = self.scenario.take_shared_by_id<BuilderCode>(code_id);
+    let fee = builder_code::new_fee(&code, fee_per_contract);
+    return_shared(code);
+    fee
+}
+
+/// Create and share a builder code, then attach it to the trader's account.
+/// An attached code no longer affects fees; tests use this to show that. Runs
+/// its own transactions; call before taking bundles.
+public fun create_and_link_builder_code(self: &mut Fixture, code_index: u64, trader: &Trader): ID {
+    let code_id = self.create_builder_code(code_index, trader);
     self.scenario.next_tx(trader.owner);
     let code = self.scenario.take_shared_by_id<BuilderCode>(code_id);
     let mut wrapper = self.scenario.take_shared_by_id<AccountWrapper>(trader.wrapper_id);
@@ -679,6 +735,16 @@ public fun set_template_min_fee(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_min_fee(&self.admin_cap, value, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Replace the fee-band template through the real admin path. Only markets
+/// created afterwards snapshot it.
+public fun set_template_fee_bands(self: &mut Fixture, bands: vector<u64>) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_fee_bands(&self.admin_cap, bands, &self.clock);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -1770,6 +1836,122 @@ public fun quote_mint_exact_cost_for_account_bundle(
         )
 }
 
+/// The production `quote_mint_for_account` for an exact quantity: a queued
+/// fill's pricing at the clock, naming no builder.
+public fun production_quote_mint_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            0,
+            quantity,
+            true,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_exact_cost_for_account`: a queued exact-cost
+/// fill's budget search at the clock, naming no builder.
+public fun production_quote_mint_exact_cost_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_with_builder_fee` for an exact quantity: a queued
+/// fill's pricing at the clock, charging `builder_fee_per_contract`.
+public fun quote_mint_with_builder_fee_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    builder_fee_per_contract: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_with_builder_fee(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            0,
+            quantity,
+            true,
+            builder_fee_per_contract,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// The production `quote_mint_exact_cost_with_builder_fee`: a queued exact-cost
+/// fill's budget search at the clock, charging `builder_fee_per_contract`.
+public fun quote_mint_exact_cost_with_builder_fee_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    builder_fee_per_contract: u64,
+): MintQuote {
+    let pricer = self.load_pricer_bundle(market);
+    market
+        .market
+        .quote_mint_exact_cost_with_builder_fee(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            builder_fee_per_contract,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
@@ -1957,7 +2139,7 @@ public fun load_pricer_bound_to_bundle(
     expiry_market_id: ID,
 ): pricing::Pricer {
     pricing::load_live_pricer(
-        market.config.pricing_cfg(),
+        market.config.pr_cfg(),
         &market.oracle_registry,
         &market.pyth,
         market.bs.values(),
@@ -2143,9 +2325,10 @@ public fun redeem_live_bundle_with_limits(
     )
 }
 
-/// Keeper-path settled redeem (no owner auth): clears a settled order using app
-/// auth generated through the whitelisted `PredictApp`. The current scenario sender
-/// must be an allowlisted settled-redeem keeper. Does not price, so takes no Block
+/// Settled redeem with Predict app auth, as the retired keeper path took it, so
+/// any sender can clear the order. Runs Predict's test-only copy of the retired
+/// `redeem_settled`, which the legacy flow suites use to close the account-held
+/// positions they seed with the test-only mint. Does not price, so takes no Block
 /// Scholes feed.
 public fun redeem_settled(
     self: &mut Fixture,
@@ -2156,9 +2339,10 @@ public fun redeem_settled(
     order_id: u256,
 ) {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    market.redeem_settled_permissionless(
-        &account_registry,
+    let auth = predict_account::generate_auth_as_app(&account_registry);
+    market.redeem_settled_for_testing(
         wrapper,
+        auth,
         config,
         order_id,
         root,
@@ -2168,8 +2352,9 @@ public fun redeem_settled(
     return_shared(account_registry);
 }
 
-/// Owner-authorized settled redeem: clears a settled order using the current
-/// scenario sender's account auth. Does not price, so takes no Block Scholes feed.
+/// Owner-authorized settled redeem through the same test-only copy, using the
+/// current scenario sender's account auth. Does not price, so takes no Block
+/// Scholes feed.
 public fun redeem_settled_with_owner_auth(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -2179,7 +2364,7 @@ public fun redeem_settled_with_owner_auth(
     order_id: u256,
 ) {
     let auth = account::generate_auth(self.scenario.ctx());
-    market.redeem_settled(
+    market.redeem_settled_for_testing(
         wrapper,
         auth,
         config,
@@ -2854,6 +3039,62 @@ public fun create_foreign_block_scholes_stores(
 }
 
 public fun propbook_admin_cap(self: &Fixture): &RegistryAdminCap { &self.propbook_admin_cap }
+
+/// Admin-set the decimals a market bundle's SVI store accepts and serves, through the production
+/// Propbook registry entry.
+public fun set_svi_decimals_bundle(self: &Fixture, market: &mut MarketBundle, decimals: u8) {
+    propbook_registry::set_block_scholes_svi_decimals(
+        market.bs.svi_mut(),
+        &self.propbook_admin_cap,
+        decimals,
+    );
+}
+
+/// Land one SVI row for the bundle's expiry with signed provider-native `u128` values, scaled at
+/// whatever decimals the store is set to, through the real ingest path.
+public fun seed_svi_wide_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    source_timestamp_ms: u64,
+    svi_a_magnitude: u128,
+    svi_a_is_negative: bool,
+    svi_b: u128,
+    svi_sigma: u128,
+    svi_rho_magnitude: u128,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u128,
+    svi_m_is_negative: bool,
+) {
+    let expiry = market.market.expiry();
+    let sid = market.bs.svi().svi_sid(expiry);
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    market
+        .bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                source_timestamp_ms,
+                vector[
+                    verify::new_svi_for_testing(
+                        sid,
+                        source_timestamp_ms,
+                        svi_a_magnitude,
+                        svi_a_is_negative,
+                        svi_b,
+                        svi_sigma,
+                        svi_rho_magnitude,
+                        svi_rho_is_negative,
+                        svi_m_magnitude,
+                        svi_m_is_negative,
+                    ),
+                ],
+            ),
+            vector[expiry],
+            &self.clock,
+            &ctx,
+        );
+    end_seed_tx(restore);
+}
 
 public fun bs_values_id(self: &Fixture): ID { self.bs_values_id }
 

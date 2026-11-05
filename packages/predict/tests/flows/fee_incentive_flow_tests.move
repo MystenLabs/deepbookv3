@@ -711,7 +711,7 @@ fun registration_reports_the_snapshotted_lifetime_cap() {
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let expiry_market_id = object::id_from_address(REGISTERED_MARKET);
 
-    vault.register_exp(
+    vault.reg_exp(
         expiry_market_id,
         test_constants::default_expiry_ms(),
         test_constants::default_max_expiry_allocation(),

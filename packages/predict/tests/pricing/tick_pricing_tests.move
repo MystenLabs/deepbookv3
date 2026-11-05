@@ -156,10 +156,20 @@ fun pricer_at_reanchors_the_snapshot_basis_on_the_committed_spot() {
     let expiry = test_constants::default_expiry_ms();
     let basis = default_surface_snapshot(REANCHOR_BS_SPOT, REANCHOR_BS_FORWARD);
     let unit = default_surface_snapshot(UNIT_BASIS_PRICE, UNIT_BASIS_PRICE);
+    let market_uid = object::new(&mut tx_context::dummy());
 
-    let reanchored = pricing::pricer_at(&basis, REANCHOR_SPOT, GENERATION_MS, TICK_MS, id, expiry);
+    let reanchored = pricing::pricer_at(
+        &basis,
+        &market_uid,
+        REANCHOR_SPOT,
+        GENERATION_MS,
+        TICK_MS,
+        id,
+        expiry,
+    );
     let expected = pricing::pricer_at(
         &unit,
+        &market_uid,
         REANCHORED_FORWARD,
         GENERATION_MS,
         TICK_MS,
@@ -168,6 +178,7 @@ fun pricer_at_reanchors_the_snapshot_basis_on_the_committed_spot() {
     );
     let one_up = pricing::pricer_at(
         &unit,
+        &market_uid,
         REANCHORED_FORWARD + 1,
         GENERATION_MS,
         TICK_MS,
@@ -178,6 +189,7 @@ fun pricer_at_reanchors_the_snapshot_basis_on_the_committed_spot() {
     assert!(reanchored.is_some());
     assert_eq!(reanchored, expected);
     assert!(reanchored != one_up);
+    market_uid.delete();
 }
 
 // === pricer_at against the independent reference ===
@@ -437,7 +449,15 @@ fun pricer_at_tick(
     spot: u64,
     tick_ms: u64,
 ): Option<Pricer> {
-    pricing::pricer_at(snapshot, spot, GENERATION_MS, tick_ms, fx.expiry_id(), fx.expiry())
+    pricing::pricer_at(
+        snapshot,
+        fx.market_uid(),
+        spot,
+        GENERATION_MS,
+        tick_ms,
+        fx.expiry_id(),
+        fx.expiry(),
+    )
 }
 
 fun pricer_at_or_abort(
@@ -449,6 +469,7 @@ fun pricer_at_or_abort(
 ): Pricer {
     pricing::pricer_at(
         snapshot,
+        fx.market_uid(),
         spot,
         generation_ms,
         tick_ms,

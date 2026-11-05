@@ -4,12 +4,11 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the fee-incentive
-/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
+/// subsidy, live-target, and lifetime-cap rates, the fee-band template, the trading pause gate, the
 /// protocol-wide emergency freeze, the version watermark (reaching
 /// `constants::cutover_version!()` is also the delayed-execution cutover), the allowlists of
-/// keepers that may redeem settled orders without owner auth, of operators that
-/// may finish an LP flush, and of the order-flow companion witness types that may
-/// drive the order-flow primitives, and the full-pool valuation in-flight
+/// operators that may finish an LP flush and of the order-flow companion witness
+/// types that may drive the order-flow primitives, and the full-pool valuation in-flight
 /// state (flag + flush ordinal, held across the transactions a flush spans;
 /// keeper/config flows gate on it, trading flows read it only to discard stale
 /// stamps lazily). Flow modules decide which gates apply before they mutate expiry,
@@ -41,16 +40,16 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
-#[allow(unused_const)]
+#[test_only]
 const ETradeWindowClosed: u64 = 7;
-const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
-const ESettledRedeemKeeperNotFound: u64 = 9;
 const EFlushOperatorAlreadyAdded: u64 = 10;
 const EFlushOperatorNotFound: u64 = 11;
 const ENotFlushOperator: u64 = 12;
 const ECutoverNotReached: u64 = 13;
 const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
+const EBuilderFeeCutoverNotReached: u64 = 16;
+const ESettledRedeemRetired: u64 = 17;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -116,7 +115,7 @@ public struct ProtocolConfig has key {
     /// market's snapshot state is captured, never recorded per trade (see `plp`).
     valuation_in_progress: bool,
     /// True ONLY while the atomic snapshot stage is open — set by `open_snap`
-    /// at `start_pool_valuation` and cleared by `end_snapshot` at
+    /// at `start_pool_valuation` and cleared by `end_snap` at
     /// `seal_valuation_snapshot`. Both live in one PTB (the `SnapshotStage` hot
     /// potato forces it), so this can never be observed across transactions: it
     /// blocks only a trade the keeper composes INTO its own snapshot PTB, where a
@@ -132,9 +131,10 @@ public struct ProtocolConfig has key {
 }
 
 /// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of keepers
-/// allowed to call `expiry_market::redeem_settled_permissionless`. The set was
-/// added after deploy, so it lives off the struct layout; an absent field is an
-/// empty set, which closes the keeper path.
+/// that package versions before 5 allowed to call
+/// `expiry_market::redeem_settled_permissionless`. Retired with that entrypoint:
+/// nothing reads or writes the set, and a set left by an earlier version stays
+/// in place.
 public struct SettledRedeemKeepersKey() has copy, drop, store;
 
 /// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
@@ -165,6 +165,17 @@ public struct FlushOperatorsKey() has copy, drop, store;
 /// type `W` for Predict's order-flow primitives. Holds `true`; an absent field
 /// refuses `W`.
 public struct OrderFlowKey<phantom W>() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` builder fee cap,
+/// stored off the struct layout because it was added after deploy. An absent field
+/// reads as `config_constants::default_builder_fee_cap`.
+public struct BuilderFeeCapKey() has copy, drop, store;
+
+/// Dynamic-field key for the admin-set fee-band template on `ProtocolConfig`, and
+/// for the copy each expiry market takes at creation on its own UID: a flat
+/// `vector<u64>` of `[low, high, multiplier]` triples (see
+/// `config_constants::chk_bands`). An absent field charges every price 1x.
+public struct FeeBandsKey() has copy, drop, store;
 
 // === Public Functions ===
 
@@ -208,6 +219,14 @@ public fun fee_incentive_subsidy_rate(config: &ProtocolConfig): u64 {
     )
 }
 
+/// Return the builder fee cap: the most a trade's builder fee can charge per
+/// contract, in FLOAT_SCALING of a contract's $1 payout. Admission charges a
+/// trade's named fee capped at this value. `public` for SDK and devInspect reads,
+/// so an app can show the fee a trade will actually pay.
+public fun builder_fee_cap(config: &ProtocolConfig): u64 {
+    config.u64_field_or(BuilderFeeCapKey(), config_constants::default_builder_fee_cap!())
+}
+
 /// Return the live fee-incentive target rate: the share of an expiry's allocation
 /// cap each live rebalance tops its sponsor-funded balance up to, in FLOAT_SCALING.
 /// `public` for SDK and devInspect reads, so a client can tell how much a market
@@ -239,7 +258,7 @@ public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
 }
 
 /// Whether `operator` may call `plp::finish_flush`. For SDK, keeper, and
-/// devInspect reads; `finish_flush` gates through `chk_operator`.
+/// devInspect reads; `finish_flush` gates through `chk_op`.
 public fun is_flush_operator(config: &ProtocolConfig, operator: address): bool {
     let key = FlushOperatorsKey();
     if (!config.id.exists_(key)) return false;
@@ -269,11 +288,30 @@ public fun set_template_base_fee(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_base_fee(fee);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_base(fee);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
+}
+
+/// Replace the fee-band template snapshotted by newly created expiry markets:
+/// flat `[low, high, multiplier]` triples, in FLOAT_SCALING. A trade whose
+/// contract price is in `[low, high)` pays its trading fee times the multiplier.
+/// Empty clears the template. Markets already created keep their copy.
+public fun set_template_fee_bands(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    bands: vector<u64>,
+    clock: &Clock,
+) {
+    config.chk_version();
+    config_constants::chk_bands(&bands);
+    if (config.id.exists_(FeeBandsKey())) {
+        let _: vector<u64> = config.id.remove(FeeBandsKey());
+    };
+    config_events::bands_upd(bands, clock.timestamp_ms());
+    if (!bands.is_empty()) config.id.add(FeeBandsKey(), bands);
 }
 
 /// Set the minimum fee floor snapshotted by newly created expiry markets.
@@ -284,8 +322,8 @@ public fun set_template_min_fee(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_min_fee(fee);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_mfee(fee);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -299,8 +337,8 @@ public fun set_template_expiry_fee_window_ms(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_fee_win(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_win(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -314,8 +352,8 @@ public fun set_template_expiry_fee_max_multiplier(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_fee_mult(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_mult(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -330,7 +368,7 @@ public fun set_template_backing_buffer_lambda(
 ) {
     config.chk_version();
     config.strike_exposure_template_config.set_lambda(value);
-    config_events::template_upd(
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -346,7 +384,7 @@ public fun set_template_inventory_impact_max_rate(
 ) {
     config.chk_version();
     config.strike_exposure_template_config.set_impact(value);
-    config_events::template_upd(
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -360,8 +398,8 @@ public fun set_template_min_entry_probability(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_min_prob(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_minp(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -375,8 +413,8 @@ public fun set_template_max_entry_probability(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_max_prob(value);
-    config_events::template_upd(
+    config.strike_exposure_template_config.set_maxp(value);
+    config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
     );
@@ -397,7 +435,7 @@ public fun set_use_pyth_spot_for_forward(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_use_pyth_spot_for_forward(enabled);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Pyth spot freshness threshold. While `use_pyth_spot_for_forward`
@@ -416,7 +454,7 @@ public fun set_pyth_spot_freshness_ms(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Block Scholes spot/forward freshness threshold.
@@ -429,7 +467,7 @@ public fun set_block_scholes_price_freshness_ms(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_block_scholes_price_freshness_ms(value);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Block Scholes SVI freshness threshold.
@@ -442,7 +480,7 @@ public fun set_block_scholes_svi_freshness_ms(
     config.chk_version();
     config.chk_no_val();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
-    config_events::pricing_upd(&config.pricing_config, clock.timestamp_ms());
+    config_events::pr_upd(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets before it is
@@ -458,7 +496,7 @@ public fun set_lp_request_limit_flush_attempts(
     // The flush reads this value mid-PTB; refuse to move it under a valuation in
     // flight, as the other setters a flush reads from do.
     config.chk_no_val();
-    config_constants::chk_attempts(attempts);
+    config_constants::chk_att(attempts);
     config.lp_request_limit_flush_attempts = attempts;
 }
 
@@ -477,7 +515,7 @@ public fun set_max_valuation_window_ms(
     // The deadline is read against a flush already in flight; refuse to move it
     // under one, so a started flush cannot have its escape hatch shifted.
     config.chk_no_val();
-    config_constants::chk_val_win(window_ms);
+    config_constants::chk_vw(window_ms);
     config.max_valuation_window_ms = window_ms;
 }
 
@@ -494,7 +532,7 @@ public fun set_max_lp_pool_value(
     config.chk_version();
     // The flush reads this mid-PTB, like the attempt count.
     config.chk_no_val();
-    config_constants::chk_max_pool(max_pool_value);
+    config_constants::chk_pool(max_pool_value);
     config.max_lp_pool_value = max_pool_value;
 }
 
@@ -537,9 +575,9 @@ public fun set_no_trade_window_ms(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_no_trade(value);
+    config_constants::chk_nt(value);
     config.no_trade_window_ms = value;
-    config_events::no_trade_upd(value, clock.timestamp_ms());
+    config_events::nt_upd(value, clock.timestamp_ms());
 }
 
 /// Set whether trading is paused.
@@ -557,36 +595,24 @@ public fun set_frozen(config: &mut ProtocolConfig, _admin_cap: &AdminCap, frozen
     config.put_frozen(frozen);
 }
 
-/// Allow `keeper` to call `expiry_market::redeem_settled_permissionless`.
-/// Admin-only and version-gated. Aborts if `keeper` is already allowed.
+/// Retired with `redeem_settled_permissionless`, the only call the keeper
+/// allowlist gated. Always aborts `ESettledRedeemRetired`.
 public fun add_settled_redeem_keeper(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    keeper: address,
+    _keeper: address,
 ) {
-    config.chk_version();
-    if (!config.id.exists_(SettledRedeemKeepersKey())) {
-        config.id.add(SettledRedeemKeepersKey(), vec_set::empty<address>());
-    };
-    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
-    assert!(!keepers.contains(&keeper), ESettledRedeemKeeperAlreadyAdded);
-    keepers.insert(keeper);
-    config_events::keeper_upd(keeper, true);
+    abort ESettledRedeemRetired
 }
 
-/// Revoke `keeper`'s access to `expiry_market::redeem_settled_permissionless`.
-/// Admin-only. Bypasses the version gate, like the registry's cap revocations, so
-/// revocation stays available under the emergency freeze and from a package
-/// version below the runtime floor. Aborts if `keeper` is not allowed.
+/// Retired with `redeem_settled_permissionless`, the only call the keeper
+/// allowlist gated. Always aborts `ESettledRedeemRetired`.
 public fun remove_settled_redeem_keeper(
-    config: &mut ProtocolConfig,
+    _config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    keeper: address,
+    _keeper: address,
 ) {
-    assert!(config.is_keeper(keeper), ESettledRedeemKeeperNotFound);
-    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
-    keepers.remove(&keeper);
-    config_events::keeper_upd(keeper, false);
+    abort ESettledRedeemRetired
 }
 
 /// Allow `operator` to call `plp::finish_flush`. Admin-only and version-gated;
@@ -605,7 +631,7 @@ public fun add_flush_operator(
     let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
     assert!(!operators.contains(&operator), EFlushOperatorAlreadyAdded);
     operators.insert(operator);
-    config_events::operator_upd(operator, true, clock.timestamp_ms());
+    config_events::op_upd(operator, true, clock.timestamp_ms());
 }
 
 /// Revoke `operator`'s access to `plp::finish_flush`. Admin-only. Bypasses the
@@ -621,7 +647,7 @@ public fun remove_flush_operator(
     assert!(config.is_flush_operator(operator), EFlushOperatorNotFound);
     let operators: &mut VecSet<address> = config.id.borrow_mut(FlushOperatorsKey());
     operators.remove(&operator);
-    config_events::operator_upd(operator, false, clock.timestamp_ms());
+    config_events::op_upd(operator, false, clock.timestamp_ms());
 }
 
 /// Allowlist (`enabled = true`) or remove the witness type `W` of an order-flow
@@ -673,7 +699,7 @@ public fun set_protocol_reserve_profit_share(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_rsv_shr(protocol_reserve_profit_share);
+    config_constants::chk_rsv(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
@@ -681,7 +707,7 @@ public fun set_protocol_reserve_profit_share(
 /// applies to subsequent mints without changing their all-in account withdrawal.
 public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
     config.chk_version();
-    config_constants::chk_referral(rate);
+    config_constants::chk_ref(rate);
     config.referral_fee_rate = rate;
 }
 
@@ -711,9 +737,30 @@ public fun set_fee_incentive_subsidy_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_subsidy(rate);
+    config_constants::chk_sub(rate);
     config.set_u64(FeeIncentiveSubsidyRateKey(), rate);
-    config_events::subsidy_upd(rate, clock.timestamp_ms());
+    config_events::sub_upd(rate, clock.timestamp_ms());
+}
+
+/// Set the builder fee cap: the most a trade's builder fee can charge per
+/// contract, in FLOAT_SCALING of a contract's $1 payout, from `0` up to the whole
+/// payout. A trade that names a higher fee pays the cap. Read when an order is
+/// admitted, so the new cap applies to the next order on every market, and an
+/// order already queued keeps the fee it was admitted with. `0` stops builder fees.
+///
+/// Not gated on the valuation flag, matching `set_fee_incentive_subsidy_rate`:
+/// nothing in the flush reads the cap, and a builder fee leaves with the trader's
+/// own payment, never market cash.
+public fun set_builder_fee_cap(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    cap: u64,
+    clock: &Clock,
+) {
+    config.chk_version();
+    config_constants::chk_bcap(cap);
+    config.set_u64(BuilderFeeCapKey(), cap);
+    config_events::bc_upd(cap, clock.timestamp_ms());
 }
 
 /// Set the share of an expiry's allocation cap each live rebalance tops its
@@ -737,7 +784,7 @@ public fun set_fee_incentive_live_target_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_live_tgt(rate);
+    config_constants::chk_live(rate);
     config.set_u64(FeeIncentiveLiveTargetRateKey(), rate);
     config.rates_upd(clock);
 }
@@ -757,7 +804,7 @@ public fun set_template_fee_incentive_lifetime_cap_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_life_cap(rate);
+    config_constants::chk_life(rate);
     config.set_u64(FeeIncentiveLifetimeCapRateKey(), rate);
     config.rates_upd(clock);
 }
@@ -773,9 +820,9 @@ public fun set_plp_supply_fee_rate(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_sup_fee(rate);
+    config_constants::chk_sup(rate);
     config.plp_supply_fee_rate = rate;
-    config_events::plp_fees_upd(
+    config_events::fee_upd(
         config.plp_supply_fee_rate,
         config.plp_withdraw_fee_rate,
         clock.timestamp_ms(),
@@ -794,7 +841,7 @@ public fun set_plp_withdraw_fee_rate(
     config.chk_no_val();
     config_constants::chk_wd_fee(rate);
     config.plp_withdraw_fee_rate = rate;
-    config_events::plp_fees_upd(
+    config_events::fee_upd(
         config.plp_supply_fee_rate,
         config.plp_withdraw_fee_rate,
         clock.timestamp_ms(),
@@ -803,7 +850,7 @@ public fun set_plp_withdraw_fee_rate(
 
 // === Public-Package Functions ===
 
-public(package) fun pricing_cfg(config: &ProtocolConfig): &PricingConfig {
+public(package) fun pr_cfg(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
@@ -819,7 +866,7 @@ public(package) fun rsv_share(config: &ProtocolConfig): u64 {
     config.protocol_reserve_profit_share
 }
 
-public(package) fun req_attempts(config: &ProtocolConfig): u64 {
+public(package) fun req_att(config: &ProtocolConfig): u64 {
     config.lp_request_limit_flush_attempts
 }
 
@@ -827,7 +874,7 @@ public(package) fun max_pool(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
-public(package) fun val_window(config: &ProtocolConfig): u64 {
+public(package) fun val_win(config: &ProtocolConfig): u64 {
     config.max_valuation_window_ms
 }
 
@@ -839,16 +886,39 @@ public(package) fun flush_seq(config: &ProtocolConfig): u64 {
 /// is in flight right now. False for a stale stamp (an aborted or completed
 /// flush's leftovers) and when no flush is in flight — the caller lazily discards
 /// the stamp in those cases.
-public(package) fun is_cur_flush(config: &ProtocolConfig, stamp_seq: u64): bool {
+public(package) fun is_cur(config: &ProtocolConfig, stamp_seq: u64): bool {
     config.valuation_in_progress && config.flush_seq == stamp_seq
 }
 
-public(package) fun se_template(config: &ProtocolConfig): &StrikeExposureConfig {
+public(package) fun se_tmpl(config: &ProtocolConfig): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 
-public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
+public(package) fun se_snap(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
+}
+
+/// The multiplier of the band on `id` holding `price`, in FLOAT_SCALING; 1.0
+/// when no band holds it.
+public(package) fun band_mult(id: &UID, price: u64): u64 {
+    if (id.exists_(FeeBandsKey())) {
+        let bands: &vector<u64> = id.borrow(FeeBandsKey());
+        let mut i = 0;
+        while (i < bands.length()) {
+            if (price >= bands[i] && price < bands[i + 1]) return bands[i + 2];
+            i = i + 3;
+        };
+    };
+    fixed_math::math::float_scaling!()
+}
+
+/// Copy the fee-band template onto a new market's `id`. A market keeps its
+/// copy for life, so a template change applies only to markets created after it.
+public(package) fun bands_to(config: &ProtocolConfig, id: &mut UID) {
+    if (config.id.exists_(FeeBandsKey())) {
+        let bands: vector<u64> = *config.id.borrow(FeeBandsKey());
+        id.add(FeeBandsKey(), bands);
+    }
 }
 
 #[test_only]
@@ -856,17 +926,9 @@ public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
 }
 
-/// Whether `keeper` may call `expiry_market::redeem_settled_permissionless`.
-public(package) fun is_keeper(config: &ProtocolConfig, keeper: address): bool {
-    let key = SettledRedeemKeepersKey();
-    if (!config.id.exists_(key)) return false;
-    let keepers: &VecSet<address> = config.id.borrow(key);
-    keepers.contains(&keeper)
-}
-
 /// Abort unless the transaction sender is a flush operator. An absent allowlist
 /// rejects everyone.
-public(package) fun chk_operator(config: &ProtocolConfig, ctx: &TxContext) {
+public(package) fun chk_op(config: &ProtocolConfig, ctx: &TxContext) {
     assert!(config.is_flush_operator(ctx.sender()), ENotFlushOperator);
 }
 
@@ -883,6 +945,17 @@ public(package) fun chk_flow<W: drop>(config: &ProtocolConfig) {
 /// before its own floor bump.
 public(package) fun chk_cutover(config: &ProtocolConfig) {
     assert!(config.version_watermark >= constants::cutover_version!(), ECutoverNotReached);
+}
+
+/// Abort until the watermark has reached `constants::builder_fee_version!()`, which
+/// retires every package version whose fill ignores the builder fee a receipt
+/// records. Builder admission waits for it, so no older resolver that still
+/// shares the queue can fill a builder order at the legacy fee.
+public(package) fun chk_cut(config: &ProtocolConfig) {
+    assert!(
+        config.version_watermark >= constants::builder_fee_version!(),
+        EBuilderFeeCutoverNotReached,
+    );
 }
 
 /// Abort only when the running package version is below the watermark floor.
@@ -939,7 +1012,7 @@ public(package) fun chk_no_val(config: &ProtocolConfig) {
 
 /// Abort while the atomic snapshot stage is open — used by the trade gates so the
 /// keeper cannot compose a mint or redeem into its own snapshot PTB.
-public(package) fun chk_no_snap(config: &ProtocolConfig) {
+public(package) fun chk_ns(config: &ProtocolConfig) {
     assert!(!config.snapshot_in_progress, ESnapshotInProgress);
 }
 
@@ -988,7 +1061,7 @@ public(package) fun open_snap(config: &mut ProtocolConfig) {
 
 /// Close the atomic snapshot stage — set at `seal_valuation_snapshot`, in the
 /// same PTB, so trading is live again the instant the snapshot is sealed.
-public(package) fun end_snapshot(config: &mut ProtocolConfig) {
+public(package) fun end_snap(config: &mut ProtocolConfig) {
     config.snapshot_in_progress = false;
 }
 

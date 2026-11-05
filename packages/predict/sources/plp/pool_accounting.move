@@ -97,7 +97,7 @@ public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 
 }
 
 /// Sum the net USDC the pool has funded into its active expiries (sent minus
-/// received, per expiry, floored at zero). Cash that `send_expiry` moved out of
+/// received, per expiry, floored at zero). Cash that `send_exp` moved out of
 /// idle is still pool value — each market's NAV counts its cash — so a bound on pool
 /// value that reads idle alone can be sidestepped by moving idle into a market. The
 /// per-expiry floor means idle sent into an expiry that has already returned more than
@@ -166,7 +166,7 @@ public(package) fun chk_expiry(ledger: &Ledger, expiry_market_id: ID) {
 /// absolute fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`, so a
 /// later change to that rate reaches only expiries registered after it. Returns the
 /// absolute cap it snapshotted, for the caller's registration event.
-public(package) fun register_exp(
+public(package) fun reg_exp(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     expiry_ms: u64,
@@ -208,7 +208,7 @@ public(package) fun deactivate(ledger: &mut Ledger, expiry_market_id: ID): bool 
 }
 
 /// Join idle USDC; the LP-supply flush drains filled supply requests here.
-public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<USDC>) {
+public(package) fun idle_in(ledger: &mut Ledger, cash: Balance<USDC>) {
     ledger.idle_balance.join(cash);
 }
 
@@ -219,7 +219,7 @@ public(package) fun take_idle(ledger: &mut Ledger, amount: u64): Balance<USDC> {
 
 /// Split idle USDC into an expiry while recording the funding flow and enforcing
 /// the expiry's snapshotted allocation cap.
-public(package) fun send_expiry(
+public(package) fun send_exp(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     amount: u64,
@@ -249,11 +249,7 @@ public(package) fun note_alloc(
 }
 
 /// Receive USDC returned from an expiry.
-public(package) fun recv_expiry(
-    ledger: &mut Ledger,
-    cash: Balance<USDC>,
-    expiry_market_id: ID,
-): u64 {
+public(package) fun exp_in(ledger: &mut Ledger, cash: Balance<USDC>, expiry_market_id: ID): u64 {
     let amount = cash.value();
     if (amount == 0) {
         cash.destroy_zero();
@@ -303,7 +299,7 @@ public(package) fun materialize(ledger: &mut Ledger, expiry_market_id: ID): u64 
 /// idle so a settled-market sweep can never abort when the cut's cash is
 /// temporarily deployed in other active markets; the uncovered remainder stays in
 /// `pending_protocol_profit` and is realized on a later sweep that refills idle.
-public(package) fun realize_pend(ledger: &mut Ledger): Balance<USDC> {
+public(package) fun pend_out(ledger: &mut Ledger): Balance<USDC> {
     let draw = ledger.pending_protocol_profit.min(ledger.idle_balance.value());
     ledger.pending_protocol_profit = ledger.pending_protocol_profit - draw;
     ledger.idle_balance.split(draw)
@@ -312,9 +308,9 @@ public(package) fun realize_pend(ledger: &mut Ledger): Balance<USDC> {
 /// Accrue a freshly materialized protocol cut, then realize what idle can currently
 /// cover. In the common case idle covers the cut, so the full amount is split out
 /// immediately and nothing is carried.
-public(package) fun realize_prof(ledger: &mut Ledger, amount: u64): Balance<USDC> {
+public(package) fun prof_out(ledger: &mut Ledger, amount: u64): Balance<USDC> {
     ledger.pending_protocol_profit = ledger.pending_protocol_profit + amount;
-    ledger.realize_pend()
+    ledger.pend_out()
 }
 
 fun note_sent(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {

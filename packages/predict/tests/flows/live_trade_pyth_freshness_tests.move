@@ -392,7 +392,7 @@ fun mint_exactly_at_the_window_succeeds() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    assert_eq!(helpers::config(&market).pricing_cfg().pyth_age_ms(), PYTH_WINDOW_MS);
+    assert_eq!(helpers::config(&market).pr_cfg().pyth_age(), PYTH_WINDOW_MS);
     // Age == window: the bound is inclusive, so the load still anchors on Pyth.
     age_pyth_spot(&mut fx, &mut market, PYTH_WINDOW_MS);
     let order = fx.mint_bundle(

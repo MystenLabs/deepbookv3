@@ -23,14 +23,14 @@ use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 use sui::vec_map::VecMap;
 
-#[allow(unused_const)]
+#[test_only]
 const EInvalidCloseQuantity: u64 = 0;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
-#[allow(unused_const)]
+#[test_only]
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
 
@@ -137,11 +137,11 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
     terms.inventory_impact_charge
 }
 
-public(package) fun mint_price(terms: &MintTerms): &RangePrice {
+public(package) fun mint_px(terms: &MintTerms): &RangePrice {
     &terms.price
 }
 
-public(package) fun redeem_amt(terms: &LiveCloseTerms): u64 {
+public(package) fun rdm_amt(terms: &LiveCloseTerms): u64 {
     terms.redeem_amount
 }
 
@@ -153,7 +153,7 @@ public(package) fun rebate(terms: &LiveCloseTerms): u64 {
     terms.inventory_impact_rebate
 }
 
-public(package) fun close_price(terms: &LiveCloseTerms): &RangePrice {
+public(package) fun close_px(terms: &LiveCloseTerms): &RangePrice {
     &terms.price
 }
 
@@ -189,7 +189,12 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// value, priced once per boundary by the payout tree's in-order walk. Every order
 /// is worth `quantity * P(range)` live, so no per-order correction is needed. The
 /// aggregate is netted per boundary rather than per order, so it can differ from
-/// the per-order sum by boundary rounding; it is clamped at zero once, in the walk.
+/// the per-order sum by boundary rounding. A price rise within
+/// `pricing::price_monotonicity_tolerance` is charged on the quantity ending at
+/// that boundary, rounded up, so the walk never falls below the per-order sum
+/// beyond that rounding and can exceed it by at most the rise times that quantity
+/// plus one raw unit: liability reads high and NAV low, never the reverse beyond
+/// boundary rounding (RP-15). It is clamped at zero once, in the walk.
 public(package) fun marked_liab(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     exposure.payout.walk_linear(pricer, exposure.tick_size)
 }
@@ -311,12 +316,12 @@ public(package) fun nodes_exist(
 /// `payout_liability` (and so `chk_backed`) reads after
 /// `allocate` applies the same terms to the same book.
 ///
-/// `range` must come from `try_mint_rng`, which always samples the
+/// `range` must come from `try_rng`, which always samples the
 /// reads. `quote_mint_range` skips them while inventory impact is off, and its
 /// zeros would understate the result. The point max after the mint is the
 /// larger of the old max and the candidate's own range peak plus `quantity`,
 /// since only points inside the range move.
-public(package) fun liab_minted(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
+public(package) fun liab_add(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
     exposure.liab_of(
         range.max_payout.max(range.range_max_payout + quantity),
         range.total_payout + quantity,
@@ -329,7 +334,7 @@ public(package) fun liab_minted(exposure: &StrikeExposure, range: &MintRange, qu
 /// drops by `close_quantity` and every point outside keeps its payout, so the
 /// new point max is the larger of the lowered range peak and the complement
 /// peak. The closing order is in the book, so neither subtraction can underflow.
-public(package) fun liab_closed(
+public(package) fun liab_sub(
     exposure: &StrikeExposure,
     lower_tick: u64,
     higher_tick: u64,
@@ -337,7 +342,7 @@ public(package) fun liab_closed(
 ): u64 {
     let (_, total_payout) = exposure.payout.rsv_terms();
     let range_max = exposure.payout.range_max(lower_tick, higher_tick);
-    let complement_max = exposure.payout.outside_max(lower_tick, higher_tick);
+    let complement_max = exposure.payout.out_max(lower_tick, higher_tick);
     exposure.liab_of(
         (range_max - close_quantity).max(complement_max),
         total_payout - close_quantity,
@@ -409,7 +414,7 @@ public(package) fun impact_pot(exposure: &StrikeExposure): u64 {
 /// switch `q = M - R` both arms evaluate to `M + lambda * (T - R)` exactly. The
 /// two arms therefore agree where they meet and neither falls, independently of
 /// `backing_buffer_lambda`, and the potential is nondecreasing in liability.
-public(package) fun mint_impact(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
+public(package) fun mint_imp(exposure: &StrikeExposure, range: &MintRange, quantity: u64): u64 {
     if (exposure.config.inventory_impact_max_rate() == 0 || quantity == 0) return 0;
 
     let before = exposure.liab_of(range.max_payout, range.total_payout);
@@ -423,7 +428,7 @@ public(package) fun mint_impact(exposure: &StrikeExposure, range: &MintRange, qu
 
 /// Price one live close of `payout` over `(lower_tick, higher_tick]` as the exact
 /// decrease of the book-level potential mints are charged against
-/// (`mint_impact`).
+/// (`mint_imp`).
 public(package) fun close_impact(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -437,7 +442,7 @@ public(package) fun close_impact(
     // Every live order contributes its complete payout at every point in its
     // range, so the pre-close range maximum is at least `payout`.
     let range_max = exposure.payout.range_max(lower_tick, higher_tick);
-    let complement_max = exposure.payout.outside_max(lower_tick, higher_tick);
+    let complement_max = exposure.payout.out_max(lower_tick, higher_tick);
     let before = exposure.liab_of(max_payout, total_payout);
     let after = exposure.liab_of(
         (range_max - payout).max(complement_max),
@@ -486,7 +491,7 @@ public(package) fun quote_mint_range(
 /// `none` covers every input `quote_mint_range` aborts on (an off-grid tick, a
 /// strike the pricer cannot price, the entry band) and also a tick pair no
 /// order can encode, which would otherwise abort later at allocation.
-public(package) fun try_mint_rng(
+public(package) fun try_rng(
     exposure: &StrikeExposure,
     pricer: &Pricer,
     lower_tick: u64,
@@ -543,7 +548,7 @@ public(package) fun try_terms(
         return (option::none(), constants::fill_reason_admission!())
     };
 
-    let inventory_impact_charge = exposure.mint_impact(&range, quantity);
+    let inventory_impact_charge = exposure.mint_imp(&range, quantity);
     let MintRange { expiry_market_id, lower_tick, higher_tick, price, .. } = range;
     let terms = MintTerms {
         expiry_market_id,
@@ -557,7 +562,7 @@ public(package) fun try_terms(
     (option::some(terms), 0)
 }
 
-/// Non-aborting `quote_mint_terms`: `try_mint_rng`, then sizing, then
+/// Non-aborting `quote_mint_terms`: `try_rng`, then sizing, then
 /// `try_terms`, with the same reason codes. A range that cannot be quoted
 /// reports `2`; a budget too small for one lot sizes to zero and reports `1`.
 #[test_only]
@@ -570,13 +575,13 @@ public(package) fun try_quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
 ): (Option<MintTerms>, u8) {
-    let range = exposure.try_mint_rng(pricer, lower_tick, higher_tick);
+    let range = exposure.try_rng(pricer, lower_tick, higher_tick);
     if (range.is_none()) return (option::none(), constants::fill_reason_admission!());
     let range = range.destroy_some();
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        range.qty_for_prem(max_premium)
+        range.qty_prem(max_premium)
     };
     exposure.try_terms(range, quantity, min_quantity)
 }
@@ -585,7 +590,7 @@ public(package) fun try_quote_mint_terms(
 /// `max_premium`. The probe is the expression admission charges, so the result is
 /// exact; the search domain is the lot cap, so an oversized budget saturates
 /// instead of aborting.
-public(package) fun qty_for_prem(range: &MintRange, max_premium: u64): u64 {
+public(package) fun qty_prem(range: &MintRange, max_premium: u64): u64 {
     pmath::max_qty(
         range.price.probability(),
         max_premium,
@@ -611,7 +616,7 @@ public(package) fun mint_terms(
     let premium = exposure.config.assert_mint_admission(range.price.probability(), quantity);
     // Preserve the mutation path's validation order.
     order::chk_quantity(quantity);
-    let inventory_impact_charge = exposure.mint_impact(&range, quantity);
+    let inventory_impact_charge = exposure.mint_imp(&range, quantity);
     let MintRange { expiry_market_id, lower_tick, higher_tick, price, .. } = range;
     MintTerms {
         expiry_market_id,
@@ -626,7 +631,7 @@ public(package) fun mint_terms(
 
 /// Price a range, choose quantity under the requested bias, and run mint
 /// admission. Exact-quantity mode uses `min_quantity`. Budget mode sizes with
-/// `qty_for_prem`, then requires the result to meet `min_quantity`.
+/// `qty_prem`, then requires the result to meet `min_quantity`.
 #[test_only]
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
@@ -641,7 +646,7 @@ public(package) fun quote_mint_terms(
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        range.qty_for_prem(max_premium)
+        range.qty_prem(max_premium)
     };
     exposure.mint_terms(range, quantity, min_quantity)
 }
@@ -666,7 +671,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 }
 
 /// Allocate a queued mint at resolve: `allocate_mint_order` over nodes placement
-/// already pinned, so the fill creates no tree node (`insert_exist`).
+/// already pinned, so the fill creates no tree node (`ins_old`).
 /// Aborts `strike_payout_tree::ENodeMissing` if a boundary is missing; resolve
 /// checks `nodes_exist` first and refunds instead.
 public(package) fun allocate(exposure: &mut StrikeExposure, terms: MintTerms): Order {
@@ -677,26 +682,26 @@ public(package) fun allocate(exposure: &mut StrikeExposure, terms: MintTerms): O
     let allocated_order = order::from_ticks(lower_tick, higher_tick, quantity, sequence);
     exposure.next_order_sequence = sequence + 1;
 
-    exposure.payout.insert_exist(lower_tick, higher_tick, quantity);
+    exposure.payout.ins_old(lower_tick, higher_tick, quantity);
 
     allocated_order
 }
 
 /// Ensure both finite boundaries of a mint range exist as tree nodes, so a
 /// later resolve fill inserts over existing nodes only.
-public(package) fun ensure_nodes(exposure: &mut StrikeExposure, lower_tick: u64, higher_tick: u64) {
-    exposure.payout.ensure_node(lower_tick);
-    exposure.payout.ensure_node(higher_tick);
+public(package) fun ens_nodes(exposure: &mut StrikeExposure, lower_tick: u64, higher_tick: u64) {
+    exposure.payout.ens_node(lower_tick);
+    exposure.payout.ens_node(higher_tick);
 }
 
 /// Detach the payout-tree node at `tick` if it is empty, unpinned, and not
 /// retained by the flush snapshot. Never aborts.
-public(package) fun prune_node(
+public(package) fun prune_n(
     exposure: &mut StrikeExposure,
     tick: u64,
     pins: &VecMap<u64, u64>,
 ): bool {
-    exposure.payout.prune_node(tick, pins)
+    exposure.payout.prune_n(tick, pins)
 }
 
 /// Non-aborting `quote_live_close`: `none` when the close cannot be priced, and
@@ -785,6 +790,7 @@ public(package) fun apply_close(
 }
 
 /// Release one order's full terminal payout from settled liability and return it.
+#[test_only]
 public(package) fun settle_close(exposure: &mut StrikeExposure, order: &Order): u64 {
     let payout = exposure.settled_order_payout(order);
     // Settlement liability and individual payouts use the same integer quantity
@@ -797,7 +803,7 @@ public(package) fun settle_close(exposure: &mut StrikeExposure, order: &Order): 
 /// `none`, with nothing changed, when the payout would underflow settled
 /// liability, or when the exposure is not settled yet. A losing order returns
 /// `some(0)`.
-public(package) fun try_settled(exposure: &mut StrikeExposure, order: &Order): Option<u64> {
+public(package) fun try_pay(exposure: &mut StrikeExposure, order: &Order): Option<u64> {
     if (!exposure.is_settled()) return option::none();
     let payout = exposure.settled_order_payout(order);
     if (payout > exposure.settled_payout_liability) return option::none();
@@ -810,9 +816,7 @@ public(package) fun try_settled(exposure: &mut StrikeExposure, order: &Order): O
 public(package) fun set_settled(exposure: &mut StrikeExposure, settlement_price: u64) {
     if (exposure.is_settled()) return;
 
-    let settled_payout_liability = exposure
-        .payout
-        .settled_liab(settlement_price, exposure.tick_size);
+    let settled_payout_liability = exposure.payout.liab_at(settlement_price, exposure.tick_size);
     exposure.settlement_price = option::some(settlement_price);
     exposure.settled_payout_liability = settled_payout_liability;
 }

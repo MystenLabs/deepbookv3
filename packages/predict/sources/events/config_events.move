@@ -21,6 +21,13 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the fee-band template for future markets changes: flat
+/// `[low, high, multiplier]` triples, empty when cleared.
+public struct FeeBandsUpdated has copy, drop, store {
+    bands: vector<u64>,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when live pricing policy changes.
 public struct PricingConfigUpdated has copy, drop, store {
     use_pyth_spot_for_forward: bool,
@@ -59,6 +66,13 @@ public struct FeeIncentiveSubsidyRateUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the builder fee cap changes: the most a trade's builder fee can
+/// charge per contract, in FLOAT_SCALING of a contract's $1 payout.
+public struct BuilderFeeCapUpdated has copy, drop, store {
+    builder_fee_cap: u64,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when either fee-incentive allocation rate changes, with both post-state
 /// values in FLOAT_SCALING: the live target every rebalance tops a market up to, and
 /// the lifetime cap newly created markets snapshot.
@@ -80,8 +94,10 @@ public struct ProtocolFrozenUpdated has copy, drop, store {
     frozen: bool,
 }
 
-/// Emitted when admin adds (`allowed = true`) or removes (`allowed = false`) a
-/// keeper allowed to call `expiry_market::redeem_settled_permissionless`.
+/// Emitted by package versions before 5 when admin added (`allowed = true`) or
+/// removed (`allowed = false`) a keeper allowed to call
+/// `expiry_market::redeem_settled_permissionless`. No longer emitted: the
+/// allowlist setters always abort.
 public struct SettledRedeemKeeperUpdated has copy, drop, store {
     keeper: address,
     allowed: bool,
@@ -123,6 +139,8 @@ public struct MarketCreated has copy, drop, store {
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
+    /// The market's own mint entry band: the template's, or narrower when the
+    /// lifecycle-cap holder narrowed it at creation.
     min_entry_probability: u64,
     max_entry_probability: u64,
     expiry_fee_window_ms: u64,
@@ -142,6 +160,14 @@ public struct CadenceConfigUpdated has copy, drop, store {
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
+}
+
+/// Emitted when an admin appends a cadence to the registry's cadence table. The new
+/// cadence is disabled on every underlying until a `CadenceConfigUpdated` enables it.
+public struct CadenceAdded has copy, drop, store {
+    registry_id: ID,
+    cadence_id: u8,
+    period_ms: u64,
 }
 
 /// Emitted when minting pause state changes for one expiry market.
@@ -175,7 +201,7 @@ public struct MarketSettled has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun template_upd(config: &StrikeExposureConfig, onchain_timestamp_ms: u64) {
+public(package) fun se_upd(config: &StrikeExposureConfig, onchain_timestamp_ms: u64) {
     event::emit(StrikeExposureTemplateConfigUpdated {
         backing_buffer_lambda: config.backing_buffer_lambda(),
         base_fee: config.base_fee(),
@@ -189,12 +215,12 @@ public(package) fun template_upd(config: &StrikeExposureConfig, onchain_timestam
     });
 }
 
-public(package) fun pricing_upd(config: &PricingConfig, onchain_timestamp_ms: u64) {
+public(package) fun pr_upd(config: &PricingConfig, onchain_timestamp_ms: u64) {
     event::emit(PricingConfigUpdated {
-        use_pyth_spot_for_forward: config.pyth_forward(),
-        pyth_spot_freshness_ms: config.pyth_age_ms(),
-        block_scholes_price_freshness_ms: config.bs_age_ms(),
-        block_scholes_svi_freshness_ms: config.svi_age_ms(),
+        use_pyth_spot_for_forward: config.pyth_fwd(),
+        pyth_spot_freshness_ms: config.pyth_age(),
+        block_scholes_price_freshness_ms: config.bs_age(),
+        block_scholes_svi_freshness_ms: config.svi_age(),
         onchain_timestamp_ms,
     });
 }
@@ -213,7 +239,7 @@ public(package) fun emit_ewma_config_updated(
     });
 }
 
-public(package) fun plp_fees_upd(
+public(package) fun fee_upd(
     plp_supply_fee_rate: u64,
     plp_withdraw_fee_rate: u64,
     onchain_timestamp_ms: u64,
@@ -225,15 +251,23 @@ public(package) fun plp_fees_upd(
     });
 }
 
-public(package) fun no_trade_upd(no_trade_window_ms: u64, onchain_timestamp_ms: u64) {
+public(package) fun nt_upd(no_trade_window_ms: u64, onchain_timestamp_ms: u64) {
     event::emit(NoTradeWindowUpdated { no_trade_window_ms, onchain_timestamp_ms });
 }
 
-public(package) fun subsidy_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_ms: u64) {
+public(package) fun sub_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_ms: u64) {
     event::emit(FeeIncentiveSubsidyRateUpdated {
         fee_incentive_subsidy_rate,
         onchain_timestamp_ms,
     });
+}
+
+public(package) fun bc_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
+    event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
+}
+
+public(package) fun bands_upd(bands: vector<u64>, onchain_timestamp_ms: u64) {
+    event::emit(FeeBandsUpdated { bands, onchain_timestamp_ms });
 }
 
 public(package) fun rates_upd(
@@ -262,19 +296,15 @@ public(package) fun frozen_upd(protocol_config_id: ID, frozen: bool) {
     });
 }
 
-public(package) fun keeper_upd(keeper: address, allowed: bool) {
-    event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
-}
-
 public(package) fun flow_upd(order_flow: TypeName, enabled: bool, onchain_timestamp_ms: u64) {
     event::emit(OrderFlowUpdated { order_flow, enabled, onchain_timestamp_ms });
 }
 
-public(package) fun operator_upd(operator: address, added: bool, onchain_timestamp_ms: u64) {
+public(package) fun op_upd(operator: address, added: bool, onchain_timestamp_ms: u64) {
     event::emit(FlushOperatorUpdated { operator, added, onchain_timestamp_ms });
 }
 
-public(package) fun mkt_created(
+public(package) fun mkt_new(
     expiry_market_id: ID,
     pool_vault_id: ID,
     propbook_underlying_id: u32,
@@ -284,6 +314,8 @@ public(package) fun mkt_created(
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     strike_exposure_config: &StrikeExposureConfig,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -297,15 +329,15 @@ public(package) fun mkt_created(
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),
         min_fee: strike_exposure_config.min_fee(),
-        min_entry_probability: strike_exposure_config.min_prob(),
-        max_entry_probability: strike_exposure_config.max_prob(),
+        min_entry_probability,
+        max_entry_probability,
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
     });
 }
 
-public(package) fun cadence_upd(
+public(package) fun cad_upd(
     registry_id: ID,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -327,6 +359,10 @@ public(package) fun cadence_upd(
     });
 }
 
+public(package) fun cad_add(registry_id: ID, cadence_id: u8, period_ms: u64) {
+    event::emit(CadenceAdded { registry_id, cadence_id, period_ms });
+}
+
 public(package) fun mkt_paused(expiry_market_id: ID, paused: bool) {
     event::emit(ExpiryMarketMintPausedUpdated {
         expiry_market_id,
@@ -334,7 +370,7 @@ public(package) fun mkt_paused(expiry_market_id: ID, paused: bool) {
     });
 }
 
-public(package) fun ref_tick_set(
+public(package) fun ref_set(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
@@ -352,7 +388,7 @@ public(package) fun ref_tick_set(
     });
 }
 
-public(package) fun mkt_settled(
+public(package) fun mkt_stl(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     expiry: u64,
