@@ -37,6 +37,12 @@ const EPoolValuationCapNotValid: u64 = 3;
 const EPoolValuationCapNotFound: u64 = 4;
 const EUnexpectedExpiry: u64 = 5;
 
+/// The band the unbanded creation entrypoints request: it narrows nothing, so the
+/// market keeps the template's band. Constants rather than literals and
+/// `std::u64::max_value!()`, which expand at each call site, to save package bytes.
+const OPEN_MIN_ENTRY_PROBABILITY: u64 = 0;
+const OPEN_MAX_ENTRY_PROBABILITY: u64 = 18_446_744_073_709_551_615;
+
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
     id: UID,
@@ -322,7 +328,7 @@ public fun create_and_share_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    registry.create_mkt(
+    registry.create_and_share_expiry_market_with_band(
         pool_vault,
         config,
         propbook_registry,
@@ -330,6 +336,8 @@ public fun create_and_share_expiry_market(
         propbook_underlying_id,
         cadence_id,
         option::none(),
+        OPEN_MIN_ENTRY_PROBABILITY,
+        OPEN_MAX_ENTRY_PROBABILITY,
         clock,
         ctx,
     )
@@ -350,7 +358,7 @@ public fun create_and_share_expiry_market_at(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    registry.create_mkt(
+    registry.create_and_share_expiry_market_with_band(
         pool_vault,
         config,
         propbook_registry,
@@ -358,9 +366,105 @@ public fun create_and_share_expiry_market_at(
         propbook_underlying_id,
         cadence_id,
         option::some(expected_expiry),
+        OPEN_MIN_ENTRY_PROBABILITY,
+        OPEN_MAX_ENTRY_PROBABILITY,
         clock,
         ctx,
     )
+}
+
+/// `create_and_share_expiry_market` with the new market's mint entry band narrowed
+/// to `[min_entry_probability, max_entry_probability]`, aborting unless the deployable
+/// expiry is `expected_expiry` when that is set. The other two creation entrypoints
+/// call this with `[0, u64::MAX]`, which keeps the template's band.
+///
+/// The band can only tighten: each side keeps the tighter of the requested value and
+/// the template's, so a bound looser than the template leaves that side at the
+/// template's, and the call aborts when the two bands do not overlap. Like every
+/// snapshotted term, the band is fixed for the market's life, and `MarketCreated`
+/// reports it. A keeper uses this to admit fewer mints in markets open across a
+/// chosen window.
+public fun create_and_share_expiry_market_with_band(
+    registry: &mut Registry,
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    lifecycle_cap: &MarketLifecycleCap,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    expected_expiry: Option<u64>,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    config.chk_version();
+    registry.chk_lc_cap(lifecycle_cap);
+    config.chk_trading();
+    // Deliberately NOT gated on the valuation flag: creation moves no cash
+    // (`plp::reg_exp` records targets; funding is a later rebalance), an
+    // in-flight flush's expected set is frozen at its snapshot so the new market
+    // is simply not part of it, and funding it mid-window cannot reach the mark
+    // — every figure it reads was frozen at the snapshot instant, which counts
+    // that cash as the idle it then was. The market joins the next flush's
+    // snapshot. Gating here would gap a fast market cadence for as long as a
+    // stalled flush holds the flag.
+    let mut strike_exposure_config = config.se_snapshot();
+    let (min_entry_probability, max_entry_probability) = strike_exposure_config.narrow(
+        min_entry_probability,
+        max_entry_probability,
+    );
+    let periods = registry.cad_periods();
+    let deployable = registry
+        .market_manager
+        .next_deploy(&periods, propbook_registry, propbook_underlying_id, cadence_id, clock);
+    let expiry = deployable.expiry();
+    expected_expiry.do!(|expected| assert!(expiry == expected, EUnexpectedExpiry));
+    let tick_size = deployable.tick_size();
+    let admission_tick_size = deployable.admission_tick_size();
+    // `ExpiryPnl` reports this stored time as the market's cadence-period start
+    // (`period_start_ms`), so changing the lookback changes that event field's meaning.
+    let reference_tick_source_timestamp_ms =
+        expiry - market_manager::cad_period(&periods, cadence_id);
+    let max_expiry_allocation = deployable.max_alloc();
+    let initial_expiry_cash = deployable.init_cash();
+    let pool_vault_id = pool_vault.id();
+    let expiry_market_id = expiry_market::create_and_share(
+        strike_exposure_config,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        reference_tick_source_timestamp_ms,
+        max_expiry_allocation,
+        ctx,
+    );
+    pool_vault.reg_exp(
+        expiry_market_id,
+        expiry,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        config.fee_incentive_lifetime_cap_rate(),
+        clock,
+    );
+    registry
+        .market_manager
+        .note_expiry(&periods, propbook_underlying_id, cadence_id, expiry, expiry_market_id);
+    config_events::mkt_new(
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        config.se_template(),
+        min_entry_probability,
+        max_entry_probability,
+    );
+
+    expiry_market_id
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
@@ -396,82 +500,6 @@ fun new_registry(ctx: &mut TxContext): (Registry, AdminCap) {
         },
         admin::new(ctx),
     )
-}
-
-/// Shared body of the two market-creation entrypoints; `expected_expiry`, when set,
-/// must equal the expiry `next_deploy` selects.
-fun create_mkt(
-    registry: &mut Registry,
-    pool_vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    lifecycle_cap: &MarketLifecycleCap,
-    propbook_underlying_id: u32,
-    cadence_id: u8,
-    expected_expiry: Option<u64>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): ID {
-    config.chk_version();
-    registry.chk_lc_cap(lifecycle_cap);
-    config.chk_trading();
-    // Deliberately NOT gated on the valuation flag: creation moves no cash
-    // (`plp::reg_exp` records targets; funding is a later rebalance), an
-    // in-flight flush's expected set is frozen at its snapshot so the new market
-    // is simply not part of it, and funding it mid-window cannot reach the mark
-    // — every figure it reads was frozen at the snapshot instant, which counts
-    // that cash as the idle it then was. The market joins the next flush's
-    // snapshot. Gating here would gap a fast market cadence for as long as a
-    // stalled flush holds the flag.
-    let periods = registry.cad_periods();
-    let deployable = registry
-        .market_manager
-        .next_deploy(&periods, propbook_registry, propbook_underlying_id, cadence_id, clock);
-    let expiry = deployable.expiry();
-    expected_expiry.do!(|expected| assert!(expiry == expected, EUnexpectedExpiry));
-    let tick_size = deployable.tick_size();
-    let admission_tick_size = deployable.admission_tick_size();
-    // `ExpiryPnl` reports this stored time as the market's cadence-period start
-    // (`period_start_ms`), so changing the lookback changes that event field's meaning.
-    let reference_tick_source_timestamp_ms =
-        expiry - market_manager::cad_period(&periods, cadence_id);
-    let max_expiry_allocation = deployable.max_alloc();
-    let initial_expiry_cash = deployable.init_cash();
-    let pool_vault_id = pool_vault.id();
-    let expiry_market_id = expiry_market::create_and_share(
-        config,
-        propbook_underlying_id,
-        expiry,
-        tick_size,
-        admission_tick_size,
-        reference_tick_source_timestamp_ms,
-        max_expiry_allocation,
-        ctx,
-    );
-    pool_vault.reg_exp(
-        expiry_market_id,
-        expiry,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        config.fee_incentive_lifetime_cap_rate(),
-        clock,
-    );
-    registry
-        .market_manager
-        .note_expiry(&periods, propbook_underlying_id, cadence_id, expiry, expiry_market_id);
-    config_events::mkt_new(
-        expiry_market_id,
-        pool_vault_id,
-        propbook_underlying_id,
-        expiry,
-        tick_size,
-        admission_tick_size,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        config.se_template(),
-    );
-
-    expiry_market_id
 }
 
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
