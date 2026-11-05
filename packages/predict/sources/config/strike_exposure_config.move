@@ -13,11 +13,11 @@ use deepbook_predict::{config_constants, pricing::RangePrice};
 use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 
-#[allow(unused_const)]
+#[test_only]
 const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
-#[allow(unused_const)]
+#[test_only]
 const EPremiumBelowMinimum: u64 = 3;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.

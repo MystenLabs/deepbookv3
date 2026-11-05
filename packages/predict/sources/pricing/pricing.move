@@ -167,11 +167,11 @@ public struct VolSnapshot has copy, drop, store {
 
 // The digital's undefined points. `deepbook_predict_math::math::digital` reports
 // these codes and `up_price` / `range_price` abort with them here.
-#[allow(unused_const)]
+#[test_only]
 const EZeroForward: u64 = 0;
-#[allow(unused_const)]
+#[test_only, allow(unused_const)]
 const ECannotBeNegative: u64 = 1;
-#[allow(unused_const)]
+#[test_only]
 const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesPriceStale: u64 = 4;
@@ -196,11 +196,11 @@ const EBlockScholesInputTooWide: u64 = 16;
 /// or one that does not normalize to a positive value. Raised only by the live
 /// trades that refuse the fallback (mints, mint quotes, and live redeems); the load
 /// itself never aborts on it, so valuation keeps pricing.
-#[allow(unused_const)]
+#[test_only]
 const EPythSpotUnavailable: u64 = 17;
 /// As `EPythSpotUnavailable`, but the feed held a usable spot older than
 /// `pyth_spot_freshness_ms`.
-#[allow(unused_const)]
+#[test_only]
 const EPythSpotStale: u64 = 18;
 /// A volatility snapshot requires `use_pyth_spot_for_forward`: resolve re-anchors
 /// the snapshotted Block Scholes basis on the committed Pyth price.

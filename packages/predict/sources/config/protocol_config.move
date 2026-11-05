@@ -41,7 +41,7 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
-#[allow(unused_const)]
+#[test_only]
 const ETradeWindowClosed: u64 = 7;
 const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
 const ESettledRedeemKeeperNotFound: u64 = 9;

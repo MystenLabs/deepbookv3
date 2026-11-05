@@ -78,21 +78,21 @@ use fun df::exists as UID.exists_;
 
 const EMintPaused: u64 = 0;
 const EMarketNotSettled: u64 = 1;
-#[allow(unused_const)]
+#[test_only]
 const EMintCostAboveMax: u64 = 2;
-#[allow(unused_const)]
+#[test_only]
 const EMintProbabilityAboveMax: u64 = 3;
 const EWrongPricer: u64 = 4;
 const EReferenceTickObservationMissing: u64 = 5;
-#[allow(unused_const)]
+#[test_only]
 const EMintRedeemSameTimestamp: u64 = 6;
-#[allow(unused_const)]
+#[test_only]
 const ERedeemProbabilityBelowMin: u64 = 7;
-#[allow(unused_const)]
+#[test_only]
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
-#[allow(unused_const)]
+#[test_only]
 const EMintCostAboveMaxPayout: u64 = 11;
 const EDelayedExecutionRequired: u64 = 13;
 const EOrderFailsLimits: u64 = 14;

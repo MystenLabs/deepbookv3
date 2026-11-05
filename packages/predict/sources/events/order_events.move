@@ -195,6 +195,7 @@ public(package) fun redeemed(
     });
 }
 
+#[test_only]
 public(package) fun settled_rdm(
     expiry_market_id: ID,
     account_id: ID,

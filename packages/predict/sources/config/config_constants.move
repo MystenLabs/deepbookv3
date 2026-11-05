@@ -20,11 +20,11 @@ const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
 const EInvalidExpiryFeeWindowMs: u64 = 8;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 9;
 const EInvalidMarketTickSize: u64 = 10;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidEwmaAlpha: u64 = 11;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidEwmaZScoreThreshold: u64 = 12;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidEwmaPenaltyRate: u64 = 13;
 const EInvalidBackingBufferLambda: u64 = 14;
 const EInvalidCadenceWindowSize: u64 = 15;
