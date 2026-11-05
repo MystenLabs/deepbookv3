@@ -186,8 +186,8 @@ public(package) fun set_lambda(config: &mut StrikeExposureConfig, value: u64) {
     config.backing_buffer_lambda = value;
 }
 
-public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_base_fee(value);
+public(package) fun set_base(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_base(value);
     config.base_fee = value;
 }
 
@@ -196,14 +196,14 @@ public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
     config.min_fee = value;
 }
 
-public(package) fun set_min_prob(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_min_prob(value);
+public(package) fun set_minp(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_minp(value);
     assert!(value < config.max_entry_probability, EInvalidEntryProbabilityBound);
     config.min_entry_probability = value;
 }
 
-public(package) fun set_max_prob(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_max_prob(value);
+public(package) fun set_maxp(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_maxp(value);
     assert!(value > config.min_entry_probability, EInvalidEntryProbabilityBound);
     config.max_entry_probability = value;
 }
@@ -213,8 +213,8 @@ public(package) fun set_fee_win(config: &mut StrikeExposureConfig, value: u64) {
     config.expiry_fee_window_ms = value;
 }
 
-public(package) fun set_fee_mult(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::chk_fee_mult(value);
+public(package) fun set_mult(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::chk_mult(value);
     config.expiry_fee_max_multiplier = value;
 }
 

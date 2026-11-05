@@ -143,12 +143,12 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
 /// Next index the supply queue will assign. Sampled at a flush's snapshot instant
 /// as the drain's eligibility cutoff: only requests indexed strictly below it may
 /// fill at that flush's mark.
-public(package) fun next_sup_idx<LP>(book: &LpBook<LP>): u64 {
+public(package) fun next_sup<LP>(book: &LpBook<LP>): u64 {
     book.supply_queue.next_index
 }
 
-/// Withdraw-queue counterpart of `next_sup_idx`.
-public(package) fun next_wd_idx<LP>(book: &LpBook<LP>): u64 {
+/// Withdraw-queue counterpart of `next_sup`.
+public(package) fun next_wd<LP>(book: &LpBook<LP>): u64 {
     book.withdraw_queue.next_index
 }
 
@@ -211,12 +211,12 @@ public(package) fun new_fees(supply: u64, withdraw: u64): FeeRates {
 /// re-read from config so the flush event reports what the drain was actually
 /// handed: a wrong rate is otherwise invisible to every observer, since the withdraw
 /// leg cannot be driven behaviourally from a Move test.
-public(package) fun sup_fee_rate(fees: &FeeRates): u64 {
+public(package) fun sup_rate(fees: &FeeRates): u64 {
     fees.supply
 }
 
 /// The withdraw-leg rate this flush froze; same reasoning as `supply_fee_rate`.
-public(package) fun wd_fee_rate(fees: &FeeRates): u64 {
+public(package) fun wd_rate(fees: &FeeRates): u64 {
     fees.withdraw
 }
 
@@ -421,7 +421,7 @@ fun drain_supply<LP>(
                     let (_, escrowed) = book.supply_queue.pop_front();
                     escrowed
                 };
-                ledger.receive_idle(escrowed);
+                ledger.idle_in(escrowed);
                 pool_value = pool_value + fill_amount;
                 let shares_minted = book.treasury_cap.mint_balance(fill_shares);
                 balance::send_funds(shares_minted, request.recipient);
@@ -598,7 +598,7 @@ fun refund_sup(
     requests_pending_after: u64,
 ) {
     balance::send_funds(escrowed, request.recipient);
-    vault_events::req_cancel(
+    vault_events::req_cxl(
         pool_vault_id,
         request.account_id,
         request.recipient,
@@ -618,7 +618,7 @@ fun refund_wd<LP>(
     requests_pending_after: u64,
 ) {
     balance::send_funds(escrowed_lp, request.recipient);
-    vault_events::req_cancel(
+    vault_events::req_cxl(
         pool_vault_id,
         request.account_id,
         request.recipient,
