@@ -5,10 +5,8 @@
 /// Account owners grant and revoke sessions; an active session can only generate
 /// app auth inside the Predict and DeepBook spot wrappers exposed here.
 ///
-/// A spot order funds itself from the Account's whole base, quote and DEEP
-/// balance, so a session key could otherwise trade it all against a pool its
-/// holder controls. Session-key spot orders therefore trade only on the pools in
-/// `SessionsConfig`'s allowlist, which the `SessionsAdminCap` holder maintains.
+/// Session-key spot orders trade only on the pools in `SessionsConfig`'s
+/// allowlist, which the `SessionsAdminCap` holder maintains.
 ///
 /// A session-key trade that names a Predict builder code pays that builder a fee
 /// the session holder picks, so the owner approves one code and a maximum fee per

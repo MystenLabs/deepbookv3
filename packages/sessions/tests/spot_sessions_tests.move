@@ -58,7 +58,7 @@ const FUTURE_VERSION: u64 = 5;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
-/// A coin the session holder chose, for a pool the allowlist does not name.
+/// The base asset of a second pool, which the allowlist does not name.
 public struct JUNK has store {}
 
 public struct SpotFixture {
@@ -549,9 +549,6 @@ fun retired_package_version_cannot_use_spot_wrapper() {
 
 #[test, expected_failure(abort_code = session_config::EPoolNotAllowed)]
 fun session_cannot_place_limit_order_on_an_unlisted_pool() {
-    // The drain shape: a pool pairing the account's quote against a coin the
-    // session holder chose, where a bid at the holder's price would move the
-    // account's whole quote balance to the holder's resting ask.
     let mut fixture = setup_spot_fixture();
     let registry_id = fixture.registry_id;
     let junk_pool_id = create_pool<JUNK, QUOTE>(&mut fixture.scenario, registry_id);
