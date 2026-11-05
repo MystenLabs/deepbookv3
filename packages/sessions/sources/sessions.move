@@ -5,6 +5,9 @@
 /// Account owners grant and revoke sessions; an active session can only generate
 /// app auth inside the Predict and DeepBook spot wrappers exposed here.
 ///
+/// Session-key spot orders trade only on the pools in `SessionsConfig`'s
+/// allowlist, which the `SessionsAdminCap` holder maintains.
+///
 /// A session-key trade that names a Predict builder code pays that builder a fee
 /// the session holder picks, so the owner approves one code and a maximum fee per
 /// session (`approve_session_builder`), and the `_with_builder` wrappers accept
@@ -231,7 +234,8 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
     event::emit(SessionRevoked { account_id, session, expires_at_ms });
 }
 
-/// Place a DeepBook spot limit order for an Account with an active session.
+/// Place a DeepBook spot limit order for an Account with an active session, on a
+/// pool in the `SessionsConfig` allowlist (`session_config::EPoolNotAllowed`).
 public fun place_limit_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -251,6 +255,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): OrderInfo {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    sessions_config.assert_pool_allowed(pool.id());
     deepbook_core_account::place_limit_order(
         pool,
         deepbook_registry,
@@ -270,7 +275,8 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Place a DeepBook spot market order for an Account with an active session.
+/// Place a DeepBook spot market order for an Account with an active session, on
+/// a pool in the `SessionsConfig` allowlist (`session_config::EPoolNotAllowed`).
 public fun place_market_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -288,6 +294,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): OrderInfo {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    sessions_config.assert_pool_allowed(pool.id());
     deepbook_core_account::place_market_order(
         pool,
         deepbook_registry,
@@ -305,7 +312,8 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Cancel a DeepBook spot order for an Account with an active session.
+/// Cancel a DeepBook spot order for an Account with an active session, on any
+/// pool, so orders on a pool removed from the allowlist can still be cancelled.
 public fun cancel_live_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     account_registry: &AccountRegistry,
