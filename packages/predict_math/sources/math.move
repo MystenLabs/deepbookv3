@@ -9,8 +9,8 @@
 /// Predict's own code, moved unchanged: SVI evaluation and the roll-down, the
 /// pricing-safe input bounds and minimum-variance checks as booleans, the
 /// Bernoulli trading-fee curve with its expiry ramp, the inventory-impact
-/// potential, premium sizing, the builder fee, the order-flow cash-need
-/// formulas, and the fee-band table check and lookup. Predict keeps every abort: where a check here fails, it returns a
+/// potential, premium sizing, the builder fee, and the order-flow cash-need
+/// formulas. Predict keeps every abort: where a check here fails, it returns a
 /// boolean or `none`, and Predict asserts with its own error code.
 module deepbook_predict_math::math;
 
@@ -26,13 +26,6 @@ const NON_POSITIVE_VARIANCE: u64 = 2;
 /// Predict's pricing envelope for raw Block Scholes inputs: the forward is at
 /// most this factor times the spot, and the spot at most `u64::MAX` over it.
 macro fun max_basis_factor(): u64 { 100 }
-
-/// The most bands one fee-band table holds. Every fee lookup walks the table, so
-/// this bounds its cost.
-macro fun max_fee_bands(): u64 { 8 }
-
-/// The highest fee-band multiplier, 10x at 1e9. A higher value is a typo.
-macro fun max_fee_band_mult(): u64 { 10_000_000_000 }
 
 macro fun max_spot(): u64 { std::u64::max_value!() / max_basis_factor!() }
 
@@ -297,40 +290,6 @@ public fun need_budget(budget: u64, p: u64): u64 {
 /// `close_quantity`.
 public fun need_sell(close_quantity: u64, lambda: u64): u64 {
     fixed::mul_div_up(close_quantity, fixed::float_scaling!() - lambda, fixed::float_scaling!()) + 1
-}
-
-// === Fee Bands ===
-
-/// Whether `bands` is a valid fee-band table for Predict's
-/// `protocol_config::set_template_fee_bands`: at most `max_fee_bands!()` flat
-/// `[low, high, multiplier]` triples over contract prices at 1e9, sorted and
-/// disjoint, each `low < high <= 1.0` and `1.0 <= multiplier <=
-/// max_fee_band_mult!()`. Empty is valid.
-public fun bands_ok(bands: &vector<u64>): bool {
-    let n = bands.length();
-    if (n % 3 != 0 || n > 3 * max_fee_bands!()) return false;
-    let one = fixed::float_scaling!();
-    let mut prev = 0;
-    let mut i = 0;
-    while (i < n) {
-        let (lo, hi, mult) = (bands[i], bands[i + 1], bands[i + 2]);
-        if (lo < prev || lo >= hi || hi > one || mult < one || mult > max_fee_band_mult!())
-            return false;
-        prev = hi;
-        i = i + 3;
-    };
-    true
-}
-
-/// The multiplier of the band in `bands` whose `[low, high)` holds `price`, at
-/// 1e9, or 1.0 when none does. `bands` must pass `bands_ok`.
-public fun band_mult(bands: &vector<u64>, price: u64): u64 {
-    let mut i = 0;
-    while (i < bands.length()) {
-        if (price >= bands[i] && price < bands[i + 1]) return bands[i + 2];
-        i = i + 3;
-    };
-    fixed::float_scaling!()
 }
 
 // === Order IDs ===

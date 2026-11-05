@@ -24,7 +24,6 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
-use deepbook_predict_math::math as pmath;
 use std::type_name;
 use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
 
@@ -51,7 +50,6 @@ const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
 const EBuilderFeeCutoverNotReached: u64 = 16;
 const ESettledRedeemRetired: u64 = 17;
-const EInvalidFeeBands: u64 = 18;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -176,7 +174,7 @@ public struct BuilderFeeCapKey() has copy, drop, store;
 /// Dynamic-field key for the admin-set fee-band template on `ProtocolConfig`, and
 /// for the copy each expiry market takes at creation on its own UID: a flat
 /// `vector<u64>` of `[low, high, multiplier]` triples (see
-/// `deepbook_predict_math::math::bands_ok`). An absent field charges every price 1x.
+/// `config_constants::chk_bands`). An absent field charges every price 1x.
 public struct FeeBandsKey() has copy, drop, store;
 
 // === Public Functions ===
@@ -308,7 +306,7 @@ public fun set_template_fee_bands(
     clock: &Clock,
 ) {
     config.chk_version();
-    assert!(pmath::bands_ok(&bands), EInvalidFeeBands);
+    config_constants::chk_bands(&bands);
     if (config.id.exists_(FeeBandsKey())) {
         let _: vector<u64> = config.id.remove(FeeBandsKey());
     };
@@ -903,8 +901,15 @@ public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
 /// The multiplier of the band on `id` holding `price`, in FLOAT_SCALING; 1.0
 /// when no band holds it.
 public(package) fun band_mult(id: &UID, price: u64): u64 {
-    if (!id.exists_(FeeBandsKey())) return fixed_math::math::float_scaling!();
-    pmath::band_mult(id.borrow(FeeBandsKey()), price)
+    if (id.exists_(FeeBandsKey())) {
+        let bands: &vector<u64> = id.borrow(FeeBandsKey());
+        let mut i = 0;
+        while (i < bands.length()) {
+            if (price >= bands[i] && price < bands[i + 1]) return bands[i + 2];
+            i = i + 3;
+        };
+    };
+    fixed_math::math::float_scaling!()
 }
 
 /// Copy the fee-band template onto a new market's `id`. A market keeps its
