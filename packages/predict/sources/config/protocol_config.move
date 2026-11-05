@@ -322,7 +322,7 @@ public fun set_template_min_fee(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_min_fee(fee);
+    config.strike_exposure_template_config.set_mfee(fee);
     config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
@@ -337,7 +337,7 @@ public fun set_template_expiry_fee_window_ms(
     clock: &Clock,
 ) {
     config.chk_version();
-    config.strike_exposure_template_config.set_fee_win(value);
+    config.strike_exposure_template_config.set_win(value);
     config_events::se_upd(
         &config.strike_exposure_template_config,
         clock.timestamp_ms(),
@@ -515,7 +515,7 @@ public fun set_max_valuation_window_ms(
     // The deadline is read against a flush already in flight; refuse to move it
     // under one, so a started flush cannot have its escape hatch shifted.
     config.chk_no_val();
-    config_constants::chk_val_win(window_ms);
+    config_constants::chk_vw(window_ms);
     config.max_valuation_window_ms = window_ms;
 }
 
@@ -699,7 +699,7 @@ public fun set_protocol_reserve_profit_share(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_rsv_shr(protocol_reserve_profit_share);
+    config_constants::chk_rsv(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
@@ -737,7 +737,7 @@ public fun set_fee_incentive_subsidy_rate(
     clock: &Clock,
 ) {
     config.chk_version();
-    config_constants::chk_subsidy(rate);
+    config_constants::chk_sub(rate);
     config.set_u64(FeeIncentiveSubsidyRateKey(), rate);
     config_events::sub_upd(rate, clock.timestamp_ms());
 }
@@ -820,7 +820,7 @@ public fun set_plp_supply_fee_rate(
 ) {
     config.chk_version();
     config.chk_no_val();
-    config_constants::chk_sup_fee(rate);
+    config_constants::chk_sup(rate);
     config.plp_supply_fee_rate = rate;
     config_events::fee_upd(
         config.plp_supply_fee_rate,
@@ -850,7 +850,7 @@ public fun set_plp_withdraw_fee_rate(
 
 // === Public-Package Functions ===
 
-public(package) fun pricing_cfg(config: &ProtocolConfig): &PricingConfig {
+public(package) fun pr_cfg(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
@@ -874,7 +874,7 @@ public(package) fun max_pool(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
-public(package) fun val_window(config: &ProtocolConfig): u64 {
+public(package) fun val_win(config: &ProtocolConfig): u64 {
     config.max_valuation_window_ms
 }
 
@@ -890,11 +890,11 @@ public(package) fun is_cur(config: &ProtocolConfig, stamp_seq: u64): bool {
     config.valuation_in_progress && config.flush_seq == stamp_seq
 }
 
-public(package) fun se_template(config: &ProtocolConfig): &StrikeExposureConfig {
+public(package) fun se_tmpl(config: &ProtocolConfig): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 
-public(package) fun se_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
+public(package) fun se_snap(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 

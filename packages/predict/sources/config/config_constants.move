@@ -55,7 +55,7 @@ public(package) macro fun max_protocol_reserve_profit_share(): u64 {
     fixed_math::math::float_scaling!()
 }
 
-public(package) fun chk_rsv_shr(value: u64) {
+public(package) fun chk_rsv(value: u64) {
     assert!(
         value >= min_protocol_reserve_profit_share!()
             && value <= max_protocol_reserve_profit_share!(),
@@ -93,7 +93,7 @@ public(package) macro fun min_fee_incentive_subsidy_rate(): u64 { 0 }
 /// nondecreasing in quantity and `mint_exact_cost`'s budget search exact (RP-36).
 public(package) macro fun max_fee_incentive_subsidy_rate(): u64 { 500_000_000 }
 
-public(package) fun chk_subsidy(value: u64) {
+public(package) fun chk_sub(value: u64) {
     assert!(
         value >= min_fee_incentive_subsidy_rate!() && value <= max_fee_incentive_subsidy_rate!(),
         EInvalidFeeIncentiveSubsidyRate,
@@ -204,7 +204,7 @@ public(package) macro fun min_plp_fee_rate(): u64 { 0 }
 
 public(package) macro fun max_plp_fee_rate(): u64 { 50_000_000 }
 
-public(package) fun chk_sup_fee(value: u64) {
+public(package) fun chk_sup(value: u64) {
     assert!(value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(), EInvalidPlpSupplyFeeRate);
 }
 
@@ -265,7 +265,7 @@ public(package) macro fun max_max_valuation_window_ms(): u64 {
     4 * deepbook_predict::constants::one_hour_ms!()
 }
 
-public(package) fun chk_val_win(value: u64) {
+public(package) fun chk_vw(value: u64) {
     assert!(
         value >= min_max_valuation_window_ms!() && value <= max_max_valuation_window_ms!(),
         EInvalidMaxValuationWindowMs,
@@ -362,7 +362,7 @@ public(package) macro fun min_min_fee(): u64 { 0 }
 
 public(package) macro fun max_min_fee(): u64 { fixed_math::math::float_scaling!() }
 
-public(package) fun chk_min_fee(value: u64) {
+public(package) fun chk_mfee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
 }
 
@@ -380,7 +380,7 @@ public(package) macro fun max_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::one_year_ms!()
 }
 
-public(package) fun chk_fee_win(value: u64) {
+public(package) fun chk_win(value: u64) {
     assert!(
         value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
         EInvalidExpiryFeeWindowMs,
@@ -424,7 +424,7 @@ public(package) fun chk_ticks(value: u64) {
 
 public(package) macro fun max_cadence_window_size(): u64 { 10 }
 
-public(package) fun chk_cad_win(value: u64) {
+public(package) fun chk_cad(value: u64) {
     assert!(value <= max_cadence_window_size!(), EInvalidCadenceWindowSize);
 }
 
@@ -525,7 +525,7 @@ public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 {
     2 * deepbook_predict::constants::one_minute_ms!()
 }
 
-public(package) fun chk_svi_age(value: u64) {
+public(package) fun chk_svi(value: u64) {
     assert!(
         value >= min_block_scholes_svi_freshness_ms!()
             && value <= max_block_scholes_svi_freshness_ms!(),

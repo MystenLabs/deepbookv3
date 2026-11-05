@@ -513,7 +513,7 @@ public fun finish_flush(
     // Enforced for everyone, including the cap owner (starting carries no deadline;
     // finishing does).
     assert!(
-        clock.timestamp_ms() < vault.valuation.borrow().started_at_ms + config.val_window(),
+        clock.timestamp_ms() < vault.valuation.borrow().started_at_ms + config.val_win(),
         EValuationWindowExpired,
     );
     let valuation = vault.valuation.extract();
@@ -762,7 +762,7 @@ public fun add_usdc_to_plp(
         EContributionExceedsPriceCeiling,
     );
     vault.expiry_accounting.idle_in(payment.into_balance());
-    vault_events::usdc_added(vault.id(), ctx.sender(), amount);
+    vault_events::usdc_in(vault.id(), ctx.sender(), amount);
 }
 
 /// Bootstrap the pool exactly once: permanently lock `payment` USDC of minimum
@@ -819,7 +819,7 @@ public fun request_supply(
     let account_id = account.account_id();
     let recipient = account.receive_address();
     let index = vault.lp.request_supply(payment, account_id, recipient, min_plp_out);
-    vault_events::supply_req(
+    vault_events::sup_req(
         vault_id,
         account_id,
         recipient,
@@ -1089,7 +1089,7 @@ fun top_up_live(
     let top_up = requested_top_up.min(vault.expiry_accounting.idle_balance()).min(funding_room);
     if (top_up == 0) return;
 
-    let cash = vault.expiry_accounting.send_expiry(expiry_market_id, top_up);
+    let cash = vault.expiry_accounting.send_exp(expiry_market_id, top_up);
     market.recv_cash(cash);
     vault_events::rebalanced(
         vault.id(),
@@ -1109,7 +1109,7 @@ fun sweep_live(
     target_cash: u64,
 ) {
     let returned_cash = market.rel_cash(cash_balance - target_cash);
-    let returned_cash_amount = vault.expiry_accounting.recv_expiry(returned_cash, expiry_market_id);
+    let returned_cash_amount = vault.expiry_accounting.exp_in(returned_cash, expiry_market_id);
     // Surplus just returned to idle — realize any protocol cut a prior settled
     // sweep could not cover because idle was deployed in other active markets.
     let realized_profit = vault.expiry_accounting.pend_out();
@@ -1149,7 +1149,7 @@ fun sync_incent(
     if (allocation == 0) return;
 
     let incentives = vault.fee_incentive_reserve.split(allocation);
-    market.recv_incent(incentives);
+    market.inc_in(incentives);
     vault_events::inc_out(
         vault.id(),
         expiry_market_id,
@@ -1192,7 +1192,7 @@ fun sweep_done(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &Protoc
     let expiry_market_id = market.id();
     let deactivated = vault.expiry_accounting.deactivate(expiry_market_id);
     let returned_cash = market.free_settled();
-    let returned_cash_amount = vault.expiry_accounting.recv_expiry(returned_cash, expiry_market_id);
+    let returned_cash_amount = vault.expiry_accounting.exp_in(returned_cash, expiry_market_id);
     if (deactivated || returned_cash_amount > 0) {
         vault_events::cash_recv(
             vault.id(),
@@ -1202,7 +1202,7 @@ fun sweep_done(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &Protoc
         );
         let sent_to_expiry = vault.expiry_accounting.sent_cash(expiry_market_id);
         let received_from_expiry = vault.expiry_accounting.received(expiry_market_id);
-        vault_events::expiry_pnl(
+        vault_events::exp_pnl(
             vault.id(),
             expiry_market_id,
             market.propbook_underlying_id(),
@@ -1233,12 +1233,12 @@ fun sweep_done(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &Protoc
         );
     };
     vault.materialize(config, expiry_market_id);
-    let returned_incentives = market.free_incent();
+    let returned_incentives = market.free_inc();
     let returned_incentive_amount = returned_incentives.value();
     vault.fee_incentive_reserve.join(returned_incentives);
 
     if (returned_incentive_amount > 0) {
-        vault_events::incent_back(
+        vault_events::inc_back(
             vault.id(),
             expiry_market_id,
             returned_incentive_amount,
