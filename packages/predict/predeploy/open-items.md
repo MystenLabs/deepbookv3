@@ -36,7 +36,7 @@ The Mainnet multisig path, which emits unsigned transactions (`--emit-unsigned`)
 
 **Severity:** Deploy gate.
 
-Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. Mainnet DeepBook v8 and Testnet DeepBook v20 consumers select the [shared DEEP reconstruction](../../../vendor/deep/README.md) with their separate existing token identities. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
+Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. Mainnet DeepBook v9 and Testnet DeepBook v21 consumers select the [shared DEEP reconstruction](../../../vendor/deep/README.md) with their separate existing token identities. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
 
 The remaining gates are:
 
