@@ -215,7 +215,7 @@ fun backing_buffer_lambda_market_snapshot_freezes_at_creation() {
 
     fx.set_template_backing_buffer_lambda(config_constants::min_backing_buffer_lambda!());
     let market = fx.take_market_bundle(expiry_id);
-    let snapshot = helpers::config(&market).se_snapshot();
+    let snapshot = helpers::config(&market).se_snap();
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
     assert_eq!(
         helpers::market(&market).backing_buffer_lambda(),
@@ -498,7 +498,7 @@ fun set_plp_withdraw_fee_rate_during_valuation_aborts() {
 /// to admit it fails here rather than aborting a live flush.
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpSupplyFeeRate)]
 fun plp_supply_fee_rate_at_full_scale_is_rejected() {
-    config_constants::chk_sup_fee(math::float_scaling!());
+    config_constants::chk_sup(math::float_scaling!());
     abort 999
 }
 

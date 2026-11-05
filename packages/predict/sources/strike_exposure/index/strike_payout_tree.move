@@ -38,9 +38,9 @@
 ///
 /// Delayed execution adds pins: a waiting order's boundary ticks, passed in as
 /// `pins` (tick -> count of waiting orders; a key is present only while its
-/// count is positive). Enqueue creates the nodes up front (`ensure_node`), no
+/// count is positive). Enqueue creates the nodes up front (`ens_node`), no
 /// deletion path removes a pinned node, and a resolve fill inserts over existing
-/// nodes only (`insert_exist`), so the keeper never creates a node.
+/// nodes only (`ins_old`), so the keeper never creates a node.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Self, Pricer}, range_codec};
@@ -144,7 +144,7 @@ public(package) fun range_max(tree: &StrikePayoutTree, lower_tick: u64, higher_t
 }
 
 /// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
+public(package) fun out_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
     let left = if (lower_tick == 0) {
         0
     } else {
@@ -290,7 +290,7 @@ public(package) fun insert_range(
 /// is stamped like any post-snapshot creation: zero shadows under an active
 /// generation, so the frozen walk excludes it. Only a pin keeps it alive past
 /// the next emptying mutation or `snap_done`.
-public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
+public(package) fun ens_node(tree: &mut StrikePayoutTree, tick: u64): bool {
     if (tick == 0 || tick == constants::pos_inf_tick!() || tree.nodes.contains(tick)) {
         return false
     };
@@ -306,7 +306,7 @@ public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
 /// Mirrors `insert_range` over a path with no node-creation branch, so no keeper
 /// path reaches `table::add`. Each touched node still captures its shadow
 /// before the mutation (RP-29).
-public(package) fun insert_exist(
+public(package) fun ins_old(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,

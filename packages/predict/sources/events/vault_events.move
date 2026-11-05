@@ -375,7 +375,7 @@ public(package) fun profit(
     });
 }
 
-public(package) fun expiry_pnl(
+public(package) fun exp_pnl(
     pool_vault_id: ID,
     expiry_market_id: ID,
     propbook_underlying_id: u32,
@@ -421,7 +421,7 @@ public(package) fun pnl(
     });
 }
 
-public(package) fun supply_req(
+public(package) fun sup_req(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -483,7 +483,7 @@ public(package) fun req_cxl(
     });
 }
 
-public(package) fun limit_missed(
+public(package) fun lim_miss(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -509,7 +509,7 @@ public(package) fun limit_missed(
     });
 }
 
-public(package) fun supply_done(
+public(package) fun sup_done(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -615,7 +615,7 @@ public(package) fun cap_locked(pool_vault_id: ID, amount: u64) {
     event::emit(CapitalLocked { pool_vault_id, amount });
 }
 
-public(package) fun usdc_added(pool_vault_id: ID, contributor: address, amount: u64) {
+public(package) fun usdc_in(pool_vault_id: ID, contributor: address, amount: u64) {
     event::emit(UsdcAddedToPlp { pool_vault_id, contributor, amount });
 }
 
@@ -662,7 +662,7 @@ public(package) fun inc_out(
     });
 }
 
-public(package) fun incent_back(
+public(package) fun inc_back(
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,

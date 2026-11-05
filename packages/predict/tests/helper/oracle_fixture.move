@@ -307,7 +307,7 @@ public fun load_pricer_bound_to(
     expiry_market_id: ID,
 ): Pricer {
     pricing::load_live_pricer(
-        config.pricing_cfg(),
+        config.pr_cfg(),
         oracle_registry,
         pyth,
         bs_values,

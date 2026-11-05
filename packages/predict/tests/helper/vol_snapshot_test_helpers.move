@@ -61,7 +61,7 @@ public fun load_snapshot_with_stores(
     let expiry = fx.expiry();
     let mut market_uid = object::new(fx.scenario_mut().ctx());
     let (snapshot, pricer) = pricing::load_vol(
-        config.pricing_cfg(),
+        config.pr_cfg(),
         oracle_registry,
         pyth,
         bs_values,

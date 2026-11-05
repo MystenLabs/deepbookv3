@@ -19,7 +19,7 @@ fun empty_tree_has_zero_peaks() {
 
     assert_eq!(tree.range_max(0, constants::pos_inf_tick!()), 0);
     assert_eq!(tree.range_max(2, 6), 0);
-    assert_eq!(tree.outside_max(2, 6), 0);
+    assert_eq!(tree.out_max(2, 6), 0);
     destroy(tree);
 }
 
@@ -44,10 +44,10 @@ fun range_and_complement_reads_match_mixed_surface() {
     assert_eq!(tree.range_max(8, 9), 20);
     assert_eq!(tree.range_max(7, constants::pos_inf_tick!()), 20);
 
-    assert_eq!(tree.outside_max(0, constants::pos_inf_tick!()), 0);
-    assert_eq!(tree.outside_max(0, 2), 70);
-    assert_eq!(tree.outside_max(1, 5), 30);
-    assert_eq!(tree.outside_max(7, constants::pos_inf_tick!()), 70);
+    assert_eq!(tree.out_max(0, constants::pos_inf_tick!()), 0);
+    assert_eq!(tree.out_max(0, 2), 70);
+    assert_eq!(tree.out_max(1, 5), 30);
+    assert_eq!(tree.out_max(7, constants::pos_inf_tick!()), 70);
 
     destroy(tree);
 }
@@ -61,14 +61,14 @@ fun shared_boundaries_and_removal_refresh_peaks() {
     tree.insert_range(4, 7, 30);
 
     assert_eq!(tree.range_max(1, 4), 65);
-    assert_eq!(tree.outside_max(1, 4), 30);
+    assert_eq!(tree.out_max(1, 4), 30);
 
     tree.remove_range(1, 4, 25, &vec_map::empty());
     assert_eq!(tree.range_max(1, 4), 40);
-    assert_eq!(tree.outside_max(1, 4), 30);
+    assert_eq!(tree.out_max(1, 4), 30);
 
     tree.remove_range(1, 4, 40, &vec_map::empty());
     assert_eq!(tree.range_max(1, 4), 0);
-    assert_eq!(tree.outside_max(1, 4), 30);
+    assert_eq!(tree.out_max(1, 4), 30);
     destroy(tree);
 }
