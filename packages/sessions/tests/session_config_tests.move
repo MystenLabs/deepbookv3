@@ -74,11 +74,11 @@ fun new_config_allows_no_pools() {
 }
 
 #[test]
-fun allow_pool_lists_pools_in_the_order_allowed() {
+fun admin_allow_pool_lists_pools_in_the_order_allowed() {
     let (scenario, mut config, admin_cap) = setup();
 
-    config.allow_pool(&admin_cap, pool_a());
-    config.allow_pool(&admin_cap, pool_b());
+    config.admin_allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_b());
 
     assert_eq!(config.allowed_pools(), vector[pool_a(), pool_b()]);
     assert_eq!(event::events_by_type<SessionPoolAllowed>().length(), 2);
@@ -86,13 +86,13 @@ fun allow_pool_lists_pools_in_the_order_allowed() {
 }
 
 #[test]
-fun disallow_pool_removes_only_that_pool() {
+fun admin_disallow_pool_removes_only_that_pool() {
     let (scenario, mut config, admin_cap) = setup();
-    config.allow_pool(&admin_cap, pool_a());
-    config.allow_pool(&admin_cap, pool_b());
-    config.allow_pool(&admin_cap, pool_c());
+    config.admin_allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_b());
+    config.admin_allow_pool(&admin_cap, pool_c());
 
-    config.disallow_pool(&admin_cap, pool_b());
+    config.admin_disallow_pool(&admin_cap, pool_b());
 
     assert_eq!(config.allowed_pools(), vector[pool_a(), pool_c()]);
     assert_eq!(event::events_by_type<SessionPoolDisallowed>().length(), 1);
@@ -102,11 +102,11 @@ fun disallow_pool_removes_only_that_pool() {
 #[test]
 fun a_removed_pool_can_be_allowed_again() {
     let (scenario, mut config, admin_cap) = setup();
-    config.allow_pool(&admin_cap, pool_a());
-    config.disallow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
+    config.admin_disallow_pool(&admin_cap, pool_a());
     assert_eq!(config.allowed_pools(), vector[]);
 
-    config.allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
 
     assert_eq!(config.allowed_pools(), vector[pool_a()]);
     finish(scenario, config, admin_cap);
@@ -115,18 +115,18 @@ fun a_removed_pool_can_be_allowed_again() {
 #[test, expected_failure(abort_code = vec_set::EKeyAlreadyExists)]
 fun allowing_an_allowed_pool_aborts() {
     let (_scenario, mut config, admin_cap) = setup();
-    config.allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
 
-    config.allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = session_config::EPoolNotAllowed)]
 fun disallowing_an_unlisted_pool_aborts() {
     let (_scenario, mut config, admin_cap) = setup();
-    config.allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
 
-    config.disallow_pool(&admin_cap, pool_b());
+    config.admin_disallow_pool(&admin_cap, pool_b());
     abort EUnexpectedSuccess
 }
 
@@ -134,7 +134,7 @@ fun disallowing_an_unlisted_pool_aborts() {
 fun disallowing_before_any_pool_is_allowed_aborts() {
     let (_scenario, mut config, admin_cap) = setup();
 
-    config.disallow_pool(&admin_cap, pool_a());
+    config.admin_disallow_pool(&admin_cap, pool_a());
     abort EUnexpectedSuccess
 }
 
@@ -143,17 +143,17 @@ fun retired_package_version_cannot_allow_a_pool() {
     let (_scenario, mut config, admin_cap) = setup();
     session_config::set_version_watermark_for_testing(&mut config, FUTURE_VERSION);
 
-    config.allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = session_config::EPackageVersionDisabled)]
 fun retired_package_version_cannot_disallow_a_pool() {
     let (_scenario, mut config, admin_cap) = setup();
-    config.allow_pool(&admin_cap, pool_a());
+    config.admin_allow_pool(&admin_cap, pool_a());
     session_config::set_version_watermark_for_testing(&mut config, FUTURE_VERSION);
 
-    config.disallow_pool(&admin_cap, pool_a());
+    config.admin_disallow_pool(&admin_cap, pool_a());
     abort EUnexpectedSuccess
 }
 
