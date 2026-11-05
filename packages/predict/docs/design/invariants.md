@@ -170,6 +170,7 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
 ## Mint admission
 
 - Raw `entry_probability` and every finite leg's probability (lower ABOVE, upper BELOW) must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in these mint-only bounds, and infinite sentinels are exempt.
+- A market's entry band lies inside the template band at its creation: `template_min ≤ min_entry_probability < max_entry_probability ≤ template_max`. Creation can narrow it, never widen it, and nothing changes it afterwards.
 - `premium = entry_probability × quantity ≥ min_premium`; the holder pays this in full — there is no financed remainder.
 - `all_in_cost ≤ quantity`; the complete trader debit cannot exceed the position's maximum settlement payout.
 

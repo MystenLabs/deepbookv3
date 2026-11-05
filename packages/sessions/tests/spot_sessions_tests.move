@@ -20,7 +20,7 @@ use deepbook_core_account::{
     deepbook_core_account as dca
 };
 use deepbook_sessions::{
-    session_config::{Self as session_config, SessionsConfig},
+    session_config::{Self as session_config, SessionsAdminCap, SessionsConfig},
     sessions::{Self as sessions, SessionsApp}
 };
 use std::unit_test::{assert_eq, destroy};
@@ -58,6 +58,8 @@ const FUTURE_VERSION: u64 = 5;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
+/// The base asset of a second pool, which the allowlist does not name.
+public struct JUNK has store {}
 
 public struct SpotFixture {
     scenario: Scenario,
@@ -545,7 +547,106 @@ fun retired_package_version_cannot_use_spot_wrapper() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = session_config::EPoolNotAllowed)]
+fun session_cannot_place_limit_order_on_an_unlisted_pool() {
+    let mut fixture = setup_spot_fixture();
+    let registry_id = fixture.registry_id;
+    let junk_pool_id = create_pool<JUNK, QUOTE>(&mut fixture.scenario, registry_id);
+    authorize_session(&mut fixture);
+
+    session_limit_order<JUNK, QUOTE>(&mut fixture, junk_pool_id, LIMIT_ORDER_CLIENT_ID, true);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = session_config::EPoolNotAllowed)]
+fun session_cannot_place_market_order_on_an_unlisted_pool() {
+    let mut fixture = setup_spot_fixture();
+    let registry_id = fixture.registry_id;
+    let junk_pool_id = create_pool<JUNK, QUOTE>(&mut fixture.scenario, registry_id);
+    authorize_session(&mut fixture);
+
+    session_market_order<JUNK, QUOTE>(&mut fixture, junk_pool_id, true);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = session_config::EPoolNotAllowed)]
+fun session_spot_orders_fail_closed_before_any_pool_is_allowed() {
+    let mut fixture = setup_unlisted_spot_fixture();
+    authorize_session(&mut fixture);
+    let pool_id = fixture.pool_id;
+
+    session_limit_order<BASE, QUOTE>(&mut fixture, pool_id, LIMIT_ORDER_CLIENT_ID, false);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = session_config::EPoolNotAllowed)]
+fun session_cannot_place_order_on_a_disallowed_pool() {
+    let mut fixture = setup_spot_fixture();
+    authorize_session(&mut fixture);
+    let pool_id = fixture.pool_id;
+    admin_disallow_pool(&mut fixture, pool_id);
+
+    session_market_order<BASE, QUOTE>(&mut fixture, pool_id, true);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun session_cancels_an_order_on_a_disallowed_pool() {
+    let mut fixture = setup_spot_fixture();
+    authorize_session(&mut fixture);
+    let pool_id = fixture.pool_id;
+    let wrapper_id = fixture.wrapper_id;
+    let order = session_limit_order<BASE, QUOTE>(
+        &mut fixture,
+        pool_id,
+        LIMIT_ORDER_CLIENT_ID,
+        false,
+    );
+    assert_eq!(order.status(), constants::live());
+    admin_disallow_pool(&mut fixture, pool_id);
+
+    fixture.scenario.next_tx(SESSION);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    let root = fixture.scenario.take_shared<AccumulatorRoot>();
+    let clock = fixture.scenario.take_shared<Clock>();
+    sessions::cancel_live_order<BASE, QUOTE>(
+        &mut pool,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        order.order_id(),
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    assert_eq!(
+        dca::pool_account_open_orders<BASE, QUOTE>(&pool, wrapper.load_account()).length(),
+        NO_OPEN_ORDERS,
+    );
+    // Cancelling returns the locked base to Account custody in full.
+    assert_eq!(wrapper.load_account().balance<BASE>(&root, &clock), ACCOUNT_BALANCE);
+    return_shared(clock);
+    return_shared(root);
+    return_shared(sessions_config);
+    return_shared(wrapper);
+    return_shared(pool);
+    return_shared(account_registry);
+    finish_spot_fixture(fixture);
+}
+
+/// The spot fixture with its pool on the session allowlist.
 fun setup_spot_fixture(): SpotFixture {
+    let mut fixture = setup_unlisted_spot_fixture();
+    let pool_id = fixture.pool_id;
+    admin_allow_pool(&mut fixture, pool_id);
+    fixture
+}
+
+fun setup_unlisted_spot_fixture(): SpotFixture {
     let mut scenario = test::begin(ADMIN);
 
     scenario.next_tx(@0x0);
@@ -555,11 +656,11 @@ fun setup_spot_fixture(): SpotFixture {
     let registry_id = registry::test_registry(scenario.ctx());
     account_registry::init_for_testing(scenario.ctx());
     let (sessions_config_id, sessions_admin_cap) = session_config::init_for_testing(scenario.ctx());
-    destroy(sessions_admin_cap);
+    transfer::public_transfer(sessions_admin_cap, ADMIN);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
     clock.share_for_testing();
-    let pool_id = create_pool(&mut scenario, registry_id);
+    let pool_id = create_pool<BASE, QUOTE>(&mut scenario, registry_id);
     authorize_core_app(&mut scenario, registry_id);
     authorize_sessions_app(&mut scenario);
 
@@ -609,6 +710,121 @@ fun revoke_session(fixture: &mut SpotFixture) {
     sessions::revoke_session(&mut wrapper, SESSION, fixture.scenario.ctx());
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
     return_shared(wrapper);
+}
+
+fun admin_allow_pool(fixture: &mut SpotFixture, pool_id: ID) {
+    fixture.scenario.next_tx(ADMIN);
+    let admin_cap = fixture.scenario.take_from_sender<SessionsAdminCap>();
+    let mut sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    sessions_config.admin_allow_pool(&admin_cap, pool_id);
+    assert!(sessions_config.allowed_pools().contains(&pool_id));
+    return_shared(sessions_config);
+    fixture.scenario.return_to_sender(admin_cap);
+}
+
+fun admin_disallow_pool(fixture: &mut SpotFixture, pool_id: ID) {
+    fixture.scenario.next_tx(ADMIN);
+    let admin_cap = fixture.scenario.take_from_sender<SessionsAdminCap>();
+    let mut sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    sessions_config.admin_disallow_pool(&admin_cap, pool_id);
+    assert!(!sessions_config.allowed_pools().contains(&pool_id));
+    return_shared(sessions_config);
+    fixture.scenario.return_to_sender(admin_cap);
+}
+
+/// A session-key limit order for the minimum size at price 1.
+fun session_limit_order<BaseAsset, QuoteAsset>(
+    fixture: &mut SpotFixture,
+    pool_id: ID,
+    client_order_id: u64,
+    is_bid: bool,
+): OrderInfo {
+    let registry_id = fixture.registry_id;
+    let wrapper_id = fixture.wrapper_id;
+    fixture.scenario.next_tx(SESSION);
+    let registry = fixture.scenario.take_shared_by_id<Registry>(registry_id);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    let root = fixture.scenario.take_shared<AccumulatorRoot>();
+    let clock = fixture.scenario.take_shared<Clock>();
+    let info = sessions::place_limit_order<BaseAsset, QuoteAsset>(
+        &mut pool,
+        &registry,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(),
+        constants::min_size(),
+        is_bid,
+        true,
+        constants::max_u64(),
+        &root,
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    return_shared(clock);
+    return_shared(root);
+    return_shared(sessions_config);
+    return_shared(wrapper);
+    return_shared(pool);
+    return_shared(account_registry);
+    return_shared(registry);
+    info
+}
+
+/// A session-key market order for the minimum size with a price limit of 1.
+fun session_market_order<BaseAsset, QuoteAsset>(
+    fixture: &mut SpotFixture,
+    pool_id: ID,
+    is_bid: bool,
+): OrderInfo {
+    let registry_id = fixture.registry_id;
+    let wrapper_id = fixture.wrapper_id;
+    fixture.scenario.next_tx(SESSION);
+    let registry = fixture.scenario.take_shared_by_id<Registry>(registry_id);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    let root = fixture.scenario.take_shared<AccumulatorRoot>();
+    let clock = fixture.scenario.take_shared<Clock>();
+    let info = sessions::place_market_order<BaseAsset, QuoteAsset>(
+        &mut pool,
+        &registry,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        MARKET_TAKER_CLIENT_ID,
+        constants::self_matching_allowed(),
+        constants::min_size(),
+        constants::float_scaling(),
+        is_bid,
+        true,
+        &root,
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    return_shared(clock);
+    return_shared(root);
+    return_shared(sessions_config);
+    return_shared(wrapper);
+    return_shared(pool);
+    return_shared(account_registry);
+    return_shared(registry);
+    info
 }
 
 fun set_clock(fixture: &mut SpotFixture, timestamp_ms: u64) {
@@ -720,11 +936,11 @@ fun authorize_sessions_app(scenario: &mut Scenario) {
     destroy(admin_cap);
 }
 
-fun create_pool(scenario: &mut Scenario, registry_id: ID): ID {
+fun create_pool<BaseAsset, QuoteAsset>(scenario: &mut Scenario, registry_id: ID): ID {
     scenario.next_tx(ADMIN);
     let admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
     let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
-    let pool_id = pool::create_pool_admin<BASE, QUOTE>(
+    let pool_id = pool::create_pool_admin<BaseAsset, QuoteAsset>(
         &mut registry,
         constants::tick_size(),
         constants::lot_size(),

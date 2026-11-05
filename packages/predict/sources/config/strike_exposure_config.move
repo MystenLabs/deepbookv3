@@ -13,11 +13,11 @@ use deepbook_predict::{config_constants, pricing::RangePrice};
 use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 
-#[allow(unused_const)]
+#[test_only]
 const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
-#[allow(unused_const)]
+#[test_only]
 const EPremiumBelowMinimum: u64 = 3;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
@@ -206,6 +206,24 @@ public(package) fun set_maxp(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::chk_maxp(value);
     assert!(value > config.min_entry_probability, EInvalidEntryProbabilityBound);
     config.max_entry_probability = value;
+}
+
+/// Narrow a new market's snapshot to the overlap of its entry band and
+/// `[min_entry_probability, max_entry_probability]`, and return the resulting
+/// `(min, max)` for the creation event. Each side keeps the tighter value, so a
+/// market can never be looser than the template it copied, and the band stays
+/// inside the template's validated envelope. Aborts when the overlap is empty.
+public(package) fun narrow(
+    config: &mut StrikeExposureConfig,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+): (u64, u64) {
+    let min = min_entry_probability.max(config.min_entry_probability);
+    let max = max_entry_probability.min(config.max_entry_probability);
+    assert!(min < max, EInvalidEntryProbabilityBound);
+    config.min_entry_probability = min;
+    config.max_entry_probability = max;
+    (min, max)
 }
 
 public(package) fun set_fee_win(config: &mut StrikeExposureConfig, value: u64) {

@@ -23,14 +23,14 @@ use deepbook_predict_math::math as pmath;
 use fixed_math::math;
 use sui::vec_map::VecMap;
 
-#[allow(unused_const)]
+#[test_only]
 const EInvalidCloseQuantity: u64 = 0;
-#[allow(unused_const)]
+#[test_only]
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
-#[allow(unused_const)]
+#[test_only]
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
 
@@ -790,6 +790,7 @@ public(package) fun apply_close(
 }
 
 /// Release one order's full terminal payout from settled liability and return it.
+#[test_only]
 public(package) fun settle_close(exposure: &mut StrikeExposure, order: &Order): u64 {
     let payout = exposure.settled_order_payout(order);
     // Settlement liability and individual payouts use the same integer quantity

@@ -379,6 +379,43 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     expiry_id
 }
 
+/// `create_expiry` through `create_and_share_expiry_market_with_band`, narrowing the
+/// new market's entry band to `[min_entry_probability, max_entry_probability]`.
+public fun create_expiry_with_band(
+    self: &mut Fixture,
+    expiry: u64,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+): ID {
+    self.scenario.next_tx(test_constants::admin());
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
+    creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
+    let expiry_id = registry.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &self.lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
+        option::some(expiry),
+        min_entry_probability,
+        max_entry_probability,
+        &creation_clock,
+        self.scenario.ctx(),
+    );
+    creation_clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(registry);
+    return_shared(vault);
+    self.scenario.next_tx(test_constants::admin());
+    expiry_id
+}
+
 public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): ID {
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
@@ -561,15 +598,6 @@ public fun cancel_supply_request_bundle(
             &self.clock,
             self.scenario.ctx(),
         );
-}
-
-/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
-public fun add_settled_redeem_keeper_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    keeper: address,
-) {
-    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
 }
 
 /// Pause / unpause global trading through the real admin path.

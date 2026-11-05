@@ -50,7 +50,8 @@ use deepbook_predict::{
     pricing::{Self, Pricer, FrozenPricer, RangePrice, VolSnapshot},
     protocol_config::{Self, ProtocolConfig},
     range_codec,
-    strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure}
+    strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure},
+    strike_exposure_config::StrikeExposureConfig
 };
 use deepbook_predict_math::{lazer_price::{Self, LazerPrice}, math as pmath};
 use fixed_math::math;
@@ -77,21 +78,21 @@ use fun df::exists as UID.exists_;
 
 const EMintPaused: u64 = 0;
 const EMarketNotSettled: u64 = 1;
-#[allow(unused_const)]
+#[test_only]
 const EMintCostAboveMax: u64 = 2;
-#[allow(unused_const)]
+#[test_only]
 const EMintProbabilityAboveMax: u64 = 3;
 const EWrongPricer: u64 = 4;
 const EReferenceTickObservationMissing: u64 = 5;
-#[allow(unused_const)]
+#[test_only]
 const EMintRedeemSameTimestamp: u64 = 6;
-#[allow(unused_const)]
+#[test_only]
 const ERedeemProbabilityBelowMin: u64 = 7;
-#[allow(unused_const)]
+#[test_only]
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
-#[allow(unused_const)]
+#[test_only]
 const EMintCostAboveMaxPayout: u64 = 11;
 const EDelayedExecutionRequired: u64 = 13;
 const EOrderFailsLimits: u64 = 14;
@@ -1673,12 +1674,13 @@ public(package) fun free_settled(market: &mut ExpiryMarket): Balance<USDC> {
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, per-market config, and the
-/// fee-band template, and starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
-/// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
-/// priced flow.
+/// The market stores the underlying, accounting/admission tick sizes, `strike_exposure_config`
+/// (the caller's snapshot of the template), and a copy of the fee-band template, and starts with
+/// zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so there is no
+/// grid to center). Current oracle bindings stay in Propbook and are resolved on every priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
+    strike_exposure_config: StrikeExposureConfig,
     propbook_underlying_id: u32,
     expiry: u64,
     tick_size: u64,
@@ -1689,7 +1691,6 @@ public(package) fun create_and_share(
 ): ID {
     let mut id = object::new(ctx);
     let expiry_market_id = id.to_inner();
-    let strike_exposure_config = config.se_snapshot();
     config.bands_to(&mut id);
     let market = ExpiryMarket {
         id,
