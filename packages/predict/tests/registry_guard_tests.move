@@ -17,6 +17,7 @@ use deepbook_predict::{
     accumulator_support,
     admin::{Self, AdminCap},
     builder_code::{Self, BuilderCode},
+    config_events::MarketCreated,
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers,
@@ -26,6 +27,7 @@ use deepbook_predict::{
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
+    strike_exposure_config,
     test_constants,
     test_helpers
 };
@@ -34,7 +36,7 @@ use propbook::{
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock::{Self, Clock}, object, test_scenario::{Self, Scenario, return_shared}};
+use sui::{bcs, clock::{Self, Clock}, event, object, test_scenario::{Self, Scenario, return_shared}};
 
 /// A Propbook underlying id the registry never approves.
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
@@ -50,6 +52,19 @@ const TWENTY_MINUTES_MS: u64 = 1_200_000;
 const FIFTY_MINUTES_MS: u64 = 3_000_000;
 const SIXTY_MINUTES_MS: u64 = 3_600_000;
 const SEVENTY_FIVE_MINUTES_MS: u64 = 4_500_000;
+// Entry probabilities in FLOAT_SCALING, written out by hand (25c = 250_000_000). The
+// template starts at the shipped default band [1c, 99c].
+const DEFAULT_MIN_PROBABILITY: u64 = 10_000_000;
+const DEFAULT_MAX_PROBABILITY: u64 = 990_000_000;
+const BAND_MIN_PROBABILITY: u64 = 250_000_000;
+const BAND_MAX_PROBABILITY: u64 = 400_000_000;
+const BELOW_DEFAULT_MIN_PROBABILITY: u64 = 5_000_000;
+const ABOVE_DEFAULT_MAX_PROBABILITY: u64 = 995_000_000;
+const WHOLE_PROBABILITY: u64 = 1_000_000_000;
+// `MarketCreated` fields before the band: two IDs, the u32 underlying, then expiry,
+// tick_size, admission_tick_size, max_expiry_allocation, initial_expiry_cash,
+// backing_buffer_lambda, base_fee and min_fee.
+const U64_FIELDS_BEFORE_BAND: u64 = 8;
 
 // === builder_code owner guard ===
 
@@ -687,6 +702,301 @@ fun create_expiry_market_at_other_expiry_aborts() {
     abort 999
 }
 
+#[test]
+fun create_expiry_market_with_band_narrows_only_the_new_market() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // At 0:00 the next 1m slots are 1:00 and 2:00: the first banded, the second not.
+    let banded_id = reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::some(ONE_MINUTE_MS),
+        BAND_MIN_PROBABILITY,
+        BAND_MAX_PROBABILITY,
+        &clock,
+        scenario.ctx(),
+    );
+    let plain_id = reg.create_and_share_expiry_market_at(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        TWO_MINUTES_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_market_id(&reg, ONE_MINUTE_MS, banded_id);
+    assert_market_id(&reg, TWO_MINUTES_MS, plain_id);
+
+    // `MarketCreated` reports each market's own band, and the template is untouched.
+    let created = event::events_by_type<MarketCreated>();
+    assert_eq!(created.length(), 2);
+    let (banded_min, banded_max) = created_band(&created[0]);
+    assert_eq!(banded_min, BAND_MIN_PROBABILITY);
+    assert_eq!(banded_max, BAND_MAX_PROBABILITY);
+    let (plain_min, plain_max) = created_band(&created[1]);
+    assert_eq!(plain_min, DEFAULT_MIN_PROBABILITY);
+    assert_eq!(plain_max, DEFAULT_MAX_PROBABILITY);
+
+    // The stored band is the one the market's own reads report.
+    return_shared(vault);
+    scenario.next_tx(test_constants::admin());
+    let banded = scenario.take_shared_by_id<ExpiryMarket>(banded_id);
+    let plain = scenario.take_shared_by_id<ExpiryMarket>(plain_id);
+    let (_, _, banded_floor) = banded.order_flow_state();
+    let (_, _, plain_floor) = plain.order_flow_state();
+    assert_eq!(banded_floor, BAND_MIN_PROBABILITY);
+    assert_eq!(plain_floor, DEFAULT_MIN_PROBABILITY);
+    return_shared(banded);
+    return_shared(plain);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun create_expiry_market_with_band_never_loosens_the_template() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // A floor below the template's 1c: the market keeps 1c and the 40c cap.
+    reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::some(ONE_MINUTE_MS),
+        BELOW_DEFAULT_MIN_PROBABILITY,
+        BAND_MAX_PROBABILITY,
+        &clock,
+        scenario.ctx(),
+    );
+    // A cap above the template's 99c: the market keeps the 25c floor and 99c.
+    reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::some(TWO_MINUTES_MS),
+        BAND_MIN_PROBABILITY,
+        std::u64::max_value!(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let created = event::events_by_type<MarketCreated>();
+    assert_eq!(created.length(), 2);
+    let (low_min, low_max) = created_band(&created[0]);
+    assert_eq!(low_min, DEFAULT_MIN_PROBABILITY);
+    assert_eq!(low_max, BAND_MAX_PROBABILITY);
+    let (high_min, high_max) = created_band(&created[1]);
+    assert_eq!(high_min, BAND_MIN_PROBABILITY);
+    assert_eq!(high_max, DEFAULT_MAX_PROBABILITY);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
+fun create_expiry_market_with_band_outside_the_template_aborts() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // [99.5c, 100c] does not overlap the template's [1c, 99c].
+    reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::some(ONE_MINUTE_MS),
+        ABOVE_DEFAULT_MAX_PROBABILITY,
+        WHOLE_PROBABILITY,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EUnexpectedExpiry)]
+fun create_expiry_market_with_band_other_expiry_aborts() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // The contract's next 1m slot is 1:00, not the 2:00 the caller expects.
+    reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::some(TWO_MINUTES_MS),
+        BAND_MIN_PROBABILITY,
+        BAND_MAX_PROBABILITY,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::ELifecycleCapNotValid)]
+fun create_expiry_market_with_band_revoked_cap_aborts() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    reg.revoke_lifecycle_cap(&admin_cap, lifecycle_cap.id());
+    reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::some(ONE_MINUTE_MS),
+        BAND_MIN_PROBABILITY,
+        BAND_MAX_PROBABILITY,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EUnexpectedExpiry)]
+fun create_expiry_market_at_zero_expiry_aborts() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // No slot expires at 0, so a zero expected expiry is a stale plan, not "any expiry".
+    reg.create_and_share_expiry_market_at(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        START_OF_TIME_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test]
+fun create_expiry_market_with_band_without_expected_expiry_creates_the_next_slot() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+
+    // Unset, like `create_and_share_expiry_market`: at 0:00 the next 1m slot is 1:00.
+    let market_id = reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::none(),
+        BAND_MIN_PROBABILITY,
+        BAND_MAX_PROBABILITY,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_market_id(&reg, ONE_MINUTE_MS, market_id);
+    let created = event::events_by_type<MarketCreated>();
+    assert_eq!(created.length(), 1);
+    let (min, max) = created_band(&created[0]);
+    assert_eq!(min, BAND_MIN_PROBABILITY);
+    assert_eq!(max, BAND_MAX_PROBABILITY);
+
+    clock.destroy_for_testing();
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(reg);
+    return_shared(vault);
+    lifecycle_cap.destroy();
+    destroy(admin_cap);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = market_manager::EMarketAlreadyCreated)]
 fun record_expiry_creation_duplicate_expiry_aborts() {
     let mut scenario = test_scenario::begin(test_constants::admin());
@@ -970,6 +1280,18 @@ fun enable_cadence(
         test_constants::default_initial_expiry_cash(),
         WINDOW_SIZE_TWO,
     );
+}
+
+/// Decode `(min_entry_probability, max_entry_probability)` from a `MarketCreated`.
+fun created_band(created: &MarketCreated): (u64, u64) {
+    let mut fields = bcs::new(std::bcs::to_bytes(created));
+    fields.peel_address();
+    fields.peel_address();
+    fields.peel_u32();
+    U64_FIELDS_BEFORE_BAND.do!(|_| { fields.peel_u64(); });
+    let min = fields.peel_u64();
+    let max = fields.peel_u64();
+    (min, max)
 }
 
 fun assert_market_id(reg: &Registry, expiry: u64, expected_id: ID) {
