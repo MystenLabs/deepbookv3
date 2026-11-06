@@ -114,11 +114,11 @@ fun settlement_release_turns_residual_escrow_into_surplus() {
     cash.receive(coin::mint_for_testing<USDC>(INVENTORY_IMPACT_CHARGE, ctx).into_balance());
     cash.add_impact(INVENTORY_IMPACT_CHARGE);
 
-    cash.free_impact();
+    cash.free_imp();
 
     assert_eq!(cash.inventory_impact_reserve(), 0);
     assert_eq!(cash.free_cash(), INVENTORY_IMPACT_CHARGE);
-    let released = cash.free_surplus(INVENTORY_IMPACT_CHARGE, 0);
+    let released = cash.free_sur(INVENTORY_IMPACT_CHARGE, 0);
     assert_eq!(released.value(), INVENTORY_IMPACT_CHARGE);
     destroy(released);
     destroy(cash);

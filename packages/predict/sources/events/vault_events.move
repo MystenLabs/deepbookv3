@@ -355,7 +355,7 @@ public(package) fun rebalanced(
     });
 }
 
-public(package) fun profit_made(
+public(package) fun profit(
     pool_vault_id: ID,
     expiry_market_id: ID,
     lp_profit: u64,
@@ -375,7 +375,7 @@ public(package) fun profit_made(
     });
 }
 
-public(package) fun expiry_pnl(
+public(package) fun exp_pnl(
     pool_vault_id: ID,
     expiry_market_id: ID,
     propbook_underlying_id: u32,
@@ -401,7 +401,7 @@ public(package) fun expiry_pnl(
     });
 }
 
-public(package) fun pnl_realized(
+public(package) fun pnl(
     pool_vault_id: ID,
     expiry_market_id: ID,
     propbook_underlying_id: u32,
@@ -421,7 +421,7 @@ public(package) fun pnl_realized(
     });
 }
 
-public(package) fun supply_req(
+public(package) fun sup_req(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -461,7 +461,7 @@ public(package) fun wd_req(
     });
 }
 
-public(package) fun req_cancel(
+public(package) fun req_cxl(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -483,7 +483,7 @@ public(package) fun req_cancel(
     });
 }
 
-public(package) fun limit_missed(
+public(package) fun lim_miss(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -509,7 +509,7 @@ public(package) fun limit_missed(
     });
 }
 
-public(package) fun supply_done(
+public(package) fun sup_done(
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
@@ -615,16 +615,11 @@ public(package) fun cap_locked(pool_vault_id: ID, amount: u64) {
     event::emit(CapitalLocked { pool_vault_id, amount });
 }
 
-public(package) fun usdc_added(pool_vault_id: ID, contributor: address, amount: u64) {
+public(package) fun usdc_in(pool_vault_id: ID, contributor: address, amount: u64) {
     event::emit(UsdcAddedToPlp { pool_vault_id, contributor, amount });
 }
 
-public(package) fun incent_given(
-    pool_vault_id: ID,
-    sponsor: address,
-    amount: u64,
-    reserve_after: u64,
-) {
+public(package) fun inc_add(pool_vault_id: ID, sponsor: address, amount: u64, reserve_after: u64) {
     event::emit(FeeIncentivesSponsored {
         pool_vault_id,
         sponsor,
@@ -637,7 +632,7 @@ public(package) fun incent_out(pool_vault_id: ID, amount: u64, reserve_after: u6
     event::emit(FeeIncentivesWithdrawn { pool_vault_id, amount, reserve_after });
 }
 
-public(package) fun cap_snapshot(
+public(package) fun cap_snap(
     pool_vault_id: ID,
     expiry_market_id: ID,
     fee_incentive_lifetime_cap: u64,
@@ -649,7 +644,7 @@ public(package) fun cap_snapshot(
     });
 }
 
-public(package) fun incent_alloc(
+public(package) fun inc_out(
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,
@@ -667,7 +662,7 @@ public(package) fun incent_alloc(
     });
 }
 
-public(package) fun incent_back(
+public(package) fun inc_back(
     pool_vault_id: ID,
     expiry_market_id: ID,
     amount: u64,

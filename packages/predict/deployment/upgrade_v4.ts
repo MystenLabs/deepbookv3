@@ -54,6 +54,7 @@ import {
 import { fromBase58, fromBase64, toBase64, toHex } from "@mysten/sui/utils";
 import {
     EXPECTED_ORDER_DESK,
+    EXPECTED_PROTOCOL_CONFIG,
     EXPECTED_SESSIONS_VERSION_WATERMARK,
     addressOwner,
     asRecord,
@@ -96,8 +97,9 @@ const OBJECT_ID = /^0x[0-9a-f]{64}$/;
 // `queue::create_and_share` calls per transaction: one derived object each, far under Sui's
 // per-transaction object and command limits.
 export const QUEUE_BATCH = 50;
-// Predict's `constants::current_version!()` after this upgrade: the cutover watermark.
-export const PREDICT_CURRENT_VERSION = "4";
+// Predict's `constants::current_version!()` after this upgrade: the watermark the bump sets, at or
+// past the delayed-execution cutover (`constants::cutover_version!()`).
+export const PREDICT_CURRENT_VERSION = EXPECTED_PROTOCOL_CONFIG.versionWatermark;
 // Sessions' `session_config::current_version!()` after this upgrade.
 export const SESSIONS_CURRENT_VERSION = EXPECTED_SESSIONS_VERSION_WATERMARK;
 

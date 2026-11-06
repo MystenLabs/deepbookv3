@@ -4,9 +4,11 @@
 /// Predict's per-account state, stored as an app-data slot on a shared `Account`
 /// (the `account` package).
 ///
-/// This is Predict's account-local state: open positions and sticky builder-code
-/// attribution. USDC/PLP custody lives in `Account`. The `PredictApp` witness
-/// namespaces this slot, so only Predict writes it.
+/// This is Predict's account-local state: open positions and a sticky builder
+/// code. The sticky code no longer affects fees: a trade names its builder and
+/// fee itself (`expiry_market::admit_mint_with_builder`). USDC/PLP custody lives
+/// in `Account`. The `PredictApp` witness namespaces this slot, so only Predict
+/// writes it.
 ///
 /// Position mutations are package-internal. Builder-code configuration accepts an
 /// account `Auth`; the account package decides which owner or authorized
@@ -18,8 +20,9 @@ use deepbook_predict::{builder_code::BuilderCode, builder_code_events};
 use std::internal::permit;
 use sui::table::{Self, Table};
 
-#[allow(unused_const)]
+#[test_only]
 const EPositionAlreadyExists: u64 = 0;
+#[test_only]
 const EPositionNotFound: u64 = 1;
 
 /// App witness that namespaces Predict's data slot on an `Account`. Only this
@@ -65,8 +68,10 @@ public fun builder_code_id(account: &Account): Option<ID> {
     data(account).builder_code_id
 }
 
-/// Set sticky builder-code attribution for future trades using valid account auth.
-/// Owner auth and authorized-app auth both satisfy the account borrow boundary.
+/// Set the sticky builder code using valid account auth. Owner auth and
+/// authorized-app auth both satisfy the account borrow boundary. Kept for
+/// compatibility: it no longer affects fees, since a trade names its builder
+/// and fee itself.
 public fun set_builder_code(
     wrapper: &mut AccountWrapper,
     auth: Auth,
@@ -83,7 +88,8 @@ public fun set_builder_code(
     );
 }
 
-/// Clear sticky builder-code attribution using valid owner or authorized-app auth.
+/// Clear the sticky builder code using valid owner or authorized-app auth. Kept
+/// for compatibility: the code no longer affects fees.
 public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(auth);
     data_mut(account, ctx).builder_code_id = option::none();
@@ -96,6 +102,7 @@ public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mu
 
 // === Public-Package Functions ===
 
+#[test_only]
 /// Generate Predict's package-issued authority to mutably load any account.
 public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
     registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
@@ -134,6 +141,7 @@ public(package) fun add_position(
 }
 
 /// Remove an order position and return its root order ID for event attribution.
+#[test_only]
 public(package) fun remove_pos(
     account: &mut Account,
     expiry_market_id: ID,

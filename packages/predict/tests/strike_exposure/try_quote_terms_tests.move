@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The tick-time quote variants resolve prices with: `try_mint_rng`,
+/// The tick-time quote variants resolve prices with: `try_rng`,
 /// `try_quote_mint_terms` and `try_close`. On valid inputs they must
 /// return exactly what the aborting `quote_*` functions return; where those
 /// abort on a tick-dependent input they return `none` (with refund reason 1 for
@@ -179,7 +179,7 @@ fun an_unpriceable_surface_returns_none_instead_of_aborting() {
     let (mut fx, oracle, exposure) = fixture::setup_zero_forward(default_config(), IMPACT_SCALE);
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert!(exposure.try_mint_rng(&pricer, STRIKE, pos_inf()).is_none());
+    assert!(exposure.try_rng(&pricer, STRIKE, pos_inf()).is_none());
     assert_admission_refund(&exposure, &pricer, STRIKE, pos_inf());
     let order = order::from_ticks(STRIKE, pos_inf(), Q_A, 0);
     assert!(exposure.try_close(&pricer, &order, Q_A).is_none());
@@ -207,8 +207,8 @@ fun try_quote_mint_range_samples_the_book_with_inventory_impact_off() {
     let terms_a = exposure.quote_mint_terms(&pricer, 0, STRIKE, 0, Q_A, true);
     exposure.allocate_mint_order(terms_a);
 
-    let range = exposure.try_mint_rng(&pricer, STRIKE, pos_inf()).destroy_some();
-    assert_eq!(exposure.liab_minted(&range, Q_B), LIABILITY_A_B);
+    let range = exposure.try_rng(&pricer, STRIKE, pos_inf()).destroy_some();
+    assert_eq!(exposure.liab_add(&range, Q_B), LIABILITY_A_B);
     let (terms_b, reason) = exposure.try_terms(range, Q_B, Q_B);
     assert_eq!(reason, REASON_FILL);
     let terms_b = terms_b.destroy_some();
@@ -234,13 +234,13 @@ fun try_quote_live_close_matches_quote_live_close() {
     let full = exposure.try_close(&pricer, &order, Q_A).destroy_some();
     assert_eq!(full.rebate(), IMPACT_AT_Q_A);
     assert_eq!(full.rebate(), expected_full.rebate());
-    assert_eq!(full.redeem_amt(), expected_full.redeem_amt());
+    assert_eq!(full.rdm_amt(), expected_full.rdm_amt());
     assert_eq!(full.close_prob(), expected_full.close_prob());
 
     let expected_partial = exposure.quote_live_close(&pricer, &order, Q_B);
     let partial = exposure.try_close(&pricer, &order, Q_B).destroy_some();
     assert_eq!(partial.rebate(), expected_partial.rebate());
-    assert_eq!(partial.redeem_amt(), expected_partial.redeem_amt());
+    assert_eq!(partial.rdm_amt(), expected_partial.rdm_amt());
 
     // The try terms drive the same mutation as the aborting ones.
     let survivor = exposure.apply_close(partial, &vec_map::empty()).destroy_some();
@@ -272,7 +272,7 @@ fun assert_admission_refund(
     lower_tick: u64,
     higher_tick: u64,
 ) {
-    assert!(exposure.try_mint_rng(pricer, lower_tick, higher_tick).is_none());
+    assert!(exposure.try_rng(pricer, lower_tick, higher_tick).is_none());
     let (terms, reason) = exposure.try_quote_mint_terms(
         pricer,
         lower_tick,

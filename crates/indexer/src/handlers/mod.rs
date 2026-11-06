@@ -164,6 +164,7 @@ pub mod conditional_order_added_handler;
 pub mod conditional_order_cancelled_handler;
 pub mod conditional_order_executed_handler;
 pub mod conditional_order_insufficient_funds_handler;
+pub mod conditional_order_partially_executed_handler;
 pub mod current_price_updated_handler;
 pub mod deep_burned_handler;
 pub mod deepbook_pool_config_updated_handler;

@@ -166,6 +166,7 @@ fun stale_pyth_spot_falls_back_to_the_block_scholes_forward() {
     assert_eq!(t0_pricer.pyth_ts(), DIVERGED_PYTH_SOURCE_MS);
     let on_block_scholes_forward = pricing::pricer_at(
         &snapshot,
+        fx.market_uid(),
         snapshot.bs_spot(),
         DIVERGED_PYTH_SOURCE_MS,
         test_constants::now_ms(),
@@ -231,7 +232,7 @@ fun svi_one_ms_past_the_max_age_aborts() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
 fun svi_past_the_live_window_aborts_under_a_looser_policy_bound() {
     let (mut fx, mut oracle) = setup_live();
-    let svi_window_ms = oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms();
+    let svi_window_ms = oracle_fixture::config(&oracle).pr_cfg().svi_age();
     let now = test_constants::live_source_timestamp_ms() + svi_window_ms + 1;
     fx.set_clock_for_testing(now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
@@ -346,7 +347,7 @@ fun stale_block_scholes_price_aborts() {
     let (mut fx, oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     let (_, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());

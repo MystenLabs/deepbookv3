@@ -35,7 +35,7 @@ const EVersionWatermarkNotAdvanced: u64 = 1;
 const EProtocolFrozen: u64 = 2;
 
 /// The companion's compiled version, compared against the desk floor.
-public macro fun current_version(): u64 { 1 }
+public macro fun current_version(): u64 { 2 }
 
 /// The shared policy and version floor of one order-flow companion deployment.
 public struct OrderDesk has key {

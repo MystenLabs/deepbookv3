@@ -24,7 +24,7 @@
 /// The `chk_inputs` envelope rejects (`EBlockScholesInputsInvalid`)
 /// is covered here too: one test per reachable branch seeds a surface that violates
 /// exactly that bound (`forward` ceiling, `basis`, `b`, `rho`, `m`, `sigma` below
-/// its 1e-5 floor, at zero, and above its ceiling), leaving every other input
+/// its 1e-7 floor, at zero, and above its ceiling), leaving every other input
 /// default so only the targeted branch fires. `a` has no envelope bound: it is
 /// pinned at the provider-width limit in both signs and past the former
 /// `|a| <= 100` cap on both sides of the minimum-variance boundary. The smile root
@@ -68,6 +68,7 @@ use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
 const FOREIGN_UNDERLYING_ID: u32 = 2;
+const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
 /// The largest provider-native magnitude that Predict can represent without narrowing loss.
 const MAX_REPRESENTABLE_U64: u128 = 18_446_744_073_709_551_615;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
@@ -196,6 +197,16 @@ fun live_quote_with_prices_but_no_svi_aborts() {
     let now = test_constants::live_source_timestamp_ms();
     fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
     fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
+fun switching_the_svi_model_stops_pricing_from_the_previous_surface() {
+    // A fresh surface lands under the default model, then the admin switches the store: Predict
+    // reads the new model's series, which nothing has signed yet.
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_model_bundle(&mut oracle, SVI_REGIME_MODEL.to_string());
     live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
     abort EUnexpectedSuccess
 }
@@ -389,7 +400,7 @@ fun live_quote_with_stale_block_scholes_surface_aborts() {
     // stale and the quote aborts before any pricing.
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     live_quote(
@@ -406,7 +417,7 @@ fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
@@ -425,7 +436,7 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
         test_constants::now_ms()
-        + oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().svi_age()
         + 1;
     fx.set_clock_for_testing(stale_now);
     fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
@@ -452,7 +463,7 @@ fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.retransmit_bs_spot_for_testing(
@@ -478,7 +489,7 @@ fun live_quote_with_a_retransmitted_aged_forward_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
@@ -509,7 +520,7 @@ fun live_quote_with_a_retransmitted_aged_svi_source_aborts() {
     let source_ms = test_constants::live_source_timestamp_ms();
     let retransmitted_now =
         source_ms
-        + oracle_fixture::config(&oracle).pricing_cfg().svi_age_ms()
+        + oracle_fixture::config(&oracle).pr_cfg().svi_age()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(

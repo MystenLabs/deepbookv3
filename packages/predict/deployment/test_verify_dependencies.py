@@ -34,8 +34,8 @@ class DependencyVerificationTests(unittest.TestCase):
             manifest = verifier.read_toml(root / "packages" / package / "Move.toml")
             replacements = manifest["dep-replacements"]
             for network, revision in (
-                ("testnet", "ce0e5cd052d7d1eb195bb486396730c550f8f92a"),
-                ("mainnet", "2f83e49f21c3aaf96b779f24be0fd6951bc75b29"),
+                ("testnet", "90a64c4933d909857a3acd70928639171b6cf17e"),
+                ("mainnet", "8a46552dfac02f2225965dda243bdea1ddcbec89"),
             ):
                 self.assertEqual(replacements[network]["deepbook"], {
                     "git": "https://github.com/MystenLabs/deepbookv3.git",

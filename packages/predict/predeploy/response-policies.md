@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-10-08. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
+Updated 2026-10-21. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
 
 `open-items.md` tracks work that is still open; when an item closes, the
 *decision* it produced graduates into an entry here instead of surviving only
@@ -289,7 +289,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `EBlockScholesInputTooWide` before the `u128`-to-`u64` cast and semantic
   envelope. Recovery is a newer signed, representable observation followed by
   retrying the affected action or flush.
-- **Sigma floor (lowered from 1e-3 to 1e-5):** Block Scholes SSVI surfaces
+- **Sigma floor (lowered from 1e-3 to 1e-5, then to 1e-7):** Block Scholes SSVI surfaces
   narrow `sigma` toward expiry. In their SSVI backfill (BTC, February–June 2026,
   6.5M slices; `evidence/rp5-ssvi-backfill-2026-09-28.md`) 83% of slices at most
   a minute from expiry, 55% of slices one to five minutes out, and 12% of slices
@@ -297,21 +297,55 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   floor rejected 1.6M of them, and every pricer load over such a slice aborted:
   mints and live closes on that market, and the flush's atomic snapshot stage,
   so the pool-wide flush could not start and queued LP fills waited. None is
-  below 1e-5, the floor the provider recommends. Duty inventory of the old
+  below 1e-5, the floor the provider first recommended. The provider later
+  reported that in a quiet market `sigma` approaches 1e-5 in the last 5–10 s
+  before expiry, closer than the backfill's last publication at 20 s. Trading stops
+  before then, but mandatory `plp::value_expiry` still loads the pricer there,
+  so a slice under the floor would abort the flush snapshot. The floor is now
+  1e-7, the provider's number, which leaves two orders of magnitude of headroom
+  (DBU-1059). Duty inventory of the old
   floor: (1) it kept `sigma²` representable in the 1e9 smile root — replaced by
   taking the root from exact `u128` squares at 1e18, without which the lowered
   floor misprices real one-minute slices by up to 49% relative off the forward;
   (2) it kept the root, the skew slope's divisor, away from zero — any positive
-  floor does, so 1e-5 is the provider's number rather than an arithmetic need,
-  and for SSVI slices the gate's minimum-variance rounding binds first: with the
-  provider's `eta ≤ 2`, `sigma < 1e-5` means a minimum total variance under
-  4e-10, which rounds to zero at 1e9 (P-33);
+  floor does, so the floor is the provider's number rather than an arithmetic
+  need, and for SSVI slices of the backfill's shape the gate's minimum-variance
+  rounding binds first: with the provider's `eta ≤ 2`, `sigma < 1e-5` means a
+  minimum total variance under 4e-10, which rounds to zero at 1e9 (P-33), so
+  the 1e-7 floor admits only slices whose minimum variance stays representable;
   (3) the root's `u128` input is bounded by `|k − m| ≤ 144.4` and `sigma ≤ 100`,
   not by the floor; (4) it did not bound the skew correction: `w'` is at most
   `2b` for any `sigma`, so the correction's headroom is set by `b` and the
-  variance. Positive total variance stays owned by the analytical-minimum check
-  and the per-strike `ENonPositiveVariance` backstop, neither of which reads the
-  floor.
+  variance. Positive total variance stays owned by the analytical-minimum
+  check and the per-strike `ENonPositiveVariance` backstop, neither of which
+  reads the floor.
+- **Precision exception below 1e-5 (ratified 2026-10-22, DBU-1059):** at the
+  1e-7 floor `sigma` is 100 raw units, and near the vertex the digital moves
+  about 0.28 percentage points per raw unit of `k` or `m`. The 1e9 floor of
+  the smile root, and `k`'s 1e9 error (up to about 2 raw units near a BTC
+  forward), put a strike within a few widths of the vertex (a few cents on
+  BTC) up to about 0.6 percentage points off true math. That is past the 0.1%
+  contract-price ceiling in the deviation bounds below. The floor slices'
+  budgets in `pricing_exact_tests.move` carry it, and points at `d2 = ±1, ±2`
+  stay within 0.0001 (`evidence/rp5-sigma-floor-scan-2026-10-22.md`). It is
+  accepted, not fixed, for four reasons:
+  - The provider reports such slices only in the last 5–10 s before expiry,
+    inside the 10 s no-trade window that both networks run, so they reach
+    valuation, not trades.
+  - The NAV error it adds is at most about 0.6% of the quantity on boundaries
+    within a few widths of the vertex. Those are at most one $1-grid strike and
+    the reference tick, which can sit one cent (1.5 widths) away. The 1% NAV
+    ceiling therefore holds while that quantity stays under about 1.6 times the
+    pool's NAV. That is a condition, not a guarantee: a pool whose NAV is small
+    next to one market's near-vertex quantity can exceed it, and no
+    occupied-book test pins the bound yet.
+  - The alternative is the flush abort the floor used to cause.
+  - Meeting the ceiling there would need log-moneyness finer than 1e9.
+
+  No ladder on the production admission grid ($1 plus one $0.01 reference
+  tick) raised a price at any sigma. Rises on a grid finer than a cent are
+  RP-15's. Reopen if the no-trade window drops under 10 s, or the provider
+  publishes `sigma` below 1e-5 more than 10 s before expiry.
 - **`a` magnitude cap removed (was `|a| ≤ 100`):** Block Scholes recommends no
   bound on `a` beyond positive total variance. Negative `a` was already admitted
   and still is: slices in the SSVI backfill carry it (0.27% of one-minute slices,
@@ -383,14 +417,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `pool_valuation_flow_tests.move` —
   `overwide_block_scholes_spot_aborts_pool_valuation_flush`,
   `newer_representable_block_scholes_spot_restores_pool_valuation_flush`,
-  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`, and
+  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`,
+  `svi_sigma_at_the_floor_completes_pool_valuation_flush`, and
   `short_dated_ssvi_surface_completes_pool_valuation_flush`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
   a bounded-skew source rule, or explicit unavailable classification rather than
   the named mandatory-path abort. Revisit the SVI bounds if the provider
-  publishes `sigma < 1e-5` or a live surface with `|a| > 100` reaches a NAV mark.
+  publishes `sigma < 1e-7` or a live surface with `|a| > 100` reaches a NAV mark.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -822,54 +857,181 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-15: Block Scholes guarantees butterfly-free surfaces; active-book inversions fail closed (resolves P-11)
+## RP-15: Sub-precision price inversions price through; a material inversion fails closed (resolves P-11, P-35)
 
-- **Trigger state:** despite the provider's guarantee that every published SVI
-  surface is monotone and butterfly-arbitrage-free, a fresh Block Scholes
-  surface makes a higher-strike UP price exceed a lower-strike UP price. During
-  `current_nav`, the active payout tree exposes that inversion at two increasing
-  boundary ticks.
-- **Controller:** external — the BS surface publisher controls the shape inside
-  Predict's pricing-safe envelope; traders cannot choose SVI parameters.
-- **Blast radius:** single-order pricing trusts the provider's surface and
-  floors an inverted range to zero. NAV adds a defense-in-depth active-book
-  check: one exposed inversion aborts that market's NAV read, and because the
-  pool flush uses one frozen mark for all LP supply and withdraw fills, it can
-  block LP fills pool-wide until the surface is corrected.
-- **Response:** accept the provider guarantee for surface admission; do not add
-  an on-chain `g(k) >= 0` or tighter synthetic-parameter envelope. If an active
-  book nevertheless exposes an inversion, abort valuation and retry after the
-  provider publishes a corrected surface. This converts the known aggregate-NAV
-  overstatement into fail-closed liveness.
-- **Reasoning:** `strike_payout_tree::walk_linear` relies on active boundary
-  prices being monotone. Skipping the market or carrying a partial mark would
-  poison the single LP mark used for both supply and withdraw, while allowing
-  the inverted segment through can overstate pool NAV. Surface quality is part
-  of the trusted Block Scholes provider contract rather than an invariant the
-  signature or Predict Move code proves; the active-book check stays as a
-  narrow accounting backstop rather than duplicating the provider's global
-  surface validation on chain.
-- **Risk profile:** `BEST-GUESS` — no sampled Block Scholes surface violated
-  butterfly freedom, and reachability requires the trusted publisher to violate
-  its guarantee with a surface whose inversion intersects the active book. The
-  guarantee is not enforced by Predict on chain.
-- **Pinning tests:** `current_nav_flow_tests.move` —
-  `current_nav_rejects_non_monotone_active_book_surface`; and
-  `payout_tree_walk_tests.move` —
-  `inversion_on_a_cancelling_last_boundary_still_aborts`. The guard moved from
+- **Trigger state:** the in-order walk over the payout tree (`walk_linear`, and
+  `walk_frozen` under the flush) reads a higher UP price at a higher
+  boundary tick than at a lower one.
+- **Controller:** internal AND external. `deepbook_predict_math::math::digital`
+  floors `N(d2)` and the skew correction independently, so where `N(d2)` sits on a tail plateau the
+  difference steps UP by one raw unit on a surface that is valid and
+  butterfly-free — the committed real scenario 0 inverts at 24 adjacent pairs on
+  a $10 grid between $50k and $60k (first $55,240 -> $55,250, 999,999,995 ->
+  999,999,996) and at one pair on a $100 grid; scenarios 1 and 2 invert on the
+  $10 grid too, and the OTM tail mirrors the deep-ITM plateau (scenario 0
+  inverts at 167 adjacent $1 pairs between $88,000 and $90,700). The same
+  one-unit ripple appears on the short-tenor SSVI slices DBU-849 admits
+  (`evidence/rp5-ssvi-backfill-2026-09-28.md`, P-35). The entry band bounds each
+  finite boundary at mint (since #1304, DBU-811), so no mint places a boundary
+  on a plateau directly; the market can carry admitted boundaries there as spot
+  moves and the variance left to expiry shrinks, so the source needs no
+  adversary in principle. On Mainnet's short cadences, $1 admission grid and
+  narrowed entry band it takes a dense ladder of boundaries and a large move,
+  and no flush has been seen to abort on it. Surface shape itself stays with the
+  provider.
+- **Blast radius:** a hard abort here lands in the pool flush's mandatory leg
+  (`plp::value_expiry` -> `expiry_market::snapshot_nav`) and in the public
+  `current_nav` read. `finish_flush` proves completeness over the snapshotted
+  set and has no per-market skip, so one aborting market stops every LP supply
+  and withdraw fill; the valuation flag that flush holds also gates request
+  cancels and the flush-gated `ProtocolConfig` setters, and a restart
+  re-snapshots the same book. A market leaves the expected set only at
+  settlement, so the stall can last as long as successive surfaces keep an
+  inverting pair under the book, up to the market's remaining life. Per-order
+  value is unaffected: `RangePrice::probability` floors an inverted pair to
+  zero, so `redeem_live` and settlement stay open.
+- **Response:** price through (the ladder's `skip/carry` rung, applied to the
+  one boundary: it keeps its quoted price, the rise over the running minimum is
+  charged, rounded up, on the quantity ending there, and the walk continues —
+  not the per-market skip the reopen condition names) while that rise is at most
+  `pricing::price_monotonicity_tolerance`, two raw units at 1e9; `abort`
+  (`ENonMonotonePrice`) above it. Surface admission still rests on the provider
+  guarantee — no on-chain `g(k) >= 0` or tighter synthetic-parameter envelope.
+- **Reasoning:** keeping the quoted price leaves every book that valued before
+  the bound valued identically. Netting alone would let an order whose own two
+  boundaries invert carry the pair's small negative value where its per-order
+  price floors at zero, understating liability. The walk therefore charges each
+  tolerated rise, rounded up, on the quantity ending at that boundary: the
+  running minimum is at most every earlier price, so the charge covers any
+  inverted order ending there, and the walk never falls below the per-order sum
+  beyond boundary rounding. That keeps this response inside R2's rule that NAV
+  never overstates recoverable value, so a withdrawal is never over-paid beyond
+  P-13's boundary rounding. An
+  order that does not invert but ends at a risen boundary is over-charged by at
+  most the rise, rounded up, so NAV can read low and never high beyond P-13's
+  boundary rounding. On real and healthy surfaces every rise is exactly one
+  unit, the signature of the two separately floored terms; the pricer's other
+  rounding (the floored `sqrt(w)`, smile root and `w'`) is larger per strike,
+  but the true slope outruns it there. A search over 20,865 butterfly-free
+  surfaces found rises above one only on surfaces near the butterfly-arbitrage
+  boundary (Durrleman's `g` below 0.03), and there they range from 2 to 2,808
+  with every size bin populated (evidence). Aborting on the one-unit dust is a false positive in a
+  mandatory path over a market-moved variable, which the blast-radius ladder
+  above puts at skip/carry. The tolerance is that measured unit plus one unit of
+  headroom. One would have no margin at all. Three or more buys nothing
+  identifiable: moving from two to three admits 6 of the 281 near-boundary
+  surfaces that exceed one, and only about 3,000 admits them all, at which point
+  the guard stops catching small provider inversions. Two costs nothing
+  material: the over-charge is at most 2e-9 of the quantity ending at risen
+  boundaries plus one raw unit of rounding per such boundary, $0.002 per $1M of
+  that quantity, and it scales with the open interest that ends across an
+  inverting pair. A mark that low favours incumbent LPs on a withdrawal but a
+  supplier on a supply, by the same amount; on supply it is therefore an
+  accepted, bounded exception to the supply-mark invariant (a supplier can
+  over-mint by at most that dust), recorded here as R2's audit obligation
+  requires. Both directions sit far inside the ratified 1% NAV deviation bound
+  unless the quantity ending at risen boundaries nears five million times the
+  pool's NAV, where the rise term alone reaches 1%, or the pool's NAV falls
+  under about a hundred raw units per risen boundary, where the rounding term
+  does.
+  The bound is absolute, not relative to the price, and two units stays small
+  even on the OTM plateau, where UP is tens of raw units. Accepted residual: a
+  surface near the butterfly boundary can rise by more and fails closed,
+  stalling the flush until a later snapshot or the market settles; real slices
+  sit far from that boundary. A strike ladder finer than the admission grid
+  can rise by more as well: on a 1e-5 USD ladder, wing rises reach 57 raw units
+  at a `sigma` of 1e-5 and 2,534 at the 1e-7 floor (DBU-1059). No $0.01 or $1
+  ladder, the production admission grid's spacings, rose at any of the three
+  `sigma` values sampled, 1e-7, 1e-5 and 4.7e-5
+  (`evidence/rp5-sigma-floor-scan-2026-10-22.md`). Above the bound the rise is treated as a surface
+  defect, with "retry once the provider publishes a corrected surface" as the
+  recovery path. P-35 also proposed netting each boundary at `min(price,
+  previous)`; that is declined. Clamping is conservative in neither direction —
+  it lowers liability at a lower boundary and raises it at an upper one — so it
+  could understate a book whose inversions are only across orders. Keeping the
+  quote leaves such a book at its per-order sum unless quantity ends at a risen
+  boundary, and the charge there moves liability only upward. The comparison is
+  against the running minimum rather than the previous boundary, so dust
+  accumulated across many boundaries trips the same bound instead of ratcheting
+  underneath it.
+- **Duty inventory (guard weakening):** the strict check's only consumers are
+  `marked_liab` -> `current_nav` and `frozen_liab` -> `snapshot_nav`, and both
+  clamp the walk with `saturating_sub`, so the check
+  bounded no arithmetic headroom; `envelope + tolerance` cannot overflow because
+  UP prices are at most 1e9. What the weakening admits is the bounded
+  over-charge above and, silently, any provider inversion of at most two raw
+  units. `harness/verdict.py` still classifies `strike_payout_tree:2` as an
+  expected oracle-surface abort. Nothing else was incidentally bounded.
+- **Risk profile:** `MEASURED` — the internal source is counted over every
+  committed reference surface, including #1335's short-tenor SSVI slices, and
+  reproduced end to end through the flush; a search over 20,865 butterfly-free
+  surfaces, with two reproducers confirmed in Move, bounds where rises above one
+  unit occur (`evidence/rp15-price-inversion-2026-09-04.md`). P-35's sampled
+  SSVI and current-style slices show the same one-unit ripple
+  (`evidence/rp5-ssvi-backfill-2026-09-28.md`). The 1e-7 `sigma` floor
+  (DBU-1059) widened the SVI envelope, and its re-measurement found no rise on
+  $0.01 or $1 ladders at the three `sigma` values it sampled
+  (`evidence/rp5-sigma-floor-scan-2026-10-22.md`).
+  The external source remains
+  unobserved, no sampled Block Scholes surface having violated butterfly
+  freedom.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted`,
+  `a_ripple_on_a_short_dated_backfill_slice_is_walked` and
+  `a_ripple_on_a_one_minute_ssvi_slice_is_walked` (P-35's two real slices),
+  `a_two_unit_rise_on_a_valid_surface_is_walked` (the headroom a tolerance of
+  one would lack), `a_valid_surface_at_the_butterfly_edge_fails_closed` (the
+  accepted residual), `a_self_inverted_order_is_charged_its_rise`,
+  `a_risen_boundary_charges_only_the_quantity_ending_there`,
+  `a_rise_overcharges_an_order_that_does_not_invert`,
+  `the_frozen_walk_charges_a_self_inverted_order_it_still_holds`,
+  `a_rise_is_charged_against_the_running_minimum`, `a_rise_charge_rounds_up` and
+  `a_cancelling_boundary_still_lowers_the_running_minimum` (the charge: an
+  inverted order values at its per-order price, only the quantity ending at the
+  risen boundary is charged, one that does not invert is
+  over-charged by exactly the rise, the frozen walk charges through snapshot
+  copies, and the charge is measured from the running minimum, rounds up, and
+  counts a cancelling boundary's price),
+  `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
+  `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
+  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance`,
+  `the_running_minimum_follows_a_falling_price`,
+  `the_live_walk_drops_the_staircase_husks` and
+  `the_frozen_walk_keeps_one_running_minimum_across_husks` (the running minimum,
+  including after a fall, in the live walk and across snapshot copies in the
+  frozen walk), `inversion_on_a_cancelling_last_boundary_still_aborts`;
+  `current_nav_flow_tests.move` —
+  `current_nav_rejects_non_monotone_active_book_surface`;
+  `pool_valuation_flow_tests.move` —
+  `a_fixed_point_dust_inversion_does_not_stall_the_flush`,
+  `the_entry_band_keeps_a_plateau_boundary_out_of_a_mint`,
+  `a_tolerated_rise_is_charged_through_the_flush` (the charge lowers the live
+  mark and the flush mark by exactly the rise on the ending quantity). The guard moved from
   the price memo to `strike_payout_tree::ENonMonotonePrice` when leverage was
-  removed and the memo was deleted. It is enforced at EVERY payout-tree boundary,
-  exactly as it was before the move. An intermediate revision of that change
-  enforced it only over the boundaries whose start and end quantities do not
-  cancel; that was wrong — the netted aggregate is unaffected by a cancelling
-  boundary, but live redeem prices each order individually, so an inversion
-  sitting on a cancelling tick let NAV understate liability while the flush
-  succeeded. The second pinning test above is the regression for it.
-- **Reopen when:** Block Scholes changes or violates the surface guarantee,
-  Predict accepts another SVI publisher without the same guarantee, the
-  active-book guard is removed, NAV valuation gains a safe per-market
-  skip/carry design, or the LP flush no longer uses one shared mark for both
-  queues.
+  removed and the memo was deleted. It is evaluated at EVERY payout-tree
+  boundary. An intermediate revision of that change enforced it only over the
+  boundaries whose start and end quantities do not cancel; that was wrong — the
+  netted aggregate is unaffected by a cancelling boundary, but live redeem
+  prices each order individually, so an inversion sitting on a cancelling tick
+  let NAV understate liability while the flush succeeded.
+  `inversion_on_a_cancelling_last_boundary_still_aborts` is the regression for
+  it.
+- **Reopen when:** a re-measurement after `deepbook_predict_math::math::digital`
+  changes its rounding or primitives, or after the SVI envelope widens, finds a rise of more
+  than one raw unit on a real or healthy surface (the bound keeps one unit of
+  margin); a cadence's admission grid becomes finer than a cent at BTC-scale
+  forwards, or Predict lists an underlying far below the $1,000-$200,000
+  forwards the audit sampled (real slices rise by 2 to 21 on grids of $0.0001
+  and finer, and at the 1e-7 floor a cent is the finest grid measured without a
+  rise); the provider publishes surfaces near the
+  butterfly boundary often enough that flushes stall on them; P-16 or P-28 is
+  resolved and the regenerated reference changes that picture; Block Scholes
+  changes or violates the surface guarantee; Predict accepts another SVI
+  publisher without the same guarantee; or NAV valuation gains a safe per-market
+  skip/carry design. Absorbed rises emit nothing on chain, so the first
+  condition is caught only by re-measurement or an off-chain monitor that prices
+  active boundaries through devInspect; a provider inversion of at most two
+  units is likewise invisible on chain.
 
 ---
 
@@ -1408,7 +1570,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reasoning:** a Pyth wrapper represents one replaceable provider source, but
   a Block Scholes pair permanently binds one Propbook underlying to an immutable
   provider base asset and the descriptor-derived spot, forward, and SVI series
-  for that asset. A bad observation can advance in place; a wrong base-asset
+  for that asset (the SVI series under the store's admin-set provider model,
+  DBU-906). A bad observation can advance in place; a wrong base-asset
   spelling cannot, so it must be prevented by confirming the provider's
   acknowledged subscription before creation. A generic rebind would instead let
   an admin switch all markets to fresh empty state without a concrete migration
@@ -1570,6 +1733,11 @@ rounding, not model-evaluation accuracy):
   real-math value by more than **0.1%** (relative, in the 1c–99c tradeable band).
 - **NAV:** a produced `current_nav` / pool mark must not deviate from true NAV by
   more than **1%** (relative).
+- **Exception (RP-5, 2026-10-22):** on surfaces below the former 1e-5 `sigma`
+  floor, a strike within a few smile widths of the vertex may exceed the
+  contract-price ceiling. Such surfaces are valuation-only behind the no-trade
+  window. The NAV ceiling holds while the quantity on near-vertex boundaries
+  stays under about 1.6 times pool NAV (RP-5).
 
 Enforcement is by independent-reference test, not model judgment, and is in fact
 tighter than the ceilings. The price bound is guarded by the generated pricing
@@ -1655,8 +1823,10 @@ worth-fixing.
 - **Response:** all of the above are removals of guards whose duties are either
   deleted alongside them or re-homed strictly stronger. No replacement guard is
   required. The one guard that was *narrowed* rather than deleted — the
-  non-monotone surface check — is recorded separately in RP-15 and is now enforced
-  at every payout-tree boundary again, pinned by
+  non-monotone surface check — is recorded separately in RP-15 and is evaluated
+  at every payout-tree boundary again (since DBU-790 it aborts only on a rise of
+  more than `pricing::price_monotonicity_tolerance` over the running minimum),
+  pinned by
   `payout_tree_walk_tests::inversion_on_a_cancelling_last_boundary_still_aborts`.
 - **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is
   static reachability of the deleted expressions, verified by grep against HEAD.
@@ -1738,7 +1908,7 @@ worth-fixing.
 ## RP-33: A mint cannot cost more than its maximum settlement payout
 
 - **Trigger state:** a complete mint quote has `all_in_cost > quantity` after adding the premium, trader-paid trading fee after sponsor subsidy, builder fee, EWMA congestion penalty, and inventory-impact charge; even the winning terminal outcome can return only `quantity`.
-- **Controller:** mixed — the oracle mark and EWMA state are market-controlled, fee policy is protocol-controlled, sponsor incentives are externally funded, and builder attribution belongs to the trader's account.
+- **Controller:** mixed — the oracle mark and EWMA state are market-controlled, fee policy is protocol-controlled, sponsor incentives are externally funded, and the builder fee is the per-contract fee the trade names, capped at the admin `builder_fee_cap`.
 - **Blast radius:** one caller's prospective mint; no order or payment has been allocated when the condition is evaluated.
 - **Response:** `abort` with `EMintCostAboveMaxPayout` from the shared quote computation, so both quote entrypoints and both mint entrypoints reject the same guaranteed-loss terms.
 - **Reasoning:** caller-supplied `max_cost` is slippage protection and can be disabled on exact-quantity mints, while the configured entry-probability band is independent tail-pricing policy. Comparing the final trader debit with `quantity` directly enforces the economic boundary across every variable fee component without coupling it to either control.
@@ -1746,16 +1916,16 @@ worth-fixing.
 - **Pinning tests:** `mint_redeem_guard_tests.move` — `mint_cost_above_maximum_payout_aborts`; `quote_mint_tests.move` — `quote_at_maximum_payout_mints` and `quote_above_maximum_payout_aborts` pin exact equality as admitted and one USDC base unit above as rejected.
 - **Reopen when:** settlement can pay more than `quantity`, a mint charge becomes recoverable at settlement, or the protocol intentionally supports externally compensated loss-leading positions.
 
-## RP-34: Enabled cadences admit cash targets starting at 1,000 USDC
+## RP-34: Enabled cadences admit any positive cash target
 
-- **Trigger state:** an administrator configures an enabled cadence's `initial_expiry_cash` below 1,000 USDC.
+- **Trigger state:** an administrator configures an enabled cadence's `initial_expiry_cash` or `max_expiry_allocation` at zero, or `initial_expiry_cash` above `max_expiry_allocation`.
 - **Controller:** protocol administrator through `registry::set_template_cadence_config`.
-- **Blast radius:** the configuration transaction; existing markets retain their creation-time cash targets.
-- **Response:** reject with `EInvalidCadenceConfig`; admit targets at or above 1,000 USDC and no greater than `max_expiry_allocation`. A fully zeroed cadence remains disabled. The minimum stays upgrade-required, with no new admin setter or network-specific exception.
-- **Duty inventory:** the relaxed 10,000-USDC guard set the minimum initial cash target and, through `initial_expiry_cash <= max_expiry_allocation`, the minimum allocation cap and inventory-impact scale. Both minima become 1,000 USDC and remain strictly positive. The constant has no other production consumer. Runtime rebalancing uses each market's snapshotted target; payout backing, impact reserves, net-allocation limits, and active-market/node bounds are unchanged. No arithmetic upper bound or denominator positivity check is removed.
-- **Risk profile:** smaller targets and allocation caps allow less prefunded trading capacity and a smaller inventory-impact scale; they do not authorize underbacked trades or force capital out of existing markets. This is a configuration-envelope decision, not a throughput or liquidity measurement.
-- **Pinning tests:** `registry_create_tests.move` — `set_cadence_config_accepts_1000_and_2000_usdc_targets`, `set_cadence_config_initial_cash_below_floor_aborts`, `set_cadence_config_initial_cash_above_allocation_aborts`, `cadence_configs_disable_round_trip`; `pool_valuation_flow_tests.move` — `minimum_cash_target_rebalances_without_changing_pool_capital`, `above_minimum_cash_target_rebalances_without_changing_pool_capital`.
-- **Reopen when:** the floor gains a runtime consumer, allocation-cap scaling changes, or existing market targets become mutable.
+- **Blast radius:** the configuration transaction; existing markets retain their creation-time cash targets and allocation caps.
+- **Response:** reject with `EInvalidCadenceConfig`; admit any target from one raw unit up to `max_expiry_allocation`. A fully zeroed cadence remains disabled. No admin setter or network-specific exception is added.
+- **Duty inventory:** the removed `constants::expiry_cash_floor` guard (1,000 USDC, earlier 10,000 and 50,000) set the minimum initial cash target and, through `initial_expiry_cash <= max_expiry_allocation`, the minimum allocation cap and inventory-impact scale. It descends from a fixed cash floor that rebalancing once topped every market up to; once targets became per-cadence configuration it had no production consumer beyond this check. The duty it still served, a strictly positive allocation cap, is kept by `chk_cadence`'s all-fields-positive assert, and the inventory-impact scale keeps its own positivity assert at market creation (`EInvalidInventoryImpactScale`), so `phi`'s denominator stays nonzero. Runtime rebalancing uses each market's snapshotted target; payout backing, impact reserves, net-allocation limits, and active-market/node bounds are unchanged. No arithmetic upper bound or denominator positivity check is removed.
+- **Risk profile:** smaller targets and allocation caps allow less prefunded trading capacity and a smaller inventory-impact scale, so enabled impact charges reach their capped marginal rate at a smaller liability; they do not authorize underbacked trades or force capital out of existing markets. A target small enough to fund no tradable order leaves the market unmintable, the same outcome as an exhausted allocation. This is a configuration-envelope decision, not a throughput or liquidity measurement.
+- **Pinning tests:** `registry_create_tests.move` — `set_cadence_config_accepts_1000_and_2000_usdc_targets`, `set_cadence_config_accepts_targets_below_1000_usdc` (one raw unit and 100 USDC), `set_cadence_config_initial_cash_below_floor_aborts` (zero cash on an enabled cadence), `set_cadence_config_initial_cash_above_allocation_aborts`, `cadence_configs_disable_round_trip`; `pool_valuation_flow_tests.move` — `minimum_cash_target_rebalances_without_changing_pool_capital`, `above_minimum_cash_target_rebalances_without_changing_pool_capital`.
+- **Reopen when:** a cash target gains a runtime consumer that needs a floor, allocation-cap scaling changes, or existing market targets become mutable.
 
 ## RP-35: Live pricing requires a retained source-time-matched Block Scholes pair
 
@@ -1777,15 +1947,15 @@ worth-fixing.
 - **Controller:** user for the budget and the fill floor; market for the surface, the fee-incentive balance, the EWMA state, and the book the impact charge is read against.
 - **Blast radius:** the single mint transaction or quote; no shared or mandatory path.
 - **Response:** proceed — `mint_exact_cost` makes the total the sizing input. A binary search over lot counts evaluates `mint_quote_at`, the same sum the mint charges, against execution-time state, and first finds the largest lot-rounded quantity whose all-in cost fits `max_cost`. The payout check below may then reduce that quantity. When the budget is what limits the fill, the unspent remainder is below the incremental all-in cost of one more lot. A fill stepped down from the maximum-payout bound (below) or saturated at the lot cap can leave more (`order::max_quantity_lots`; RP-13 carries the same caveat for the premium shape). Insufficient expiry cash backing aborts the mint instead of resizing it. The read-only quote does not preflight cash backing or exposure-index capacity.
-- **Why the budget search is exact:** every all-in term is nondecreasing in quantity while pre-trade state is fixed. Premium and each fee leg are `mul_down` of a quantity-independent rate; the trader-paid fee is `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose subsidy gains at most one unit per fee unit because the admin-set rate is capped at one half, below one (`config_constants::max_fee_incentive_subsidy_rate`), and read once per search, so every probe prices against the same rate; the builder fee is a `min` of nondecreasing terms; the surcharge's firing condition is quantity-independent; and the impact charge is monotone because the prospective liability `max(M, R + q) + lambda * (T + q - that)` rises at `lambda` while `R + q <= M`, rises at 1 once the candidate carries the max itself with the gap `T - R` frozen, and both arms evaluate to `M + lambda * (T - R)` exactly at the switch `q = M - R`. The arms meet where they join and neither falls, **independently of `backing_buffer_lambda`**. The premium-only fit bounds the search domain from above because every other term is nonnegative.
+- **Why the budget search is exact:** every all-in term is nondecreasing in quantity while pre-trade state is fixed. Premium and each fee leg are `mul_down` of a quantity-independent rate; the trader-paid fee is `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose subsidy gains at most one unit per fee unit because the admin-set rate is capped at one half, below one (`config_constants::max_fee_incentive_subsidy_rate`), and read once per search, so every probe prices against the same rate; the builder fee is `mul_down(quantity, fee)` at a per-contract fee fixed for the order before the search, so it is nondecreasing; the surcharge's firing condition is quantity-independent; and the impact charge is monotone because the prospective liability `max(M, R + q) + lambda * (T + q - that)` rises at `lambda` while `R + q <= M`, rises at 1 once the candidate carries the max itself with the gap `T - R` frozen, and both arms evaluate to `M + lambda * (T - R)` exactly at the switch `q = M - R`. The arms meet where they join and neither falls, **independently of `backing_buffer_lambda`**. The premium-only fit bounds the search domain from above because every other term is nonnegative.
 - **The maximum-payout bound is NOT monotone, so it is kept out of that search.** `all_in_cost <= quantity` compares two rising quantities, and the independent floors in each cost term let it flip from false back to true at a larger lot wherever unit cost sits within rounding of one. At the `quote_mint_tests` above-payout fee rate it flips 21 times across the first 400 lots: 2_970_000 costs 2_970_001 and fails while 3_990_000 costs exactly 3_990_000 and passes. A binary search that folded the bound into its predicate returned 2_960_000 for a 4_000_000 budget — undersized by a quarter, and a spurious `EMintQuantityBelowMin` for any caller whose floor sat in between, on a mint an exact-quantity request of the same size performs. Nondecreasing cost proves the budget half of such a predicate, not the payout half.
 - **So the bound is consulted second, and only when it binds:** sizing first finds the budget fill; if that fill clears its own maximum payout it is returned, which is every market where the bound is not what limits the fill. Only if it breaches — which a rising marginal impact rate or an exhausted sponsor subsidy can cause on a budget the account can afford — does a second search run strictly below it, where every candidate already fits `max_cost`. A positive result clears the payout bound, but this fallback is conservative: its non-monotone predicate means it may miss a larger admissible fill or one meeting the caller's `min_quantity`. The floor rejects an undersized result; it does not make the search complete. Minimum-premium admission can also reject a fallback even when an unvisited larger fill would pass. When the search finds no smaller fill the budget fill is admitted, so a market where every size is loss-making reports `EMintCostAboveMaxPayout` — what an exact-quantity mint reports — rather than an empty fill's admission error. `compute_mint_quote` still enforces RP-33 on whatever is admitted. Aborting outright instead of stepping down was rejected: it fires on the `std::u64::max_value!()` budget the entrypoint documents, and the read-only quote would abort identically, leaving an SDK no way to discover a workable budget.
-- **Accounting and backing coverage:** `mint_exact_cost_accounting_tests.move` — `cost_quote_does_not_size_to_cash_backing` proves a smaller exact-quantity mint is backed even when the budget quote sizes past available backing; `cost_mint_without_enough_backing_aborts_instead_of_resizing` pins the resulting mint abort. `repeated_cost_mints_route_combined_fees_and_return_impact_escrow` pins combined builder, sponsor, referral, and impact accounting across consecutive mints and live closes.
+- **Accounting and backing coverage:** `mint_exact_cost_accounting_tests.move` — `cost_quote_does_not_size_to_cash_backing` proves a smaller exact-quantity mint is backed even when the budget quote sizes past available backing; `cost_mint_without_enough_backing_aborts_instead_of_resizing` pins the resulting mint abort. `repeated_cost_mints_route_combined_fees_and_return_impact_escrow` pins combined sponsor, referral, and impact accounting across consecutive mints and live closes. The retired immediate path it drives names no builder, so builder routing is pinned on the queued fill (`order_flow_tests.move` — `a_builder_fee_comes_out_of_the_escrow`, `a_referral_basis_excludes_the_builder_fee`).
 - **Failure asymmetry:** a candidate is only ever accepted after its cost was checked, so a returned fill can never be over-budget, and the charge re-asserts both bounds. A wrong monotonicity assumption costs maximality, never money.
 - **Slippage guard:** `min_quantity`. The budget is fixed, so every adverse move between building and executing the transaction — price, congestion surcharge, sponsor subsidy, inventory impact, a payout-limited step-down — arrives as fewer contracts, and one floor on the fill catches all of them (`EMintQuantityBelowMin`). It is the exact-input counterpart of `mint_exact_quantity`'s `max_cost`, and bounds the all-in price per contract at `max_cost / min_quantity`, which is why the shape carries no `max_probability` (RP-19's reasoning: a second argument would restate the same constraint on a signature that cannot be narrowed after deploy). Zero accepts any fill; unlike `mint_exact_amount`'s `max_cost` it is not required, because a caller who omits it still cannot overspend.
 - **Unchanged:** `mint_exact_amount` still searches the premium relation, so RP-13 and RP-19 continue to describe it; RP-13's reopen condition ("a fee folded into the budget") is met by a sibling entrypoint, not by a change to the relation it governs.
 - **Risk profile:** n/a (sizing semantics, not a probabilistic risk). Cost, stated honestly: the budget search runs up to ~32 probes bounded by the lot cap, and the step-down search up to ~32 more in the rare case it runs. The range is priced once and both payout-tree reads are hoisted out of the loops, so no probe touches storage — but each probe does re-derive the quantity-independent fee rates, which costs a `sqrt_down` per finite leg (seven u128 divides each) plus one more inside the congestion penalty. Hoisting those would mean a probe that no longer routes through the function that charges, which is the invariant this entry exists to protect; the recompute is the price of that guarantee.
-- **Pinning tests:** `mint_exact_cost_tests.move` — `budget_below_the_next_lot_mints_the_largest_fitting_fill` and `budget_at_the_next_lot_all_in_cost_spends_it_exactly` (budget sizing pinned from both sides, the second at zero dust), `premium_budget_sizing_overspends_the_same_figure`; the non-monotone payout bound: `payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill` with `lot_below_the_sized_fill_is_inadmissible` (false at a smaller lot, true at the larger one sizing returns), `fill_at_the_largest_admissible_quantity_clears_its_own_floor`, `budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot`, `overshoot_past_the_maximum_payout_steps_down_instead_of_aborting` with `lot_above_a_payout_limited_fill_is_inadmissible`, `market_where_every_fill_is_loss_making_aborts_on_the_payout_bound`, `fill_whose_cost_equals_its_maximum_payout_mints`; slippage: `quantity_floor_aborts_when_the_price_moves_after_the_quote`, `quantity_floor_aborts_when_a_surcharge_lands_after_the_quote`, `quantity_floor_at_the_repriced_fill_mints`, `payout_limited_fill_below_the_quantity_floor_aborts`, against `congestion_surcharge_after_the_quote_resizes_instead_of_aborting`, `price_move_after_the_quote_resizes_instead_of_aborting` and `premium_budget_mint_aborts_when_the_surcharge_lands_after_the_quote`; each cost term inside the budget: `builder_fee_is_sized_inside_the_budget`, `builder_fee_at_its_own_rate_cap_sizes_exactly`, `sponsor_subsidy_is_sized_inside_the_budget`, `configured_subsidy_rate_is_sized_inside_the_budget`, `subsidy_capped_by_the_sponsored_balance_still_sizes_exactly`, `two_finite_legs_size_exactly`, `inventory_impact_is_sized_inside_the_budget`, `impact_above_the_curve_kink_still_sizes_exactly`, `impact_over_a_disjoint_book_sizes_exactly`, `impact_on_a_range_that_already_holds_exposure_sizes_exactly`; monotonicity of the total walked lot by lot: `all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch`, `all_in_cost_never_falls_across_the_subsidy_cap`, `all_in_cost_never_falls_across_the_subsidy_cap_at_the_maximum_rate`, `all_in_cost_never_falls_at_the_maximum_backing_buffer`; budget edges: `zero_budget_aborts`, `dust_budget_below_the_minimum_premium_aborts`, `empty_balance_caps_the_budget_to_zero`, `oversized_budget_and_balance_saturate_at_the_lot_cap`, `account_quote_is_the_exact_debit_of_the_mint_it_sizes`, `account_quote_caps_the_budget_to_the_account_balance`, `whole_balance_budget_leaves_less_than_one_lot_unspent`; the sized position is an ordinary one: `cost_sized_position_closes_live`, `cost_sized_winner_redeems_its_full_quantity_at_settlement`; `referral_fee_flow_tests.move` — `cost_sized_mint_routes_the_referral_and_emits_the_sized_fill`; `mint_terms_binding_tests.move` — `admitting_a_range_quoted_on_another_exposure_aborts`.
+- **Pinning tests:** `mint_exact_cost_tests.move` — `budget_below_the_next_lot_mints_the_largest_fitting_fill` and `budget_at_the_next_lot_all_in_cost_spends_it_exactly` (budget sizing pinned from both sides, the second at zero dust), `premium_budget_sizing_overspends_the_same_figure`; the non-monotone payout bound: `payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill` with `lot_below_the_sized_fill_is_inadmissible` (false at a smaller lot, true at the larger one sizing returns), `fill_at_the_largest_admissible_quantity_clears_its_own_floor`, `budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot`, `overshoot_past_the_maximum_payout_steps_down_instead_of_aborting` with `lot_above_a_payout_limited_fill_is_inadmissible`, `market_where_every_fill_is_loss_making_aborts_on_the_payout_bound`, `fill_whose_cost_equals_its_maximum_payout_mints`; slippage: `quantity_floor_aborts_when_the_price_moves_after_the_quote`, `quantity_floor_aborts_when_a_surcharge_lands_after_the_quote`, `quantity_floor_at_the_repriced_fill_mints`, `payout_limited_fill_below_the_quantity_floor_aborts`, against `congestion_surcharge_after_the_quote_resizes_instead_of_aborting`, `price_move_after_the_quote_resizes_instead_of_aborting` and `premium_budget_mint_aborts_when_the_surcharge_lands_after_the_quote`; each cost term inside the budget: `builder_fee_is_sized_inside_the_budget` and `builder_fee_at_its_own_rate_cap_sizes_exactly` (a named fee and one above the builder fee cap, sized by the queued exact-cost search the fill uses), `sponsor_subsidy_is_sized_inside_the_budget`, `configured_subsidy_rate_is_sized_inside_the_budget`, `subsidy_capped_by_the_sponsored_balance_still_sizes_exactly`, `two_finite_legs_size_exactly`, `inventory_impact_is_sized_inside_the_budget`, `impact_above_the_curve_kink_still_sizes_exactly`, `impact_over_a_disjoint_book_sizes_exactly`, `impact_on_a_range_that_already_holds_exposure_sizes_exactly`; monotonicity of the total walked lot by lot: `all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch`, `all_in_cost_never_falls_across_the_subsidy_cap`, `all_in_cost_never_falls_across_the_subsidy_cap_at_the_maximum_rate`, `all_in_cost_never_falls_at_the_maximum_backing_buffer`; budget edges: `zero_budget_aborts`, `dust_budget_below_the_minimum_premium_aborts`, `empty_balance_caps_the_budget_to_zero`, `oversized_budget_and_balance_saturate_at_the_lot_cap`, `account_quote_is_the_exact_debit_of_the_mint_it_sizes`, `account_quote_caps_the_budget_to_the_account_balance`, `whole_balance_budget_leaves_less_than_one_lot_unspent`; the sized position is an ordinary one: `cost_sized_position_closes_live`, `cost_sized_winner_redeems_its_full_quantity_at_settlement`; `referral_fee_flow_tests.move` — `cost_sized_mint_routes_the_referral_and_emits_the_sized_fill`; `mint_terms_binding_tests.move` — `admitting_a_range_quoted_on_another_exposure_aborts`.
 - **Reopen when:** a mint charge becomes non-monotone in quantity (a volume discount, a per-order flat component that shrinks with size, an impact curve that can fall as liability rises), the subsidy-rate ceiling rises above one, a sizing mode arrives where `min_quantity` no longer bounds price per contract, the search's probe stops routing through the function that charges, or any bound other than the budget is folded into the budget search's predicate without a proof that it is monotone in quantity.
 
 ## RP-37: A live trade does not execute on the Pyth-stale fallback

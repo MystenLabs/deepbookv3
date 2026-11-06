@@ -569,7 +569,7 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
     fx.set_pyth_spot_freshness_for_testing(&mut oracle, TIGHT_PYTH_FRESHNESS_MS);
     fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS);
 
-    let pyth_budget = oracle_fixture::config(&oracle).pricing_cfg().pyth_age_ms();
+    let pyth_budget = oracle_fixture::config(&oracle).pr_cfg().pyth_age();
 
     // Pyth stalls: one ms past the budget the diverged print is stale, so the
     // forward is the stored Block Scholes forward = 100e9.
@@ -621,7 +621,7 @@ fun use_pyth_spot_for_forward_selects_the_live_forward_source() {
     // and well inside the (longer) Block Scholes one, so the switch is the only
     // thing that can decide the source here.
     fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS);
-    assert!(oracle_fixture::config(&oracle).pricing_cfg().pyth_forward());
+    assert!(oracle_fixture::config(&oracle).pr_cfg().pyth_fwd());
 
     // Default on: the fresh spot carries the basis, so forward = mul(102e9, 1.0)
     // = 102e9 and the diverged strike is the at-the-money one.
@@ -715,9 +715,9 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
 
     // The stale-Pyth/fresh-Block-Scholes window exists because the test tightens
     // the Pyth budget strictly below the BS price budget.
-    let pyth_budget = oracle_fixture::config(&oracle).pricing_cfg().pyth_age_ms();
+    let pyth_budget = oracle_fixture::config(&oracle).pr_cfg().pyth_age();
     assert!(pyth_budget
-            < oracle_fixture::config(&oracle).pricing_cfg().bs_age_ms());
+            < oracle_fixture::config(&oracle).pr_cfg().bs_age());
 
     // AT the boundary (now − 99_500 == budget): Pyth is fresh (inclusive), so
     // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.

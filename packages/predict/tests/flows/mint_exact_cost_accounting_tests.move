@@ -16,17 +16,18 @@ const BUFFER: u64 = 500_000_000;
 const REFERRAL_RATE: u64 = 100_000_000;
 const FIRST_QUANTITY: u64 = 4_000_000;
 const SECOND_QUANTITY: u64 = 3_990_000;
-const FIRST_COST: u64 = 2_018_134;
-const SECOND_COST: u64 = 2_013_407;
+/// Also the budget of both mints, so the first spends it exactly.
+const FIRST_COST: u64 = 2_016_134;
+const SECOND_COST: u64 = 2_011_412;
 const FIRST_CASH_DELTA: u64 = 2_018_534;
 const SECOND_CASH_DELTA: u64 = 2_013_806;
 const FIRST_IMPACT: u64 = 160;
 const TOTAL_IMPACT: u64 = 638;
 const TOTAL_SUBSIDY: u64 = 7_990;
-/// Mint fees net of subsidy plus builder: 35,955. Close fees plus builder:
-/// 43,945. Impact charges return in full and referral routing adds no charge.
-const ROUND_TRIP_FEES: u64 = 79_900;
-const BUILDER_CODE_INDEX: u64 = 0;
+/// Mint fees net of subsidy: 16,000 + 15,960 = 31,960. Close fees: 20,000 +
+/// 19,950 = 39,950. Impact charges return in full and referral routing adds no
+/// charge.
+const ROUND_TRIP_FEES: u64 = 71_910;
 const BACKING_CASH: u64 = 2_000_000;
 const BACKING_BUDGET: u64 = 4_000_000;
 /// Across the reference digital's whole +/-21 band, 7.92m costs less than 4m
@@ -48,7 +49,6 @@ fun repeated_cost_mints_route_combined_fees_and_return_impact_escrow() {
         test_constants::mint_deposit(),
         &referrer,
     );
-    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
     let mut market = fx.take_market_bundle(expiry_id);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.seed_market_cash(
@@ -66,8 +66,8 @@ fun repeated_cost_mints_route_combined_fees_and_return_impact_escrow() {
     let initial_subsidy = helpers::market(&market).fee_incentive_balance();
 
     // Independently derived across the reference digital's whole error interval:
-    // q=4m: premium 1,999,974, fee 20,000, subsidy 4,000, builder 2,000,
-    // impact .2*(4m)^2/(2*10b)=160, referral 1,600.
+    // q=4m: premium 1,999,974, fee 20,000, subsidy 4,000, impact
+    // .2*(4m)^2/(2*10b)=160, referral 1,600. The retired path names no builder.
     let first = fx.quote_mint_exact_cost_for_account_bundle(
         &market,
         &account,
@@ -92,8 +92,8 @@ fun repeated_cost_mints_route_combined_fees_and_return_impact_escrow() {
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), FIRST_IMPACT);
 
     // The same budget now buys one fewer lot. q=3.99m has premium 1,994,974,
-    // fee 19,950, subsidy 3,990, builder 1,995, impact floor(phi(7.99m))-160=478,
-    // and referral 1,596. Another 4m would cost 2,018,454, over this budget.
+    // fee 19,950, subsidy 3,990, impact floor(phi(7.99m))-160=478, and referral
+    // 1,596. Another 4m would cost 2,016,454, over this budget.
     let second = fx.quote_mint_exact_cost_for_account_bundle(
         &market,
         &account,
