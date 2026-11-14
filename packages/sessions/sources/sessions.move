@@ -6,7 +6,9 @@
 /// app auth inside the Predict and DeepBook spot wrappers exposed here.
 ///
 /// Session-key spot orders trade only on the pools in `SessionsConfig`'s
-/// allowlist, which the `SessionsAdminCap` holder maintains.
+/// allowlist, which the `SessionsAdminCap` holder maintains. Each one is also
+/// charged, per asset, what it moves out of the Account against a spend budget
+/// the owner approves for the session (`approve_session_spend`).
 ///
 /// A session-key trade that names a Predict builder code pays that builder a fee
 /// the session holder picks, so the owner approves one code and a maximum fee per
@@ -15,7 +17,7 @@
 module deepbook_sessions::sessions;
 
 use account::{account::{Self, Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
-use deepbook::{order_info::OrderInfo, pool::Pool, registry::Registry};
+use deepbook::{math, order_info::OrderInfo, pool::Pool, registry::Registry};
 use deepbook_core_account::deepbook_core_account;
 use deepbook_predict::{
     builder_code::BuilderCode,
@@ -30,8 +32,9 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
-use std::internal::permit;
+use std::{internal::permit, type_name::{Self, TypeName}};
 use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, VecMap}};
+use token::deep::DEEP;
 
 // === Errors ===
 
@@ -41,6 +44,8 @@ const ESessionLimitExceeded: u64 = 2;
 const EBuilderNotApproved: u64 = 3;
 const EBuilderFeeAboveApproved: u64 = 4;
 const EBuilderApprovalsNotEnabled: u64 = 5;
+const ESpendLimitExceeded: u64 = 6;
+const ESpendApprovalsNotEnabled: u64 = 7;
 
 // === Constants ===
 
@@ -48,11 +53,11 @@ macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
 
 macro fun max_sessions(): u64 { 20 }
 
-/// The Sessions version floor at which builder approvals open: the first version
-/// whose `authorize_session` clears an approval left on a new grant. An older
-/// `authorize_session` would keep it, so approvals wait until the watermark
-/// retires every older version.
-macro fun builder_approval_version(): u64 { 4 }
+/// The Sessions version floor at which builder approvals and spend budgets open:
+/// the first version whose `authorize_session` clears ones left on a new grant.
+/// An older `authorize_session` would keep them, so approvals wait until the
+/// watermark retires every older version.
+macro fun grant_terms_version(): u64 { 4 }
 
 // === Structs ===
 
@@ -112,6 +117,32 @@ public struct SessionBuilderCleared has copy, drop {
     session: address,
 }
 
+/// Data-slot witness for the session spend budgets. `SessionsData` was published
+/// without them, so they live in a slot of their own.
+public struct SessionSpendApp has drop {}
+
+/// What each session may still spend on spot orders, keyed by session address
+/// and then by the asset's type name, in the asset's raw units. An asset with no
+/// entry has nothing left to spend. `revoke_session` removes a session's entry.
+public struct SessionSpendBudgets has store {
+    budgets: VecMap<address, VecMap<TypeName, u64>>,
+}
+
+/// The owner set what `session` may still spend of `asset` on spot orders.
+public struct SessionSpendApproved has copy, drop {
+    account_id: ID,
+    session: address,
+    asset: TypeName,
+    amount: u64,
+}
+
+/// A session's spend budgets were removed: by `revoke_session`, or by a new
+/// grant for an address whose budgets outlived its session.
+public struct SessionSpendCleared has copy, drop {
+    account_id: ID,
+    session: address,
+}
+
 // === Public Functions ===
 
 /// Return a known session's expiration timestamp for SDK and devInspect reads.
@@ -140,11 +171,21 @@ public fun approved_max_fee_per_contract(builder: &SessionBuilder): u64 {
     builder.max_fee_per_contract
 }
 
+/// Return how much of `T` `session` may still spend on spot orders, in `T`'s raw
+/// units, for SDK and devInspect reads. Zero when no budget is set.
+public fun session_spend_remaining<T>(wrapper: &AccountWrapper, session: address): u64 {
+    let account = wrapper.load_account();
+    if (!account.has_data<SessionSpendApp>()) return 0;
+    let data = account.borrow_data<SessionSpendApp, SessionSpendBudgets>();
+    if (!data.budgets.contains(&session)) return 0;
+    data.budgets.get(&session).try_get(&type_name::with_defining_ids<T>()).destroy_with_default(0)
+}
+
 /// Authorize `session` from execution time for at most 30 days.
 /// Accounts may store at most 20 addresses; reauthorization replaces in place
-/// and keeps the session's builder approval, while a new grant starts without
-/// one. A session that expired but was never revoked is still stored, so
-/// granting it again is a reauthorization and keeps its approval.
+/// and keeps the session's builder approval and spend budgets, while a new grant
+/// starts without them. A session that expired but was never revoked is still
+/// stored, so granting it again is a reauthorization and keeps them.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
@@ -170,8 +211,11 @@ public fun authorize_session(
         *data.sessions.get_mut(&session) = expires_at_ms;
     };
     // The pre-upgrade `revoke_session` removes a session but not its builder
-    // approval, so a new grant starts without one.
-    if (is_new) clear_builder(account, account_id, session);
+    // approval or spend budgets, so a new grant starts without them.
+    if (is_new) {
+        clear_builder(account, account_id, session);
+        clear_spend(account, account_id, session);
+    };
     event::emit(SessionAuthorized { account_id, session, expires_at_ms });
 }
 
@@ -193,7 +237,7 @@ public fun approve_session_builder(
 ) {
     sessions_config.assert_version();
     assert!(
-        sessions_config.version_watermark() >= builder_approval_version!(),
+        sessions_config.version_watermark() >= grant_terms_version!(),
         EBuilderApprovalsNotEnabled,
     );
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
@@ -221,12 +265,63 @@ public fun approve_session_builder(
     event::emit(SessionBuilderApproved { account_id, session, code_id, max_fee_per_contract });
 }
 
-/// Revoke `session` and its builder approval if present. Only the Account owner
-/// may call this function.
+/// Set how much of `T` `session` may still spend on spot orders, in `T`'s raw
+/// units, replacing any earlier amount. Zero removes the budget. Only the Account
+/// owner may call this, and only for a session already authorized
+/// (`ESessionNotAuthorized`), so an app calls it right after `authorize_session`
+/// in the same transaction, once per asset. Each spot order the session places
+/// is charged what DeepBook takes from the Account for it: the funds it spends
+/// on fills, the funds its resting remainder locks, and its fees. Fills and
+/// cancels never add back, so the session spends at most the approved amounts
+/// until the owner approves more. The budgets last until `revoke_session`;
+/// re-authorizing the session keeps them. Aborts `ESpendApprovalsNotEnabled`
+/// until the `SessionsConfig` watermark reaches the first version that clears
+/// stale budgets.
+public fun approve_session_spend<T>(
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    session: address,
+    amount: u64,
+    ctx: &mut TxContext,
+) {
+    sessions_config.assert_version();
+    assert!(
+        sessions_config.version_watermark() >= grant_terms_version!(),
+        ESpendApprovalsNotEnabled,
+    );
+    let account = wrapper.load_account_mut(account::generate_auth(ctx));
+    assert!(
+        account.has_data<SessionsApp>()
+            && account.borrow_data<SessionsApp, SessionsData>().sessions.contains(&session),
+        ESessionNotAuthorized,
+    );
+    let account_id = account.account_id();
+    if (!account.has_data<SessionSpendApp>()) {
+        account.attach(
+            permit<SessionSpendApp>(),
+            SessionSpendBudgets { budgets: vec_map::empty() },
+        );
+    };
+    let data = account.borrow_data_mut<SessionSpendApp, SessionSpendBudgets>(
+        permit<SessionSpendApp>(),
+    );
+    if (!data.budgets.contains(&session)) data.budgets.insert(session, vec_map::empty());
+    let assets = data.budgets.get_mut(&session);
+    let asset = type_name::with_defining_ids<T>();
+    if (assets.contains(&asset)) {
+        let (_, _) = assets.remove(&asset);
+    };
+    if (amount > 0) assets.insert(asset, amount);
+    event::emit(SessionSpendApproved { account_id, session, asset, amount });
+}
+
+/// Revoke `session` with its builder approval and spend budgets, if present.
+/// Only the Account owner may call this function.
 public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     let account_id = account.account_id();
     clear_builder(account, account_id, session);
+    clear_spend(account, account_id, session);
     if (!account.has_data<SessionsApp>()) return;
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
     if (!data.sessions.contains(&session)) return;
@@ -235,7 +330,8 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
 }
 
 /// Place a DeepBook spot limit order for an Account with an active session, on a
-/// pool in the `SessionsConfig` allowlist (`session_config::EPoolNotAllowed`).
+/// pool in the `SessionsConfig` allowlist (`session_config::EPoolNotAllowed`),
+/// within the session's spend budgets (`ESpendLimitExceeded`).
 public fun place_limit_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -256,7 +352,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     sessions_config.assert_pool_allowed(pool.id());
-    deepbook_core_account::place_limit_order(
+    let info = deepbook_core_account::place_limit_order(
         pool,
         deepbook_registry,
         wrapper,
@@ -272,11 +368,14 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
         root,
         clock,
         ctx,
-    )
+    );
+    charge_spot_order<BaseAsset, QuoteAsset>(account_registry, wrapper, &info, ctx);
+    info
 }
 
 /// Place a DeepBook spot market order for an Account with an active session, on
-/// a pool in the `SessionsConfig` allowlist (`session_config::EPoolNotAllowed`).
+/// a pool in the `SessionsConfig` allowlist (`session_config::EPoolNotAllowed`),
+/// within the session's spend budgets (`ESpendLimitExceeded`).
 public fun place_market_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -295,7 +394,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     sessions_config.assert_pool_allowed(pool.id());
-    deepbook_core_account::place_market_order(
+    let info = deepbook_core_account::place_market_order(
         pool,
         deepbook_registry,
         wrapper,
@@ -309,7 +408,9 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
         root,
         clock,
         ctx,
-    )
+    );
+    charge_spot_order<BaseAsset, QuoteAsset>(account_registry, wrapper, &info, ctx);
+    info
 }
 
 /// Cancel a DeepBook spot order for an Account with an active session, on any
@@ -965,6 +1066,72 @@ fun session_auth_with_builder(
     auth
 }
 
+/// Charge the sender's spend budgets for what DeepBook took from the Account for
+/// `info`'s order, the sum it settles against the order's balance manager: the
+/// quote a bid paid on fills, or the base an ask sold, plus the remainder a
+/// resting order locks, plus taker and maker fees. Fees are in DEEP when the
+/// order's DEEP price is set, and otherwise in the asset the order spends.
+/// Nothing the order receives is netted against it.
+fun charge_spot_order<BaseAsset, QuoteAsset>(
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    info: &OrderInfo,
+    ctx: &TxContext,
+) {
+    let resting = if (info.order_inserted()) {
+        info.original_quantity() - info.executed_quantity()
+    } else {
+        0
+    };
+    let fees = info.paid_fees() + info.maker_fees();
+    let fees_in_deep = info.order_deep_price().deep_per_asset() > 0;
+    let session = ctx.sender();
+    let account = wrapper.load_account_mut(account_registry.generate_auth_as_app<SessionsApp>(
+        permit<SessionsApp>(),
+    ));
+    if (info.is_bid()) {
+        let spent = info.cumulative_quote_quantity() + math::mul(resting, info.price());
+        charge_order<QuoteAsset>(account, session, spent, fees, fees_in_deep);
+    } else {
+        let spent = info.executed_quantity() + resting;
+        charge_order<BaseAsset>(account, session, spent, fees, fees_in_deep);
+    };
+}
+
+/// Charge `spent` of the order's spend asset `T`, and its `fees` in DEEP or in
+/// `T`. When `T` is DEEP, both charges come from the DEEP budget.
+fun charge_order<T>(
+    account: &mut Account,
+    session: address,
+    spent: u64,
+    fees: u64,
+    fees_in_deep: bool,
+) {
+    if (fees_in_deep) {
+        charge_spend<T>(account, session, spent);
+        charge_spend<DEEP>(account, session, fees);
+    } else {
+        charge_spend<T>(account, session, spent + fees);
+    };
+}
+
+/// Take `amount` of `T` from `session`'s budget for `T`, aborting
+/// `ESpendLimitExceeded` when the budget is missing or smaller.
+fun charge_spend<T>(account: &mut Account, session: address, amount: u64) {
+    if (amount == 0) return;
+    assert!(account.has_data<SessionSpendApp>(), ESpendLimitExceeded);
+    let data = account.borrow_data_mut<SessionSpendApp, SessionSpendBudgets>(
+        permit<SessionSpendApp>(),
+    );
+    assert!(data.budgets.contains(&session), ESpendLimitExceeded);
+    let assets = data.budgets.get_mut(&session);
+    let asset = type_name::with_defining_ids<T>();
+    assert!(assets.contains(&asset), ESpendLimitExceeded);
+    let remaining = assets.get_mut(&asset);
+    assert!(amount <= *remaining, ESpendLimitExceeded);
+    *remaining = *remaining - amount;
+}
+
 /// Remove `session`'s builder approval, if any, and emit `SessionBuilderCleared`.
 /// Every removal goes through here, so the event stream tracks approvals.
 fun clear_builder(account: &mut Account, account_id: ID, session: address) {
@@ -975,6 +1142,17 @@ fun clear_builder(account: &mut Account, account_id: ID, session: address) {
     if (!builders.approvals.contains(&session)) return;
     let (_, _) = builders.approvals.remove(&session);
     event::emit(SessionBuilderCleared { account_id, session });
+}
+
+/// Remove `session`'s spend budgets, if any, and emit `SessionSpendCleared`.
+fun clear_spend(account: &mut Account, account_id: ID, session: address) {
+    if (!account.has_data<SessionSpendApp>()) return;
+    let data = account.borrow_data_mut<SessionSpendApp, SessionSpendBudgets>(
+        permit<SessionSpendApp>(),
+    );
+    if (!data.budgets.contains(&session)) return;
+    let (_, _) = data.budgets.remove(&session);
+    event::emit(SessionSpendCleared { account_id, session });
 }
 
 #[test_only]
