@@ -921,6 +921,18 @@ pub mod deepbook_margin {
             pub timestamp: u64,
         }
 
+        /// Emitted when a triggered market order fills only in part. The order stays
+        /// queued, and `conditional_order` carries its unfilled quantity.
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ConditionalOrderPartiallyExecuted {
+            pub manager_id: ObjectID,
+            pub pool_id: ObjectID,
+            pub conditional_order_id: u64,
+            pub conditional_order: ConditionalOrder,
+            pub executed_quantity: u64,
+            pub timestamp: u64,
+        }
+
         /// Emitted when a conditional order fails due to insufficient funds
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct ConditionalOrderInsufficientFunds {
@@ -943,6 +955,11 @@ pub mod deepbook_margin {
         impl MoveStruct for ConditionalOrderExecuted {
             const MODULE: &'static str = "tpsl";
             const NAME: &'static str = "ConditionalOrderExecuted";
+        }
+
+        impl MoveStruct for ConditionalOrderPartiallyExecuted {
+            const MODULE: &'static str = "tpsl";
+            const NAME: &'static str = "ConditionalOrderPartiallyExecuted";
         }
 
         impl MoveStruct for ConditionalOrderInsufficientFunds {

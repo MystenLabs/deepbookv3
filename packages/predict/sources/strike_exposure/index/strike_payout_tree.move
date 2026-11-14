@@ -38,12 +38,12 @@
 ///
 /// Delayed execution adds pins: a waiting order's boundary ticks, passed in as
 /// `pins` (tick -> count of waiting orders; a key is present only while its
-/// count is positive). Enqueue creates the nodes up front (`ensure_node`), no
+/// count is positive). Enqueue creates the nodes up front (`ens_node`), no
 /// deletion path removes a pinned node, and a resolve fill inserts over existing
-/// nodes only (`insert_exist`), so the keeper never creates a node.
+/// nodes only (`ins_old`), so the keeper never creates a node.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, pricing::Pricer, range_codec};
+use deepbook_predict::{constants, pricing::{Self, Pricer}, range_codec};
 use fixed_math::math;
 use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
@@ -144,7 +144,7 @@ public(package) fun range_max(tree: &StrikePayoutTree, lower_tick: u64, higher_t
 }
 
 /// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
+public(package) fun out_max(tree: &StrikePayoutTree, lower_tick: u64, higher_tick: u64): u64 {
     let left = if (lower_tick == 0) {
         0
     } else {
@@ -161,7 +161,7 @@ public(package) fun outside_max(tree: &StrikePayoutTree, lower_tick: u64, higher
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
-public(package) fun settled_liab(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
+public(package) fun liab_at(tree: &StrikePayoutTree, settlement: u64, tick_size: u64): u64 {
     let limit_tick = range_codec::limit_tick(settlement, tick_size);
     prefix_pay(
         &tree.nodes,
@@ -194,17 +194,18 @@ public(package) fun has_nodes(tree: &StrikePayoutTree, lower_tick: u64, higher_t
 /// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
 /// are never stored (`P = 0`).
 public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
-    let mut previous_price = option::none();
+    let mut price_envelope = option::none();
     let (start_total, end_total) = walk_tree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         0,
-        &mut previous_price,
+        &mut price_envelope,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
-    // once. This can differ from pricing and flooring each order independently.
+    // once. This can differ from pricing and flooring each order independently, as
+    // can the rounded-up charge on a tolerated rise (RP-15).
     (tree.base + start_total).saturating_sub(end_total)
 }
 
@@ -223,14 +224,14 @@ public(package) fun walk_frozen(
         tree.snapshot_active && tree.snapshot_seq == snapshot_seq && snapshot_seq != 0,
         EStaleValuationSnapshot,
     );
-    let mut previous_price = option::none();
+    let mut price_envelope = option::none();
     let (start_total, end_total) = walk_tree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         snapshot_seq,
-        &mut previous_price,
+        &mut price_envelope,
     );
     (tree.snapshot_base + start_total).saturating_sub(end_total)
 }
@@ -289,7 +290,7 @@ public(package) fun insert_range(
 /// is stamped like any post-snapshot creation: zero shadows under an active
 /// generation, so the frozen walk excludes it. Only a pin keeps it alive past
 /// the next emptying mutation or `snap_done`.
-public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
+public(package) fun ens_node(tree: &mut StrikePayoutTree, tick: u64): bool {
     if (tick == 0 || tick == constants::pos_inf_tick!() || tree.nodes.contains(tick)) {
         return false
     };
@@ -305,7 +306,7 @@ public(package) fun ensure_node(tree: &mut StrikePayoutTree, tick: u64): bool {
 /// Mirrors `insert_range` over a path with no node-creation branch, so no keeper
 /// path reaches `table::add`. Each touched node still captures its shadow
 /// before the mutation (RP-29).
-public(package) fun insert_exist(
+public(package) fun ins_old(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -343,11 +344,7 @@ public(package) fun remove_range(
 /// The refund routine's best-effort cleanup after it unpins. A missing tick,
 /// a sentinel, a node holding quantity, a pinned node, and a husk the active
 /// generation still needs are all left alone and return false.
-public(package) fun prune_node(
-    tree: &mut StrikePayoutTree,
-    tick: u64,
-    pins: &VecMap<u64, u64>,
-): bool {
+public(package) fun prune_n(tree: &mut StrikePayoutTree, tick: u64, pins: &VecMap<u64, u64>): bool {
     if (!tree.nodes.contains(tick) || pins.contains(&tick)) return false;
     let node = tree.nodes[tick];
     let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
@@ -716,17 +713,17 @@ fun window_sum(
 /// monotonicity is observed, and a cancelling boundary is still the shared edge
 /// of two live orders. An inversion sitting on it does not move this walk's
 /// total, but it does move what `redeem_live` pays per order (`range_price` is
-/// evaluated per order, not netted), so skipping the observation would let NAV
-/// understate liability without aborting. A node whose selected terms are both
-/// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
-/// creation) — the view that owns the tick observes it.
+/// evaluated per order, not netted), so skipping the observation would let an
+/// inversion of any size there understate liability without aborting. A node
+/// whose selected terms are both zero is NOT part of the view (live: a husk;
+/// frozen: a post-snapshot creation) — the view that owns the tick observes it.
 fun walk_tree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
     tick_size: u64,
     frozen_seq: u64,
-    previous_price: &mut Option<u64>,
+    price_envelope: &mut Option<u64>,
 ): (u64, u64) {
     if (root.is_none()) return (0, 0);
     let tick = *root.borrow();
@@ -738,7 +735,7 @@ fun walk_tree(
         pricer,
         tick_size,
         frozen_seq,
-        previous_price,
+        price_envelope,
     );
 
     let (local_start, local_end) = if (frozen_seq != 0 && node.snapshot_seq == frozen_seq) {
@@ -751,17 +748,29 @@ fun walk_tree(
     let mut end_total = 0;
     if (local_start != 0 || local_end != 0) {
         let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
-        // UP price is non-increasing in strike and the in-order walk visits
-        // ascending ticks, so a rising price is a non-monotone surface: the netted
-        // aggregate below would understate the per-order liability the protocol
-        // actually honors.
-        if (previous_price.is_some()) {
-            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+        // UP price is non-increasing in strike, so a rise across these ascending
+        // ticks is either the pricer's own fixed-point dust or an inverted surface.
+        // A rise within `price_monotonicity_tolerance` of the running minimum walks
+        // at its quoted price, and the rise is charged, rounded up, on the quantity
+        // ending here so no order nets below its floored per-order value; a larger
+        // rise fails closed. RP-15 owns the response, its NAV bound, and why this
+        // mandatory path cannot hard-assert.
+        if (price_envelope.is_some()) {
+            let envelope = *price_envelope.borrow();
+            assert!(
+                price <= envelope + pricing::price_monotonicity_tolerance!(),
+                ENonMonotonePrice,
+            );
+            if (price > envelope) {
+                start_total = math::mul_div_up(price - envelope, local_end, math::float_scaling!());
+            };
+            *price_envelope = option::some(envelope.min(price));
+        } else {
+            *price_envelope = option::some(price);
         };
-        *previous_price = option::some(price);
 
         if (local_start != local_end) {
-            start_total = math::mul_down(price, local_start);
+            start_total = start_total + math::mul_down(price, local_start);
             end_total = math::mul_down(price, local_end);
         };
     };
@@ -772,7 +781,7 @@ fun walk_tree(
         pricer,
         tick_size,
         frozen_seq,
-        previous_price,
+        price_envelope,
     );
     (start_total + left_start + right_start, end_total + left_end + right_end)
 }

@@ -64,7 +64,7 @@ struct Args {
     #[clap(env = "LIVE_OHCLV_MAX_FILLS", long, default_value_t = 5000)]
     live_ohclv_max_fills: usize,
     /// Comma-separated list of valid admin bearer tokens
-    #[clap(env = "ADMIN_TOKENS", long)]
+    #[clap(env = "ADMIN_TOKENS", long, hide_env_values = true)]
     admin_tokens: Option<String>,
     /// Authenticated Pyth Pro Router API base URL.
     #[clap(env, long, default_value = DEFAULT_PRO_URL)]
@@ -208,4 +208,20 @@ async fn main() -> Result<(), anyhow::Error> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use clap::CommandFactory;
+
+    #[test]
+    fn help_hides_admin_tokens() {
+        std::env::set_var("ADMIN_TOKENS", "help-must-not-print-this-token");
+        let help = Args::command().render_long_help().to_string();
+        std::env::remove_var("ADMIN_TOKENS");
+
+        assert!(help.contains("ADMIN_TOKENS"));
+        assert!(!help.contains("help-must-not-print-this-token"));
+    }
 }

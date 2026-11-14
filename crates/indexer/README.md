@@ -14,6 +14,12 @@ The Core indexer must decode every transaction in a checkpoint before it can fil
 
 Recovery requires rebuilding and redeploying the indexer, then resuming from its existing watermarks. Do not skip the failing checkpoint or advance watermarks manually. Confirm `order_update` and `order_fill` checkpoint timestamps catch up and compare recent on-chain orders with the Core API; a Ready pod alone does not establish ingestion health. The shared workspace dependency update also affects the server, so validate both crates before release.
 
+## Testnet margin v17 events
+
+The `ConditionalOrderPartiallyExecuted` event was introduced by Testnet margin v17 at checkpoint `400627255` (upgrade transaction `8XZho1pj6MFiBme81AKnfXAiWoreadksveDQoEaezbEt`, October 29, 2026). Its on-chain type origin is `0x0ad965f35189c7eca57d4718c8f5bf1b7f9f7eb4ced6d5b7aa6496a16d71e8d2`, so the indexer must recognize that address as well as older margin package addresses.
+
+That checkpoint is an inclusive starting boundary for the `conditional_order_partially_executed` pipeline only. `--first-checkpoint` applies only when a pipeline has no persisted watermark; it cannot override an existing zero watermark. Recover existing progress through a coordinated operation, and do not use this boundary to bootstrap unrelated pipelines whose history starts earlier. Verify actual event rows as well as watermark advancement, because an unrecognized event address can otherwise be silently filtered out.
+
 ## Getting Started
 
 ### Prerequisites

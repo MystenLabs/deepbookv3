@@ -50,6 +50,7 @@ use deepbook_indexer::handlers::conditional_order_added_handler::ConditionalOrde
 use deepbook_indexer::handlers::conditional_order_cancelled_handler::ConditionalOrderCancelledHandler;
 use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
 use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
+use deepbook_indexer::handlers::conditional_order_partially_executed_handler::ConditionalOrderPartiallyExecutedHandler;
 
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
@@ -494,6 +495,19 @@ async fn conditional_order_insufficient_funds_test() -> Result<(), anyhow::Error
         "conditional_order_insufficient_funds",
         handler,
         ["conditional_order_insufficient_funds"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // No mainnet transactions yet - ConditionalOrderPartiallyExecuted ships with margin v8
+async fn conditional_order_partially_executed_test() -> Result<(), anyhow::Error> {
+    let handler = ConditionalOrderPartiallyExecutedHandler::new(DeepbookEnv::Mainnet);
+    data_test(
+        "conditional_order_partially_executed",
+        handler,
+        ["conditional_order_partially_executed"],
     )
     .await?;
     Ok(())

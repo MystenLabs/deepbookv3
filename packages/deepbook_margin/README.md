@@ -51,6 +51,12 @@ Conditional orders are stored on-chain and can be executed by anyone (permission
 trigger price is reached. This enables automated risk management without requiring users to
 monitor positions constantly.
 
+A triggered order that can't execute yet stays queued: for example when the order book can't
+fill it inside the allowed price band, or the manager doesn't hold enough funds. A market order
+that the book fills only in part stays queued with the unfilled quantity. A conditional limit
+order is cancelled once it is past its expiry, or if it triggers while the manager is below the
+liquidation risk ratio.
+
 ## Liquidation
 
 When a MarginManager's risk ratio exceeds the maximum threshold (position becomes

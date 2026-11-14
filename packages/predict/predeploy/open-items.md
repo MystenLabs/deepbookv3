@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-10-13. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-11-04. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -36,7 +36,7 @@ The Mainnet multisig path, which emits unsigned transactions (`--emit-unsigned`)
 
 **Severity:** Deploy gate.
 
-Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. Mainnet DeepBook v8 and Testnet DeepBook v20 consumers select the [shared DEEP reconstruction](../../../vendor/deep/README.md) with their separate existing token identities. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
+Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. Mainnet DeepBook v9 and Testnet DeepBook v21 consumers select the [shared DEEP reconstruction](../../../vendor/deep/README.md) with their separate existing token identities. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
 
 The remaining gates are:
 
@@ -73,7 +73,8 @@ passing, on-chain and off, because the series id is correct for what it names.
 
 **Action:** Before a value-bearing deployment, devInspect the created stores'
 `spot_sid()` / `forward_sid(expiry)` / `svi_sid(expiry)` and assert they equal
-the ids the subscription layer derives. Those getters are `public fun` so an
+the ids the subscription layer derives. Repeat the `svi_sid` check, together
+with `svi_model()`, after every SVI model change. Those getters are `public fun` so an
 external caller can ask the chain what it will accept; nothing asks today.
 Confirm the bound base asset against the subscription config in the same step
 and record the answer, since no code path can.
@@ -358,9 +359,11 @@ The comparison has a real duty in both lanes and is not simply removable: accept
 
 Block Scholes signs SVI parameters at 1e9 fixed point, and on the last publication before a one-minute expiry (20 s out) SSVI `a` is a few raw units and `b·sigma` about the same, so rounding the inputs alone moves total variance by several percent. Over 20,000-slice samples of the backfill, rounding to 1e9 moves the true digital at `k = ±sqrt(w_min)` by more than 0.1% relative for 39.1% of slices 20 s out (worst 4.8%), 19.2% of slices 20–60 s out, and 4.5% of slices one to five minutes out; on the tightest negative-`a` slice it moves the $1 range (66,857, 66,858] from 20.10% to 21.44% (`evidence/rp5-ssvi-backfill-2026-09-28.md`). That is outside the ratified 0.1% contract-price bound before any on-chain arithmetic runs. DBU-849 admits these slices; the former 1e-3 sigma floor rejected most of them. At default fees the per-leg minimum fee exceeds these errors, so the fee floor is what keeps them from being traded against; a zero `min_fee` on short cadences would expose them.
 
-The same scale sets a liveness edge. An SSVI slice's minimum total variance is `theta·(1 − rho²)`, and the load gate rounds `a` and floors the SVI increment at 1e9, so a slice whose `theta·(1 − rho²)` is under about 1e-9 loads with a minimum variance of zero and is rejected, aborting that market's pricer loads and the flush snapshot. At 20 s to expiry that happens below an ATM volatility of about 4% (about 5.6% if the provider truncates rather than rounds); Block Scholes' planned realised-volatility ATM level makes quiet windows the ones to watch. The 1e-5 sigma floor never binds first on SSVI slices (RP-5).
+The same scale sets a liveness edge. An SSVI slice's minimum total variance is `theta·(1 − rho²)`, and the load gate rounds `a` and floors the SVI increment at 1e9, so a slice whose `theta·(1 − rho²)` is under about 1e-9 loads with a minimum variance of zero and is rejected, aborting that market's pricer loads and the flush snapshot. At 20 s to expiry that happens below an ATM volatility of about 4% (about 5.6% if the provider truncates rather than rounds); Block Scholes' planned realised-volatility ATM level makes quiet windows the ones to watch. With the backfill's `eta ≤ 2`, this edge binds before `sigma` reaches 1e-5 (RP-5), so the 1e-7 sigma floor keeps a quiet market's final seconds valued only while `theta·(1 − rho²)` stays above it. Publishing `a` and `b` at 1e18 would move this edge, and the floor would not.
 
-**Action:** ask Block Scholes for a higher-precision SVI encoding (the store carries `u128`, so a 1e18 scale for `a` and `b` fits), or measure the mispricing against realized settlement on the final-seconds markets and disclose it in `docs/risks.md`. Until then, ask them to round rather than truncate at 1e9, to floor the ATM volatility their realised/implied blend can produce well above 4%, and to keep the staging and live SSVI feeds on the existing `SVI` series descriptor (model name and 9 decimals are part of the signed series id; a change aborts ingestion with `ESeriesIdMismatch`). Alert on `EBlockScholesMinVarianceInvalid` as well as `EBlockScholesInputsInvalid`. Rerun O-1's calibration on SSVI slices before enabling the one-minute cadence, and keep short-cadence minimum fees at or above the measured error until then.
+**In progress (DBU-1152), ships in Version 5 (decided 2026-11-04).** Propbook stores gain admin-set SVI decimals (`9` or `18`) and Predict prices `a` and `b` at 1e18 from an 18-decimal store, including queued fills through a per-market SVI cache (see [decisions](../docs/design/decisions.md)). On the 10-31 slices the 1e9 gate refuses 26.8% of Testnet SSVI slices published 10–20 s before a one-minute expiry (3.5% of Mainnet SVI) and the 18-decimal gate none of them, and half a raw unit of `a` or `b` moves those prices by up to 13 cents, against at most 0.002 cents for the `rho`, `m`, and `sigma` rounding that remains ([evidence](evidence/p33-gate-replay-2026-11-04.md)). The cache holds 64 publications and an order fills or refunds by its deadline, about 15 s after placement, so at about one publication a second an entry outlives its orders; a faster publication rate, or a model switch while a store is at 18, which poisons that second's entry, prices those orders from their 1e9 snapshots. With the change Predict measures 101,991 B with Testnet's 11 linkage entries and 102,135 B with Mainnet's 13, after shortening 57 internal function names, so anything else in the same upgrade has to fit the remaining 265 B. The item closes when a network's SVI store runs at 18 decimals with its relayer subscribed there.
+
+**Action:** after the upgrade, on each network: subscribe the Propbook relayer at the store's decimals, and make every off-chain reader (servers, indexers, SDKs, dashboards) take `svi_decimals` with each row, since one that assumes 9 reads an 18-decimal row as 1e9 times too large. Set the store to 18 right after a flush: until 18-decimal rows land for every active expiry, pricing, the flush snapshot included, aborts `EBlockScholesSVIUnavailable`. Make SVI model switches at 9 decimals. Move clients off Predict versions from before the decimals first: Sui runs one Propbook version per transaction, so such a version called alongside the new Propbook reads the 18-decimal rows and aborts `EBlockScholesInputsInvalid` (on Mainnet the Version 5 watermark retires them). Until a network switches, alert on `EBlockScholesMinVarianceInvalid` as well as `EBlockScholesInputsInvalid`, rerun O-1's calibration on SSVI slices before enabling the one-minute cadence, and keep short-cadence minimum fees at or above the measured error.
 
 ### P-34: The minimum-variance load gate rounds in both directions
 
@@ -369,14 +372,6 @@ The same scale sets a liveness edge. An SSVI slice's minimum total variance is `
 The minimum-variance increment in `deepbook_predict_math::math::raw_var_ok` computes `b·sigma·sqrt(1 − rho²)` with four floors. Flooring `rho²` rounds `1 − rho²` up, so near `|rho| = 1` the gate's increment can exceed the true minimum and admit a surface whose true minimum total variance is slightly negative (for example, in raw units, `b = 79_695_456_439`, `sigma = 9_025_768_115`, `rho = 995_630_907`, `a = −67_166_622_671`: the gate's increment is 67_166_622_672, one unit above `|a|`, while the true minimum is about −3.4e-6); the per-strike `ENonPositiveVariance` backstop then aborts at the vertex strike. The remaining floors round down, so elsewhere the gate is stricter than true math by up to about `1 + b·(1 + sigma)` raw units: about one unit on SSVI slices, whose tightest backfill margin is exactly one unit. Removing the `|a| ≤ 100` cap (DBU-849) widens the permissive case's reachable magnitude, since `a` can now offset a larger `b·sigma`.
 
 **Action:** decide a one-sided rounding — for example `mul_up` for `rho²` and a single `u128` product `b·sigma·sqrt(1 − rho²)` compared against `|a|` at 1e27 — and pin both sides of the boundary.
-
-### P-35: One-unit rounding ripple in the far tails trips the active-book monotonicity guard
-
-**Severity:** High before one- and five-minute SSVI cadences go live, and already reachable on the current feed wherever one-to-five-minute markets are live; flush liveness. Pre-existing, independent of DBU-849.
-
-`deepbook_predict_math::math::digital` rounds `nd2` and the skew correction down separately, so in both tails, where the digital is a few raw units, the adjusted UP price can rise by one raw unit between neighbouring strikes on an arbitrage-free surface. The ripple is not rare: every one of 160 sampled SSVI slices that DBU-849 admits has one somewhere between whole-dollar strikes, and so do 8 of 20 sampled current-style slices one to five minutes out, always exactly one raw unit (`evidence/rp5-ssvi-backfill-2026-09-28.md`). On a real backfill slice (published 2026-03-19 07:06:40 for the 07:15 expiry: `a = 2218`, `b = 926_157`, `rho = −28_390_040`, `m = 68_038`, `sigma = 2_395_589` raw, forward 70_464.04) the contract returns UP(72,670) = 4 and UP(72,680) = 5. `strike_payout_tree` requires active-book UP prices to be non-increasing with no tolerance, so two active boundaries straddling such a ripple abort that market's valuation with `ENonMonotonePrice` and stall the pool-wide flush. RP-15 attributes such inversions only to a provider breaking its butterfly-free guarantee; this one needs no provider fault. It is also reachable on purpose: a ladder of minimum-size mints whose boundaries sit in the tails places active boundaries across the ripple region as expiry approaches and the tails move in, so a trader can make later valuation snapshots of that market abort. The mainnet entry band (5% to 95% since 2026-09-28) does not prevent it: a ladder entered at 5% or more reaches the ripple region as the tails move in. Before DBU-849 the same short-dated snapshots aborted earlier, at pricer load, on the sigma floor.
-
-**Action:** decide the tolerance — for example accept a rise of up to two raw units against the running minimum and net with `min(price, previous)`, understating NAV by at most `2e-9` per unit of quantity — record it against RP-15, and land it before short SSVI cadences go live. Pin it with a walk over the two strikes above, and over the one-minute SSVI slice published 20 s before expiry with `a = 63`, `b = 185_973`, `rho = −2_190_270`, `m = 739`, `sigma = 337_252` raw at forward 66_415.25, where UP(66,811) = 9 and UP(66,812) = 10.
 
 ### P-36: Predict's SVI roll-down does not follow SSVI's time scaling
 
@@ -465,6 +460,14 @@ Coupled exposures:
   fill against LPs. The order fee is returned, so it moves no value, but it is
   a trust surface no register records. Either limit `admin_refund` to Pending
   orders or record the decision.
+- The same `RegistryAdminCap` sets each Block Scholes SVI store's provider
+  model (`registry::set_block_scholes_svi_model`): one call switches the SVI
+  surface every market on that underlying prices from, or, with a model the
+  provider does not publish for some expiry, halts live pricing, live exits,
+  and the pool flush for the whole underlying. New queued admissions abort
+  until the new model's observations land, but orders already queued keep the
+  volatility snapshot their receipt captured at admission, so their commits
+  and fills still price from the previous surface.
 
 **Action:** Before a value-bearing deploy, choose root-cap custody and recovery:
 multisig custody plus a rotation/replacement mechanism for each non-rotatable
@@ -527,6 +530,10 @@ correctness today.
   `pricing::chk_oracles`, and the duplicated
   `block_scholes_base_asset` field whose two copies agree only by construction
   and can never be checked against each other on-chain.
+- An SVI model change (DBU-906) rotates the SVI identity space the same way
+  for one underlying: the previous model's rows go dead to every reader linked
+  to Propbook v2 or later, and a missing series under the new model fails
+  closed exactly like a stopped feed.
 - Every series id is scoped to the verifier package id
   (`type_name::original_id<PackageMarker>()`), so repointing Propbook at a new
   `bs_oracle` publication rotates the entire identity space at once: stored rows

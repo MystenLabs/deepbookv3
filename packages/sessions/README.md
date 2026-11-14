@@ -18,7 +18,7 @@ Every trading wrapper requires both of these conditions:
 - The transaction sender has a stored session grant for the supplied Account.
 - The current clock timestamp is strictly less than the stored expiration.
 
-At the exact expiration timestamp, the session is no longer authorized.
+At the exact expiration timestamp, the session is no longer authorized. Spot order placement also requires the pool to be on the spot pool allowlist, described under [DeepBook spot wrappers](#deepbook-spot-wrappers).
 
 ## Session lifecycle
 
@@ -60,6 +60,8 @@ Each package upgrade must increment `current_version!()`. After clients have mov
 
 Advancing the watermark retires authorization and trading entrypoints in older package versions. Account-level deauthorization of `SessionsApp` remains the lineage-wide emergency stop because it prevents every version of the app from generating Account authorization.
 
+The `SessionsAdminCap` holder also maintains the spot pool allowlist. Package version 4 is the first to check it. Fill it before clients move to version 4, because a version 4 session spot order on a pool not on the list aborts. It applies to every session spot order once the watermark reaches 4.
+
 ## Predict wrappers
 
 An active session may call these wrappers, which place delayed-execution orders in a market's queue in the order-flow companion, `deepbook_predict_orders`:
@@ -68,6 +70,7 @@ An active session may call these wrappers, which place delayed-execution orders 
 - `enqueue_exact_amount`
 - `enqueue_exact_cost`
 - `enqueue_redeem_open`
+- the `_with_builder` version of each, for an order that names a Predict builder code and a fee per contract
 
 Each calls the companion's `queue` function of the same name and returns the new record ID. Besides the market, the Account, and `ProtocolConfig`, each takes the market's `MarketQueue`, the companion's `OrderDesk`, Propbook's oracle registry, and the canonical Pyth and Block Scholes objects that Predict validates when it snapshots the order's pricing inputs. `enqueue_redeem_open` sells an Open record, a filled order that stays in its market's queue, by its record ID. Once placed, an order is committed, filled or refunded, and paid at settlement by calls that need no session or Account authority. See [delayed execution](../predict/docs/concepts/delayed-execution.md).
 
@@ -79,11 +82,36 @@ An active session may also call these wrappers:
 - `redeem_live`
 - `redeem_settled`
 
-`redeem_settled` pays a settled position held in the Account. The immediate `mint_exact_*` and `redeem_live` wrappers always abort through Predict, which retires those functions from package version 4. They keep their signatures so the upgrade stays compatible.
+The immediate `mint_exact_*` and `redeem_live` wrappers always abort through Predict, which retires those functions from package version 4. Predict package version 5 retires `redeem_settled` the same way, because settlement pays a queued fill's Open record and no fill enters the Account. The `redeem_settled` wrapper aborts once Sessions links that version. They keep their signatures so the upgrade stays compatible.
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict or companion function. All market parameters remain caller-selected and are validated by the companion and Predict.
 
-The queued wrappers were added by the Sessions upgrade that sets `current_version!()` to 3. That upgrade links Predict package version 4 and the companion, so it publishes after both. Sessions runs the Predict and companion versions it linked when it was published, so before Predict's version watermark retires the version it links, Sessions must be relinked to the new Predict. An unrelinked Sessions package's queued wrappers abort once Predict's watermark advances, while placing orders directly through the companion keeps working.
+The queued wrappers were added by the Sessions upgrade that sets `current_version!()` to 3. That upgrade links Predict package version 4 and the companion, so it publishes after both. Sessions runs the Predict and companion versions it linked when it was published, so before Predict's version watermark retires the version it links, Sessions must be relinked to the new Predict. An unrelinked Sessions package's queued wrappers abort once Predict's watermark advances, while placing orders directly through the companion keeps working. `current_version!()` is now 4, the version the next Mainnet upgrade publishes, relinked to Predict 5 and Propbook 2.
+
+## Builder approvals
+
+A builder fee goes to the code the trade names, at the fee the trade names, and on a session-key trade the session holder builds the trade. So the Account owner approves the builder for each session:
+
+```move
+public fun approve_session_builder(
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    session: address,
+    code_id: ID,
+    max_fee_per_contract: u64,
+    ctx: &mut TxContext,
+)
+
+public fun session_builder(wrapper: &AccountWrapper, session: address): Option<SessionBuilder>
+```
+
+`approve_session_builder` takes owner authorization from the transaction sender, like `authorize_session`, opens only once the `SessionsConfig` watermark reaches version 4 (`EBuilderApprovalsNotEnabled`), and works only for a session already authorized (`ESessionNotAuthorized`), so an app calls it right after `authorize_session` in the same transaction. It stores one builder code ID and a maximum fee per contract (in 1e9 scaling of a contract's $1 payout) for that session, and a later call replaces them. The approvals live in their own Account data slot, because `SessionsData` was published without them.
+
+The four `_with_builder` wrappers run the session checks, then require the session to have an approval, the trade's code to be the approved code (`EBuilderNotApproved`), and the trade's fee to be at or below the approved maximum (`EBuilderFeeAboveApproved`). Predict then caps the fee at its own `builder_fee_cap`. A session trade that names no builder uses the plain wrappers and pays no builder fee.
+
+`revoke_session` also removes the session's approval, so a session authorized again needs a new approval. Re-authorizing a session that was not revoked keeps its approval, including one that expired, because expiry does not remove a session. A new grant for an address that is not currently authorized clears any approval left on it, because the pre-upgrade `revoke_session` stays callable and removes a session without its approval. The pre-upgrade `authorize_session` would not clear it, which is why approvals wait for the watermark to retire that version. `session_builder` returns a session's approval, or `none`, for SDK and dev-inspect reads. It can still return an approval the pre-upgrade `revoke_session` left on a removed session. No trade can use that approval, and a new grant of the address or another `revoke_session` clears it. `approve_session_builder` emits `SessionBuilderApproved`, and every removal of an approval, by `revoke_session` or by a new grant, emits `SessionBuilderCleared`.
+
+An approval caps the fee per contract, not the number of trades. A session holder that is also the approved builder can trade the account repeatedly and collect the fee on each trade, so owners should approve only a builder they trust, at the lowest fee they accept. This is the trust a session grant already carries.
 
 ## DeepBook spot wrappers
 
@@ -97,7 +125,31 @@ An active session may call these Account-backed DeepBook spot wrappers:
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
 
-The session can therefore submit adverse Predict orders and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed. A queued Predict order placed through a session still fills or refunds after the session ends.
+`place_limit_order` and `place_market_order` also require the pool to be on the spot pool allowlist, and abort `session_config::EPoolNotAllowed` otherwise. `cancel_live_order`, `cancel_live_orders` and `withdraw_settled_amounts` work on any pool, so a session can still clear its orders on a pool that was removed from the list.
+
+The session can therefore submit adverse Predict orders and spot trades on allowed pools, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed. A queued Predict order placed through a session still fills or refunds after the session ends.
+
+### Spot pool allowlist
+
+```move
+public fun allowed_pools(config: &SessionsConfig): vector<ID>
+
+public fun admin_allow_pool(
+    config: &mut SessionsConfig,
+    admin_cap: &SessionsAdminCap,
+    pool_id: ID,
+)
+
+public fun admin_disallow_pool(
+    config: &mut SessionsConfig,
+    admin_cap: &SessionsAdminCap,
+    pool_id: ID,
+)
+```
+
+The allowlist confines session spot orders to the pools the `SessionsAdminCap` holder names, which should be the liquid pools the app offers.
+
+`admin_allow_pool` adds a DeepBook pool ID and aborts if it is already listed. `admin_disallow_pool` removes one and aborts `EPoolNotAllowed` if it is not listed, so a mistyped ID cannot pass for a removal. Both require the executing package version to be at or above the watermark. `allowed_pools` returns the list in the order the pools were added, for SDK and dev-inspect reads. The list lives in a dynamic field on `SessionsConfig`, because the config object was published without one. It is empty until the first `admin_allow_pool`, and an empty list allows no pool.
 
 ## Events
 
@@ -121,13 +173,25 @@ public struct SessionRevoked has copy, drop {
 }
 ```
 
+`SessionPoolAllowed` and `SessionPoolDisallowed` are emitted by `admin_allow_pool` and `admin_disallow_pool`:
+
+```move
+public struct SessionPoolAllowed has copy, drop {
+    pool_id: ID,
+}
+
+public struct SessionPoolDisallowed has copy, drop {
+    pool_id: ID,
+}
+```
+
 Expiration emits no event, and a no-op revocation emits no event. Predict and DeepBook core continue to emit their underlying trading events; the wrappers do not duplicate them.
 
 ## Integration requirements
 
-Before Sessions can be used, the package must be published against the intended Account, Predict, `deepbook_predict_orders`, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
+Before Sessions can be used, the package must be published against the intended Account, Predict, `deepbook_predict_orders`, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Each pool the app offers for session spot trading must be on the spot pool allowlist. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
 
-Custody of `SessionsAdminCap` and any package upgrade capability is part of the trust boundary: the admin cap can retire older package versions, while an upgrade can change the behavior of an authorized Account app.
+Custody of `SessionsAdminCap` and any package upgrade capability is part of the trust boundary: the admin cap can retire older package versions and chooses the pools session spot orders can reach, while an upgrade can change the behavior of an authorized Account app.
 
 ## Build and test
 

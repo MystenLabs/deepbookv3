@@ -13,9 +13,17 @@ on:
         type: choice
         options:
           - Upgrade Protocol
+          - Upgrade Protocol and Enable Version
           - Upgrade Margin Protocol
+          - Upgrade Margin Protocol and Enable Version
           - Upgrade Vault Protocol
+          - Upgrade Vault Protocol and Set Traders
+          - Upgrade Account Protocol
           - Upgrade Predict Protocol
+          - Upgrade Propbook Protocol
+          - Upgrade Predict Math Protocol
+          - Upgrade Propbook and Predict Math Protocols
+          - Upgrade Predict Orders Protocol
           - Upgrade Sessions Protocol
       sui_tools_image:
         description: "image reference of sui_tools"
@@ -45,21 +53,24 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install Homebrew
+      # Install the Mainnet release of the Sui CLI. Homebrew's `sui` formula is built from the
+      # testnet tag, which can trail Mainnet's protocol version: testnet-v1.83.1 supports up to
+      # protocol 140, so it refuses to build any transaction once Mainnet runs 141. The checksum
+      # is the release asset's published sha256. To move to a newer release, update both values.
+      - name: Install Sui (Mainnet release)
+        env:
+          SUI_RELEASE: mainnet-v1.83.1
+          SUI_SHA256: 0796e7d1d5a5fda20fb0d27f9d214830cd381a0315dd96139a58e76ab5d1ab8a
         run: |
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
-
-      # The macOS runner image ships with aws/tap already tapped. Homebrew's preinstall trust
-      # check warns about every untrusted third-party tap, and that warning surfaces as a job
-      # annotation. This job installs only `sui` from homebrew-core, so recording trust for
-      # the image's own tap on a throwaway runner clears the warning without trusting a tap
-      # we install anything from.
-      - name: Trust the runner image's preinstalled taps
-        run: brew trust aws/tap
-
-      - name: Install Sui using Homebrew
-        run: brew install sui
+          set -euo pipefail
+          archive="sui-${SUI_RELEASE}-macos-arm64.tgz"
+          dest="$RUNNER_TEMP/sui"
+          mkdir -p "$dest"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/MystenLabs/sui/releases/download/${SUI_RELEASE}/${archive}"
+          echo "${SUI_SHA256}  $RUNNER_TEMP/$archive" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$dest" ./sui
+          echo "$dest" >> "$GITHUB_PATH"
+          "$dest/sui" --version
 
       - name: YAML Setup
         run: |
@@ -93,6 +104,20 @@ jobs:
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/mainPackageUpgrade.ts
 
+      # Upgrades core and, in the same transaction, enables the new CURRENT_VERSION
+      # on the registry and every pool. The UpgradeCap, the core AdminCap and the gas
+      # coin must share an owner.
+      - name: Upgrade Protocol and Enable Version
+        if: ${{ inputs.transaction_type == 'Upgrade Protocol and Enable Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/mainPackageUpgradeEnableVersion.ts
+
       - name: Upgrade Margin Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Margin Protocol' }}
         env:
@@ -103,6 +128,20 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgrade.ts
+
+      # Upgrades margin and, in the same transaction, enables the new MARGIN_VERSION
+      # on the MarginRegistry. The margin UpgradeCap, the MarginAdminCap and the gas
+      # coin must share an owner, and the build must link the newest core package.
+      - name: Upgrade Margin Protocol and Enable Version
+        if: ${{ inputs.transaction_type == 'Upgrade Margin Protocol and Enable Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgradeEnableVersion.ts
 
       - name: Upgrade Vault Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Vault Protocol' }}
@@ -115,6 +154,37 @@ jobs:
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgrade.ts
 
+      # Upgrades margin_liquidation and, in the same transaction, sets the LiquidationVault's
+      # authorized traders to liquidationVaultTraders in scripts/config/constants.ts. The
+      # liquidation UpgradeCap, the LiquidationAdminCap and the gas coin must share an owner,
+      # and the build must link the newest core and margin packages. That check only sees
+      # packages already on chain, so build this after any pending core or margin upgrade
+      # has executed and its Published.toml record has merged.
+      - name: Upgrade Vault Protocol and Set Traders
+        if: ${{ inputs.transaction_type == 'Upgrade Vault Protocol and Set Traders' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgradeSetTraders.ts
+
+      # Upgrade only. account links only the Sui framework and has no version gate. Predict,
+      # predict_orders and sessions link the account package its Published.toml records, so
+      # commit that record before building them.
+      - name: Upgrade Account Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Account Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/accountPackageUpgrade.ts
+
       - name: Upgrade Predict Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Predict Protocol' }}
         env:
@@ -125,6 +195,60 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/predictPackageUpgrade.ts
+
+      # Upgrade only: no version enable or watermark change. Predict, predict_orders and
+      # sessions link propbook, so commit its publication record before building them.
+      - name: Upgrade Propbook Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Propbook Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/propbookPackageUpgrade.ts
+
+      # Upgrade only. Predict and predict_orders link predict_math, so commit its
+      # publication record before building them.
+      - name: Upgrade Predict Math Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Predict Math Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/predictMathPackageUpgrade.ts
+
+      # Upgrades propbook and predict_math in one transaction. Neither links the other, so
+      # neither build needs the other's record. Both UpgradeCaps and the gas coin must share
+      # an owner. Predict, predict_orders and sessions link both, so commit both publication
+      # records before building them.
+      - name: Upgrade Propbook and Predict Math Protocols
+        if: ${{ inputs.transaction_type == 'Upgrade Propbook and Predict Math Protocols' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/propbookPredictMathPackageUpgrade.ts
+
+      # Upgrade only. predict_orders links the predict, predict_math and propbook packages
+      # their Published.toml files record, so commit those records before building this one.
+      - name: Upgrade Predict Orders Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Predict Orders Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/predictOrdersPackageUpgrade.ts
 
       # Sessions links against the Predict package that packages/predict/Published.toml
       # records, so upgrade Predict and commit that record before building this one.

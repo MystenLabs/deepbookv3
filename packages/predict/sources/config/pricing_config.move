@@ -30,19 +30,19 @@ public struct PricingConfig has store {
 
 // === Public-Package Functions ===
 
-public(package) fun pyth_forward(config: &PricingConfig): bool {
+public(package) fun pyth_fwd(config: &PricingConfig): bool {
     config.use_pyth_spot_for_forward
 }
 
-public(package) fun pyth_age_ms(config: &PricingConfig): u64 {
+public(package) fun pyth_age(config: &PricingConfig): u64 {
     config.pyth_spot_freshness_ms
 }
 
-public(package) fun bs_age_ms(config: &PricingConfig): u64 {
+public(package) fun bs_age(config: &PricingConfig): u64 {
     config.block_scholes_price_freshness_ms
 }
 
-public(package) fun svi_age_ms(config: &PricingConfig): u64 {
+public(package) fun svi_age(config: &PricingConfig): u64 {
     config.block_scholes_svi_freshness_ms
 }
 
@@ -60,7 +60,7 @@ public(package) fun set_use_pyth_spot_for_forward(config: &mut PricingConfig, en
 }
 
 public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, value: u64) {
-    config_constants::chk_pyth_age(value);
+    config_constants::chk_pyage(value);
     config.pyth_spot_freshness_ms = value;
 }
 
@@ -70,6 +70,6 @@ public(package) fun set_block_scholes_price_freshness_ms(config: &mut PricingCon
 }
 
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfig, value: u64) {
-    config_constants::chk_svi_age(value);
+    config_constants::chk_svi(value);
     config.block_scholes_svi_freshness_ms = value;
 }

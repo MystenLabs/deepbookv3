@@ -7,7 +7,7 @@
 /// Registry operations are not version-gated because each feed owns its write version and migration path.
 module propbook::registry;
 
-use propbook::{block_scholes_store, pyth_feed::{Self, PythFeed}};
+use propbook::{block_scholes_store::{Self, BlockScholesSVIStore}, pyth_feed::{Self, PythFeed}};
 use std::string::String;
 use sui::{event, table::{Self, Table}};
 
@@ -36,7 +36,8 @@ public(package) macro fun value_kind_spot(): u8 {
     0
 }
 
-/// Root capability authorized to choose and replace canonical oracle bindings.
+/// Root capability authorized to choose and replace canonical oracle bindings and to choose the
+/// provider model each Block Scholes SVI store accepts and serves.
 /// The package exposes no on-chain revocation or rotation mechanism for it.
 public struct RegistryAdminCap has key, store {
     id: UID,
@@ -329,6 +330,51 @@ public fun replace_pyth_binding_for_underlying(
         pyth_binding_key(propbook_underlying_id),
     );
     feed.assign_underlying(propbook_underlying_id);
+}
+
+/// Admin-set the Block Scholes model `svi_store` derives its accepted and served SVI series ids from.
+///
+/// The provider can publish more than one SVI surface for the same asset and expiry, each under its
+/// own model name, and the series id hashes that name. Setting the model therefore chooses which
+/// surface every consumer of this store prices from, for every expiry at once. A store whose model
+/// was never set uses `"SVI"`, and the store must be at the running package version.
+/// After a change, a batch signed under any other model aborts as a foreign series, so a relayer
+/// must resubscribe under the new model. A model never used on this store reads `none` until its
+/// first signed observation lands; a model set back serves its last stored rows again, which
+/// consumers accept for as long as those rows are within their freshness windows. Consumers linked
+/// to package version 1 keep reading the `"SVI"` rows under that version's hardcoded model until
+/// those rows age out. Confirm the provider publishes the model for every expiry the store serves
+/// before setting it.
+public fun set_block_scholes_svi_model(
+    svi_store: &mut BlockScholesSVIStore,
+    _admin_cap: &RegistryAdminCap,
+    svi_model: String,
+) {
+    svi_store.set_svi_model(svi_model);
+}
+
+/// Admin-set the decimals `svi_store` derives its accepted and served SVI series ids from, `9` or
+/// `18`.
+///
+/// The provider signs SVI parameters at the decimals a relayer subscribes with, and the series id
+/// hashes them, so a store accepts and serves one scale at a time, for every expiry at once. A store
+/// whose decimals were never set uses `9`, and the store must be at the running package version.
+/// After a change, a batch signed at any other decimals aborts as a foreign series, so a relayer
+/// must resubscribe at the new decimals. Decimals never used on this store read `none` until their
+/// first signed observation lands; decimals set back serve their last stored rows again, which
+/// consumers accept for as long as those rows are within their freshness windows. Stored rows carry
+/// no scale, so a consumer must read `svi_decimals` with each row: one that assumes `9` would read an
+/// `18`-decimal row as a value `1e9` times too large. A consumer linked to a package version before
+/// the decimals existed reads through that version, and the `9`-decimal rows until they age out,
+/// except in a transaction that also calls this version or later, directly or through a package
+/// linked to it: Sui then runs one Propbook version for the whole transaction, and the consumer reads
+/// the current decimals' rows.
+public fun set_block_scholes_svi_decimals(
+    svi_store: &mut BlockScholesSVIStore,
+    _admin_cap: &RegistryAdminCap,
+    svi_decimals: u8,
+) {
+    svi_store.set_svi_decimals(svi_decimals);
 }
 
 // === Public-Package Functions ===

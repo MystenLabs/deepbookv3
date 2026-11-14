@@ -70,7 +70,7 @@ Each scenario row maps to these contract calls:
 
 The executor fails the run if a queued order is not committed at its own τ, or if resolve reaches it at or past its deadline, because the replay prices every committed order at τ. It also fails on `OpenRecordPayoutSkipped`, a payout the market could not make, which the scenario never creates.
 
-A queued fill never enters the account, so the scenario has no settled redemption: `redeem_settled` pays only positions that immediate mints left in accounts before the cutover, and a fresh publish has none.
+A queued fill never enters the account, so the scenario has no settled redemption: `redeem_settled` serves only positions that immediate mints left in accounts before the cutover, a fresh publish has none, and package version 5 retires it.
 
 The Block Scholes local fixture derives series identities through the published upstream `bs_sid` package, signs the canonical BCS batch, binds it to the published verifier package, normalizes the recoverable signature, calls the actual `bs_oracle` verifier, and passes the gated batch into Propbook ingest in the same transaction. It tests the trust boundary without claiming to consume the provider’s official stream.
 

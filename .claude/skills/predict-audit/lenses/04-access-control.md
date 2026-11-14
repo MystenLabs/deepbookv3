@@ -59,7 +59,7 @@ loss/compromise/leak is recoverable.
   independent version schemes coexist: predict's `ProtocolConfig.version_watermark`/`current_version!()`,
   propbook's PER-FEED `version`, and `account` has NO version gate at all. Nothing reconciles them — predict
   never reads `feed.version()`. Each propbook feed exposes a **`public` permissionless `migrate(feed)`** gated
-  only by `current_version!() > feed.version`, and feed reads abort on version mismatch. Audit: can a
+  only by `current_version!() > feed.version`; writes require an exact version match, while reads are ungated, so a consumer linked to an older propbook keeps reading through that version's code (for SVI, under that version's model derivation). Audit: can a
   half-migrated feed fleet (some feeds at the old version) silently abort predict's priced reads →
   market-wide liveness brick? Is forward-only `migrate` (no field re-init / struct-layout-drift handling) safe
   across a real upgrade? Can predict-frozen + propbook-feed-newer + account-ungated mis-authorize or strand custody?
