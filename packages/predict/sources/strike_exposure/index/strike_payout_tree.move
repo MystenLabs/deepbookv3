@@ -193,6 +193,7 @@ public(package) fun has_nodes(tree: &StrikePayoutTree, lower_tick: u64, higher_t
 /// `base + start_total - end_total`. `tree.base` is the `P(-inf) = 1`
 /// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
 /// are never stored (`P = 0`).
+#[test_only]
 public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
     let mut price_envelope = option::none();
     let (start_total, end_total) = walk_tree(

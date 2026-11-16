@@ -5,7 +5,7 @@
 module deepbook_predict::config_events;
 
 use deepbook_predict::{pricing_config::PricingConfig, strike_exposure_config::StrikeExposureConfig};
-use std::type_name::TypeName;
+use std::{string::String, type_name::TypeName};
 use sui::event;
 
 /// Emitted when the strike-exposure policy template for future markets changes.
@@ -34,6 +34,18 @@ public struct PricingConfigUpdated has copy, drop, store {
     pyth_spot_freshness_ms: u64,
     block_scholes_price_freshness_ms: u64,
     block_scholes_svi_freshness_ms: u64,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when an underlying's oracle binding is set: the complete binding
+/// after the change.
+public struct OracleBindingUpdated has copy, drop, store {
+    propbook_underlying_id: u32,
+    lazer_feed_id: u32,
+    lazer_channel: u8,
+    block_scholes_base_asset: String,
+    svi_model: String,
+    svi_decimals: u8,
     onchain_timestamp_ms: u64,
 }
 
@@ -264,6 +276,26 @@ public(package) fun sub_upd(fee_incentive_subsidy_rate: u64, onchain_timestamp_m
 
 public(package) fun bc_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
     event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
+}
+
+public(package) fun bind_upd(
+    propbook_underlying_id: u32,
+    lazer_feed_id: u32,
+    lazer_channel: u8,
+    block_scholes_base_asset: String,
+    svi_model: String,
+    svi_decimals: u8,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(OracleBindingUpdated {
+        propbook_underlying_id,
+        lazer_feed_id,
+        lazer_channel,
+        block_scholes_base_asset,
+        svi_model,
+        svi_decimals,
+        onchain_timestamp_ms,
+    });
 }
 
 public(package) fun bands_upd(bands: vector<u64>, onchain_timestamp_ms: u64) {

@@ -44,6 +44,7 @@ public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64
 
 /// Return cash net of the inventory-impact escrow, floored at zero. Pool NAV
 /// values this amount separately from payout liability.
+#[test_only]
 public(package) fun free_cash(cash: &ExpiryCash): u64 {
     cash.balance().saturating_sub(cash.inventory_impact_reserve)
 }

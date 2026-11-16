@@ -85,8 +85,8 @@ deps = { account = "account", bs_oracle = "bs_oracle", deepbook_predict_math = "
 [pinned.mainnet.deepbook_predict_math]
 source = { local = "../predict_math" }
 use_environment = "mainnet"
-manifest_digest = "E83DA2F097FB22A53E0444C1BB6FC36396EED06AC70DC4071F1813F4E33C9653"
-deps = { fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui" }
+manifest_digest = "F430A12D701EEB3CE4D1E8F82FFE941F5E5BD418E8AF5520A6D733D85A11AB26"
+deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.mainnet.fixed_math]
 source = { local = "../fixed_math" }
@@ -175,8 +175,8 @@ deps = { account = "account", bs_oracle = "bs_oracle", deepbook_predict_math = "
 [pinned.testnet.deepbook_predict_math]
 source = { local = "../predict_math" }
 use_environment = "testnet"
-manifest_digest = "7E1D200DB8D2A0338AAADB0AC8CE846BEBFA7D4E7B755563A4736EFFEE4A5926"
-deps = { fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui" }
+manifest_digest = "949C5E808071382BCAA3B74A9348FA5B13EC71CC2D97D36243E07267C3A67F43"
+deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.fixed_math]
 source = { local = "../fixed_math" }

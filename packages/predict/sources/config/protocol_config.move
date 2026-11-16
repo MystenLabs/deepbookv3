@@ -12,7 +12,8 @@
 /// state (flag + flush ordinal, held across the transactions a flush spans;
 /// keeper/config flows gate on it, trading flows read it only to discard stale
 /// stamps lazily). Flow modules decide which gates apply before they mutate expiry,
-/// oracle, pool, or account state.
+/// oracle, pool, or account state. It also holds each underlying's oracle binding:
+/// the signed data that may price, settle, and value its markets.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -24,7 +25,8 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
-use std::type_name;
+use deepbook_predict_math::{block_scholes::{BsSpot, BsVol}, lazer_price::{Self, LazerPrice}};
+use std::{string::String, type_name};
 use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
 
 use fun df::add as UID.add;
@@ -50,6 +52,8 @@ const EEwmaRetired: u64 = 14;
 const EOrderFlowNotAllowed: u64 = 15;
 const EBuilderFeeCutoverNotReached: u64 = 16;
 const ESettledRedeemRetired: u64 = 17;
+const EOracleBindingMissing: u64 = 18;
+const EInvalidOracleBinding: u64 = 19;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -177,6 +181,28 @@ public struct BuilderFeeCapKey() has copy, drop, store;
 /// `config_constants::chk_bands`). An absent field charges every price 1x.
 public struct FeeBandsKey() has copy, drop, store;
 
+/// Dynamic-field key on `ProtocolConfig` for one Propbook underlying's
+/// `OracleBinding`. Added after deploy, so it lives off the struct layout. An
+/// underlying with no field has no binding: its markets cannot be created, and
+/// nothing can commit, settle, or value them.
+public struct OracleBindingKey(u32) has copy, drop, store;
+
+/// The signed data that prices, settles, and values one underlying's markets.
+/// Set by `set_oracle_binding`. Predict owns it, so no Propbook object is read.
+public struct OracleBinding has copy, drop, store {
+    /// Pyth Lazer feed of the underlying's spot.
+    lazer_feed_id: u32,
+    /// Lazer channel settlement, reference ticks, and the flush read:
+    /// `lazer_price::channel_fixed_rate_50ms!()` or `channel_fixed_rate_200ms!()`.
+    /// Orders keep the channel they were placed on.
+    lazer_channel: u8,
+    /// Block Scholes base asset of the spot, forward, and SVI series.
+    block_scholes_base_asset: String,
+    /// Block Scholes SVI model and the decimals it is signed at, `9` or `18`.
+    svi_model: String,
+    svi_decimals: u8,
+}
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -273,11 +299,80 @@ public fun is_order_flow<W: drop>(config: &ProtocolConfig): bool {
     config.id.exists_(OrderFlowKey<W>())
 }
 
+/// Return `propbook_underlying_id`'s oracle binding, or `none` when it has none.
+/// For SDK, keeper, and devInspect reads: keepers decode the signed data they
+/// pass to commit, settlement, the reference tick, and the flush under it.
+public fun oracle_binding(
+    config: &ProtocolConfig,
+    propbook_underlying_id: u32,
+): Option<OracleBinding> {
+    let key = OracleBindingKey(propbook_underlying_id);
+    if (!config.id.exists_(key)) return option::none();
+    option::some(*config.id.borrow(key))
+}
+
 /// Return the runtime version floor. For SDK, keeper, and devInspect reads: the
 /// delayed-execution cutover is reached once it is at least 4
 /// (`constants::cutover_version!()`).
 public fun version_watermark(config: &ProtocolConfig): u64 {
     config.version_watermark
+}
+
+/// Set or replace `propbook_underlying_id`'s oracle binding and emit
+/// `OracleBindingUpdated`. Aborts `EInvalidOracleBinding` unless the channel is a
+/// fixed-rate Lazer channel, the decimals are `9` or `18`, and the base asset and
+/// model are each 1 to 32 bytes. A new binding applies to every later commit,
+/// settlement, reference tick, and flush of the underlying's markets, including
+/// orders already waiting, so change it under a mint pause.
+public fun set_oracle_binding(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    propbook_underlying_id: u32,
+    lazer_feed_id: u32,
+    lazer_channel: u8,
+    block_scholes_base_asset: String,
+    svi_model: String,
+    svi_decimals: u8,
+    clock: &Clock,
+) {
+    config.chk_version();
+    assert!(
+        (
+            lazer_channel == lazer_price::channel_fixed_rate_50ms!()
+                || lazer_channel == lazer_price::channel_fixed_rate_200ms!()
+        )
+            && (svi_decimals == 9 || svi_decimals == 18)
+            && !block_scholes_base_asset.is_empty()
+            && block_scholes_base_asset.length() <= 32
+            && !svi_model.is_empty()
+            && svi_model.length() <= 32,
+        EInvalidOracleBinding,
+    );
+    let key = OracleBindingKey(propbook_underlying_id);
+    if (config.id.exists_(key)) {
+        let _: OracleBinding = config.id.remove(key);
+    };
+    config
+        .id
+        .add(
+            key,
+            OracleBinding {
+                lazer_feed_id,
+                lazer_channel,
+                block_scholes_base_asset,
+                svi_model,
+                svi_decimals,
+            },
+        );
+    config_events::bind_upd(
+        propbook_underlying_id,
+        lazer_feed_id,
+        lazer_channel,
+        block_scholes_base_asset,
+        svi_model,
+        svi_decimals,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -850,6 +945,7 @@ public fun set_plp_withdraw_fee_rate(
 
 // === Public-Package Functions ===
 
+#[test_only]
 public(package) fun pr_cfg(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
@@ -919,6 +1015,42 @@ public(package) fun bands_to(config: &ProtocolConfig, id: &mut UID) {
         let bands: vector<u64> = *config.id.borrow(FeeBandsKey());
         id.add(FeeBandsKey(), bands);
     }
+}
+
+/// `propbook_underlying_id`'s oracle binding. Aborts `EOracleBindingMissing`
+/// when it has none.
+public(package) fun binding(config: &ProtocolConfig, propbook_underlying_id: u32): OracleBinding {
+    let binding = config.oracle_binding(propbook_underlying_id);
+    assert!(binding.is_some(), EOracleBindingMissing);
+    binding.destroy_some()
+}
+
+public(package) fun lazer_feed(binding: &OracleBinding): u32 {
+    binding.lazer_feed_id
+}
+
+/// Whether `price` is the binding's exact observation at `source_ms`: its feed
+/// and channel, an envelope at exactly `source_ms`, and a generation time at most
+/// `constants::max_settlement_carry_ms!()` before it.
+public(package) fun px_ok(binding: &OracleBinding, price: &LazerPrice, source_ms: u64): bool {
+    let envelope_us = price.envelope_us();
+    price.feed_id() == binding.lazer_feed_id
+        && price.channel() == binding.lazer_channel
+        && envelope_us == source_ms * 1000
+        && envelope_us - price.generation_us() <= constants::max_settlement_carry_ms!() * 1000
+}
+
+/// Whether `vol` was decoded under the binding, for a market expiring at `expiry`.
+public(package) fun vol_ok(binding: &OracleBinding, vol: &BsVol, expiry: u64): bool {
+    vol.base_asset() == binding.block_scholes_base_asset
+        && vol.svi_model() == binding.svi_model
+        && vol.svi_decimals() == binding.svi_decimals
+        && vol.expiry_ms() == expiry
+}
+
+/// Whether `spot` is the binding's Block Scholes spot stamped exactly `source_ms`.
+public(package) fun spot_ok(binding: &OracleBinding, spot: &BsSpot, source_ms: u64): bool {
+    spot.spot_base_asset() == binding.block_scholes_base_asset && spot.source_ms() == source_ms
 }
 
 #[test_only]

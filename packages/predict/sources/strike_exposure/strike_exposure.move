@@ -195,6 +195,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// beyond that rounding and can exceed it by at most the rise times that quantity
 /// plus one raw unit: liability reads high and NAV low, never the reverse beyond
 /// boundary rounding (RP-15). It is clamped at zero once, in the walk.
+#[test_only]
 public(package) fun marked_liab(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     exposure.payout.walk_linear(pricer, exposure.tick_size)
 }
@@ -228,6 +229,7 @@ public(package) fun drop_snap(exposure: &mut StrikeExposure, pins: &VecMap<u64, 
 }
 
 /// Return one live order's full-close range value without consulting book state.
+#[test_only]
 public(package) fun live_order_value(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -302,6 +304,12 @@ public(package) fun min_prob(exposure: &StrikeExposure): u64 {
 }
 
 /// Whether both finite boundaries of a mint range already exist as tree nodes.
+/// Whether `(lower_tick, higher_tick]` is a range an order can encode, with both
+/// finite boundaries on the market's admission grid or its reference tick.
+public(package) fun rng_ok(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64): bool {
+    valid_range(lower_tick, higher_tick) && exposure.is_admitted(lower_tick, higher_tick)
+}
+
 public(package) fun nodes_exist(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -930,6 +938,7 @@ fun valid_qty(quantity: u64): bool {
     quantity > 0 && quantity % lot_size == 0 && quantity / lot_size <= order::max_quantity_lots!()
 }
 
+#[test_only]
 fun order_px(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): RangePrice {
     pricer.range_price(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),

@@ -8,7 +8,7 @@ module deepbook_predict::constants;
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 5 }
+public macro fun current_version(): u64 { 6 }
 
 /// The version floor at which queued placement opens: the delayed-execution cutover, the first
 /// version that retires every package without the order flow. Fixed, so a later upgrade's own
@@ -156,6 +156,11 @@ public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
 /// Time during which exact Pyth history is the exclusive terminal settlement source.
 public(package) macro fun settlement_fallback_grace_ms(): u64 { 30_000 }
 
+/// Longest a Pyth price may be carried before the envelope that delivers it and still settle a
+/// market, set a reference tick, or mark the flush: its generation time is at most this before the
+/// envelope.
+public(package) macro fun max_settlement_carry_ms(): u64 { 2_000 }
+
 public(package) macro fun settlement_source_pyth(): u8 { 0 }
 
 public(package) macro fun settlement_source_block_scholes(): u8 { 1 }
@@ -196,6 +201,10 @@ public macro fun fill_reason_no_cash(): u8 { 8 }
 /// because the address is on USDC's deny list for the current epoch or USDC is globally paused.
 /// The fill is refused before anything moves, and the order fee is returned.
 public macro fun fill_reason_recipient_denied(): u8 { 9 }
+
+/// Fill refund reason: the Block Scholes inputs committed for the order's τ do not build a price at
+/// its tick, because they leave Predict's pricing envelope. The order fee is returned.
+public macro fun fill_reason_no_vol(): u8 { 10 }
 
 /// `OrderReceipt` stage: a mint admitted and not yet filled or released.
 public macro fun receipt_stage_mint(): u8 { 1 }

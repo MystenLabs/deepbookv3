@@ -11,7 +11,6 @@
 module deepbook_predict::market_manager;
 
 use deepbook_predict::{config_constants, constants};
-use propbook::registry::OracleRegistry;
 use sui::{clock::Clock, table::{Self, Table}};
 
 const EUnderlyingNotRegistered: u64 = 0;
@@ -22,8 +21,7 @@ const EInvalidCadence: u64 = 4;
 const ECadenceWindowExceeded: u64 = 5;
 const EInvalidDeploymentExpiry: u64 = 6;
 const EInvalidCadenceConfig: u64 = 7;
-const EPythFeedNotBoundToUnderlying: u64 = 8;
-const EBlockScholesStoresNotBoundToUnderlying: u64 = 9;
+// 8 and 9 were the Propbook binding checks `next_deploy` made before version 6.
 const ECadenceTableFull: u64 = 10;
 const EInvalidCadencePeriod: u64 = 11;
 const ECadencePeriodExists: u64 = 12;
@@ -184,7 +182,6 @@ public(package) fun cadence_configs(
 public(package) fun next_deploy(
     manager: &MarketManager,
     periods: &vector<u64>,
-    propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     cadence_id: u8,
     clock: &Clock,
@@ -209,19 +206,6 @@ public(package) fun next_deploy(
         ) {
             expiry = expiry + period_ms;
         } else {
-            assert!(
-                propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
-                EPythFeedNotBoundToUnderlying,
-            );
-            // Propbook creates both stores and their source identity atomically in one registry
-            // row, so this one check proves the complete Block Scholes binding exists.
-            assert!(
-                propbook_registry
-                    .propbook_block_scholes_store_pair_for_underlying(propbook_underlying_id)
-                    .is_some(),
-                EBlockScholesStoresNotBoundToUnderlying,
-            );
-
             return DeployableMarket { expiry, cadence }
         }
     };
