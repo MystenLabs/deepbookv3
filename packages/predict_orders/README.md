@@ -2,7 +2,7 @@
 
 `deepbook_predict_orders` is the order-flow companion of [Predict](../predict/README.md). It holds Predict's delayed-execution order flow: one queue per expiry market, each queued order's escrow, the policy, every order entry point, the queue reads, and the queue events. Predict keeps the market, pricing, fills, cash backing, and settlement, and this package drives them through Predict's order-flow primitives.
 
-From Predict package version 4, every mint and early sell is a queued order. It waits until Pyth Lazer publishes its signed price for the order's price time τ, a short delay after placement, and then fills at that price or is refunded. [Delayed execution](../predict/docs/concepts/delayed-execution.md) owns the mechanics: τ and cohorts, commit, resolve, refunds, settlement, the policy, the errors, and the events.
+From Predict package version 4, every mint and early sell is a queued order. It waits until Pyth Lazer publishes its signed price for the order's price time τ, a short delay after placement, and then fills at that price, with Block Scholes inputs signed just before τ, or is refunded. Placement reads no oracle, and every price input arrives at commit. [Delayed execution](../predict/docs/concepts/delayed-execution.md) owns the mechanics: τ and cohorts, commit, resolve, refunds, settlement, the policy, the errors, and the events.
 
 The package exists because Sui caps a package at 102,400 bytes, and Predict, which can only grow by compatible upgrade, cannot hold the queue as well. The dependency direction is one way: this package depends on Predict and on [`deepbook_predict_math`](../predict_math/README.md), and Predict never names a type of this package.
 
@@ -10,7 +10,7 @@ The package exists because Sui caps a package at 102,400 bytes, and Predict, whi
 
 | Object | Module | Holds | Created |
 | --- | --- | --- | --- |
-| `OrderDesk` | `desk` | The `DelayedExecutionPolicy` every queue runs under, and the companion's version floor | Once, by the `desk` module's `init` at publish, with the launch policy and no event. Its ID comes from the publish transaction |
+| `OrderDesk` | `desk` | The `DelayedExecutionPolicy` every queue runs under, the companion's version floor, and, in a dynamic field (`BsTimingKey`), the `BsTiming` commit applies | Once, by the `desk` module's `init` at publish, with the launch policy and no event. Its ID comes from the publish transaction |
 | `QueueRegistry` | `desk` | The parent every market's queue ID derives from, bound to the desk | Once, by the same `init`, next to the desk |
 | `MarketQueue` | `queue` | One market's `OrderBook`: its records, cohort spans, counters, and payout cursor | `queue::create_and_share(registry, desk, market)`, once per market, at the ID `queue::queue_id(registry_id, market_id)` derives from the registry and the market. Anyone can call it, the caller pays its storage, a second call for the same market aborts, and another desk's registry aborts `EWrongDesk` |
 | `QueuedOrder` | `order_queue` | One record: its status, request, timing, escrow terms, position, committed price, and result, Predict's `OrderReceipt` for the order, and the order's own escrow `Balance<USDC>`. Once finished, only funds parked for a denied receive address | Each placement, in the queue's table |
@@ -21,9 +21,9 @@ Every trading call reads the desk, and only the admin's policy setters write it.
 
 | Module | Owns |
 | --- | --- |
-| `order_flow` | The witness `OrderFlow`, which Predict's allowlist names. This module is the only place it is built, through package-only wrappers around `admit_mint`, `admit_sell`, `commit`, and `try_fill`. It is never returned |
-| `desk` | `OrderDesk`, `QueueRegistry`, the policy setters, and the desk's version floor |
-| `delayed_execution_config` | `DelayedExecutionPolicy`, its launch values, its bounds, and its getters |
+| `order_flow` | The witness `OrderFlow`, which Predict's allowlist names. This module is the only place it is built, through package-only wrappers around Predict's `admit_mint_v2`, `admit_sell_v2`, `commit_v2`, and `try_fill`. It is never returned |
+| `desk` | `OrderDesk`, `QueueRegistry`, the policy and Block Scholes timing setters, and the desk's version floor |
+| `delayed_execution_config` | `DelayedExecutionPolicy` and `BsTiming`, their launch values, their bounds, and their getters |
 | `order_queue` | `OrderBook` and its records, τ and deadline planning, the stuck check, cohort spans and counters, the status, kind, and reason codes, and the copyable `OrderView` that reads return |
 | `queue` | `MarketQueue` and every entry point: placement, commit, resolve, refunds, settlement, the deny-list catch-up calls, cleanup, and the reads |
 | `queue_events` | The queue and policy events |
@@ -32,10 +32,12 @@ Every trading call reads the desk, and only the admin's policy setters write it.
 
 | Entry point | Caller | Does |
 | --- | --- | --- |
-| `queue::enqueue_exact_quantity`, `enqueue_exact_amount`, `enqueue_exact_cost` | The account, through its `Auth`, or an authorized app such as Sessions | Places a queued mint, escrows its budget and order fee, and returns the record ID |
-| `queue::enqueue_redeem_open` | The account that owns the Open record | Places an early sell of an Open record and escrows the order fee |
-| `queue::enqueue_exact_quantity_with_builder`, `enqueue_exact_amount_with_builder`, `enqueue_exact_cost_with_builder`, `enqueue_redeem_open_with_builder` | As the call without `_with_builder` | The same placement for an order that names a `BuilderCode` and a fee per contract. Predict's admission caps the fee and records it in the order's receipt for the fill |
-| `queue::commit` | Anyone | Attaches verified Pyth Lazer prices to the waiting cohorts they match |
+| `queue::enqueue_exact_quantity_v2`, `enqueue_exact_amount_v2`, `enqueue_exact_cost_v2` | The account, through its `Auth`, or an authorized app such as Sessions | Places a queued mint, escrows its budget and order fee, and returns the record ID. Reads no oracle |
+| `queue::enqueue_redeem_open_v2` | The account that owns the Open record | Places an early sell of an Open record and escrows the order fee |
+| `queue::enqueue_exact_quantity_with_builder_v2`, `enqueue_exact_amount_with_builder_v2`, `enqueue_exact_cost_with_builder_v2`, `enqueue_redeem_open_with_builder_v2` | As the call without `_with_builder` | The same placement for an order that names a `BuilderCode` and a fee per contract. Predict's admission caps the fee and records it in the order's receipt for the fill |
+| The eight placement calls without `_v2` | As the matching `_v2` call | Keep the signatures earlier versions published, which take Propbook's registry and Pyth and Block Scholes objects, ignore those arguments, and forward to the matching `_v2` call |
+| `queue::commit_v2` | Anyone | Attaches verified Pyth Lazer prices and Block Scholes inputs (`BsVol`) to the waiting cohorts they match |
+| `queue::commit` | Anyone | Aborts `EUseV2` |
 | `queue::resolve` | Anyone | Fills or refunds committed orders. Visits at most 450 records per call, a cap on events, so callers size `max_orders` from measured costs |
 | `queue::refund` | Anyone | Refunds waiting orders at or past their deadline, with the same 450-record cap |
 | `queue::admin_refund` | Predict's `AdminCap` | Refunds listed waiting orders at once |
@@ -45,19 +47,21 @@ Every trading call reads the desk, and only the admin's policy setters write it.
 | `queue::cleanup` | Anyone, after settlement | Deletes finished records with nothing parked and keeps their storage rebate |
 | `queue::create_and_share` | Anyone | Creates a market's queue |
 | `desk::set_timing`, `set_limits`, `set_order_fee` | Predict's `AdminCap` | Change the policy, while Predict is not frozen |
+| `desk::set_bs_timing` | Predict's `AdminCap` | Changes the Block Scholes timing, while Predict is not frozen |
 | `desk::bump_version_watermark` | Predict's `AdminCap` | Advances the desk floor to this package's compiled version |
 
 Every call that can send USDC (`resolve`, `refund`, `admin_refund`, `settle_step`, `pay_open`, `claim_parked`) takes Sui's shared `DenyList`, because Mainnet USDC is a regulated coin and Sui aborts a transaction that credits a denied address. This package never makes such a send: it parks the funds in the record or leaves the record Open for later ([denied recipients](../predict/docs/concepts/delayed-execution.md#denied-recipients)).
 
-Reads: `queue::order`, `queue_id`, `queue_heads`, `payout_progress`, `waiting_cohorts`, `queue_stuck`, `pending_counts`, `waiting_orders`, `oldest_unfinished_tau_ms`, `builder_fee_per_contract`, `quote_redeem_open`, and `quote_redeem_open_with_builder_fee`, plus `desk::policy`, `desk::version_watermark`, and `desk::registry_id`. A record holds a receipt and a balance and cannot be copied, so `queue::order` returns an `OrderView`.
+Reads: `queue::order`, `queue_id`, `queue_heads`, `payout_progress`, `waiting_cohorts`, `queue_stuck`, `pending_counts`, `waiting_orders`, `oldest_unfinished_tau_ms`, and `builder_fee_per_contract`, plus `desk::policy`, `desk::bs_timing`, `desk::version_watermark`, and `desk::registry_id`. A record holds a receipt and a balance and cannot be copied, so `queue::order` returns an `OrderView`. `quote_redeem_open` and `quote_redeem_open_with_builder_fee` priced a sell at a live pricer, which no transaction builds since Predict package version 6, so they check the record and then abort `EUseV2`.
 
 ## Trust boundary
 
-Every money-moving step runs inside one of Predict's primitives, which checks its own gates, the receipt's market and stage, and the caller's witness or receipt when it runs. Whatever this package does, Predict decides who owns a position and where its proceeds go, prices every fill from the receipt's own volatility snapshot and committed price, enforces cash backing, bounds τ and the deadline, accepts only a `LazerPrice` for the receipt's feed and channel stamped at τ or one tick later, and pays or closes a position once. See [the order-flow boundary](../predict/docs/concepts/delayed-execution.md#the-order-flow-boundary).
+Every money-moving step runs inside one of Predict's primitives, which checks its own gates, the receipt's market and stage, and the caller's witness or receipt when it runs. Whatever this package does, Predict decides who owns a position and where its proceeds go, prices every fill from the price and Block Scholes inputs committed to the receipt, enforces cash backing, bounds τ and the deadline, accepts only a `LazerPrice` for the receipt's feed and channel stamped at τ or one tick later together with a `BsVol` under the market's oracle binding and expiry, stamped at or before τ and at most 120 seconds before it, and pays or closes a position once. See [the order-flow boundary](../predict/docs/concepts/delayed-execution.md#the-order-flow-boundary).
 
 This package is still trusted with:
 
 - **The tick.** It chooses between a cohort's exact τ tick and its one backup tick, which moves a fill's price by at most one channel tick.
+- **The Block Scholes slots.** It applies the `BsTiming` slot rule, which picks the spot, forward, and SVI a cohort prices from, and after the gap wait accepts the next slot of either series.
 - **Timing and order.** It sets τ and the deadline within Predict's bounds, applies the queue limits, and orders fills and refunds.
 - **Escrow.** It holds each order's escrow and routes refunds.
 - **Events and reads.** Queue state reaches indexers and the app only through this package.
@@ -78,7 +82,7 @@ Refunds and the settlement walk reach only Predict's `release` and `try_pay_sett
 
 ## Versions and upgrades
 
-`desk::current_version!()` is 2, the version the next Mainnet upgrade publishes. The Mainnet and Testnet desks were shared at version 1 and keep that floor until a bump. `OrderDesk.version_watermark` is the floor every entry point checks. `desk::bump_version_watermark` advances it to the running package's version, retiring older code of this package. It is the lever for a fix that touches only this package.
+`desk::current_version!()` is 3, the version the next Mainnet upgrade publishes. Version 3 ships with Predict package version 6 under a pause-and-drain cutover ([architecture](../predict/docs/design/architecture.md#version-gating)). The Mainnet and Testnet desks were shared at version 1 and keep that floor until a bump. `OrderDesk.version_watermark` is the floor every entry point checks. `desk::bump_version_watermark` advances it to the running package's version, retiring older code of this package. It is the lever for a fix that touches only this package.
 
 This package runs the Predict and library versions it linked at publish. Before any Predict watermark bump, publish an upgrade of this package relinked to the new Predict, and relink Sessions too, whether or not anything they call changed. Otherwise every call into Predict aborts after the bump, the drain included, and escrow and receipts wait for the relink. The first rollout pauses trading first and keeps it paused until the end. It publishes the library, upgrades Predict, and publishes this package, recording the desk and registry IDs and the publish checkpoint. It starts the indexer from the Predict upgrade's checkpoint. In one admin transaction it allowlists the witness, re-states the launch order fee so the policy event records the launch policy, and adds the market keeper's signer as a flush operator. It then creates a queue for each live market with `queue::create_and_share(registry, desk, market)`, upgrades Sessions, moves the services to the new IDs, bumps the Predict and Sessions watermarks, and reopens trading, and Testnet measures full-batch gas before Mainnet activates. `packages/predict/deployment/upgrade_v4.ts` runs it. [Architecture](../predict/docs/design/architecture.md#version-gating) owns every step, including the monitoring and registry registrations.
 

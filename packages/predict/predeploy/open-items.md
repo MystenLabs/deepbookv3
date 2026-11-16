@@ -1,8 +1,24 @@
 # Predict Predeploy Open Items
 
-Updated 2026-11-04. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-11-16. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
+
+### S-11: The version 6 callers are not migrated off the retired entry points
+
+**Severity:** Deploy gate for package version 6.
+
+Version 6 retires every entry point that read Propbook or took a live `Pricer` (`EUseV2`) and adds an oracle binding every market needs (`EOracleBindingMissing`). The repository's own callers still use the version 5 calls: the deployment tool creates markets through `create_and_share_expiry_market` and sets no binding (`deployment/deploy.ts`), and the shared harness and simulation builders call the retired creation, commit, settlement, snapshot, and live-pricer functions (`devtools/ts/runtime.ts`). The localnet benchmark and any fresh deployment fail at those calls until they move. The keepers and the SDK outside this repository have the same dependency.
+
+**Action:** move the builders to the `_v2` calls with signed Lazer and Block Scholes data, add an idempotent `set_oracle_binding` step with read-back to the deployment and upgrade tooling, and land the keeper and SDK releases before the pause-and-drain cutover (decided 2026-11-16).
+
+### S-12: The version 6 cutover still needs its Testnet rehearsal
+
+**Severity:** Deploy gate for package version 6.
+
+The cutover pauses trading, drains the queues, upgrades Predict, the companion, and Sessions, sets each underlying's oracle binding, and moves the three watermarks. No order admitted under version 5 may commit under version 6. The sequence has not run on a live network.
+
+**Action:** rehearse it on Testnet with live markets and waiting orders, and confirm that every version 5 entry point aborts `EUseV2` and that the forwarders still place orders.
 
 ### S-10: A denied LP recipient aborts the flush
 
@@ -406,7 +422,7 @@ At the launch policy (800 ms delay on the 200 ms channel) τ lands 601–800 ms 
 
 **Severity:** Low. A grief on sponsored incentives, with no fund loss.
 
-`commit` reserves `min(subsidy bound × rate, remaining incentives)` for each record of a cohort in record order (`queue::commit_cohort`, `expiry_market::commit`), and a record returns its reservation only when it fills or is refunded. An earlier order with a large size and a tight limit can reserve most of a market's incentive balance, miss its limit (reason 1, which keeps its order fee), and return the reservation after the later orders in the cohort filled with less subsidy or none. The attacker gains nothing and pays the order fee. A Move PoC drops a later order's subsidy from 4,000 to 1,000 raw units.
+`commit_v2` reserves `min(subsidy bound × rate, remaining incentives)` for each record of a cohort in record order (`queue::commit_cohort`, `expiry_market::commit_v2`), and a record returns its reservation only when it fills or is refunded. An earlier order with a large size and a tight limit can reserve most of a market's incentive balance, miss its limit (reason 1, which keeps its order fee), and return the reservation after the later orders in the cohort filled with less subsidy or none. The attacker gains nothing and pays the order fee. A Move PoC drops a later order's subsidy from 4,000 to 1,000 raw units.
 
 **Action:** cap each order's reservation (for example at the market's live incentive target divided by the per-cohort capacity), or accept the grief and record it in the register.
 
@@ -414,17 +430,25 @@ At the launch policy (800 ms delay on the 200 ms channel) τ lands 601–800 ms 
 
 **Severity:** Low. Needs the exact Pyth print to be missing 30 s after expiry.
 
-RP-4 lets `try_settle` settle on the Block Scholes exact spot once the clock is 30 s past expiry while Pyth's exact key is still missing. If the Pyth print lands after that, whoever calls `try_settle` first picks the source, and Propbook's exact key is also first-writer-wins across Lazer channels. A position whose strike sits between the two prices settles on a different side depending on that choice. Two of about 3,000 Mainnet v3 settlements had their Pyth print land that late.
+RP-4 lets `try_settle_v2` settle on a Block Scholes spot at expiry once the clock is 30 s past expiry and the call carries no qualifying Pyth price. If no settlement lands inside the grace, whoever calls `try_settle_v2` first picks the source. Since package version 6 Predict reads no stored Pyth row, so an inserted Pyth print no longer closes the fallback: only a settlement inside the grace does. A position whose strike sits between the two prices settles on a different side depending on that choice. Two of about 3,000 Mainnet v3 settlements had their Pyth print land that late.
 
-**Action:** alert when an expiry's exact Pyth key is still missing 10 s after expiry, keep the keeper's expiry insert well inside the grace period, and decide whether the fallback should be keeper-only or wait longer (RP-4).
+**Action:** the settlement keeper settles each market from the Pyth price at expiry, well inside the grace period. Alert when a market is still unsettled 10 s after expiry, and decide whether the fallback should be keeper-only or wait longer (RP-4).
 
 ### P-41: One undecodable Lazer update aborts a whole commit call
 
 **Severity:** Low. Depends on Pyth's data, and a keeper can recover by dropping the update.
 
-`queue::commit` decodes every feed of every cohort an update matches before it checks whether the price fits (`commit_updates!`), and `lazer_price::from_parts` aborts `EGenerationAfterEnvelope` when a feed's update time is after the envelope that carries it. That is a property of Pyth-signed data, not a caller choice, yet it aborts the whole call: every other cohort in it misses that commit, and the affected cohort, with no usable price and the backup buffer at 0, waits for its deadline refund (and can trip the stuck gate meanwhile). `find_update` also matches an update by channel and timestamp only, so a same-stamped update for another feed set listed first aborts `EFeedMissing` instead of the next update being tried. Pyth normally stamps a feed's update time at or before the envelope, so the first case is not expected in practice.
+`queue::commit_v2` decodes every feed of every cohort an update matches before it checks whether the price fits (`commit_updates!`), and `lazer_price::from_parts` aborts `EGenerationAfterEnvelope` when a feed's update time is after the envelope that carries it. That is a property of Pyth-signed data, not a caller choice, yet it aborts the whole call: every other cohort in it misses that commit, and the affected cohort, with no usable price and the backup buffer at 0, waits for its deadline refund (and can trip the stuck gate meanwhile). `find_update` also matches an update by channel and timestamp only, so a same-stamped update for another feed set listed first aborts `EFeedMissing` instead of the next update being tried. Pyth normally stamps a feed's update time at or before the envelope, so the first case is not expected in practice.
 
 **Action:** have the fill keeper drop an update that aborts with either code and retry the rest. At the next `predict_math` and companion upgrade, return `none` for a feed update time after the envelope so the cohort waits like any other unusable price, skip updates that carry none of a cohort's feeds, and update the README and the delayed-execution error table.
+
+### P-42: The Block Scholes slot-miss rate and the flush window are unmeasured
+
+**Severity:** Medium for liveness, no fund loss.
+
+A cohort commits only with Block Scholes inputs at its τ's canonical slots, or the next slot after the gap wait (RP-38), and a flush marks each market only with Pyth and Block Scholes data stamped at one instant inside a 2-second window (RP-47). How often Block Scholes skips a slot, and how often both providers have data at one whole second inside the window when a flush starts, is not measured. A high miss rate refunds cohorts at their deadlines or makes flushes retry.
+
+**Action:** measure both on Testnet from the keepers' logs, record the result under `evidence/`, and tune `BsTiming` and `block_scholes_price_freshness_ms` from it.
 
 ## Access and Governance
 

@@ -6,22 +6,7 @@ designed, and what its risks are. It is written for a technically literate reade
 understand the mechanism. It is **not** an integration or SDK guide — it does not
 contain transaction recipes or a function-by-function API reference.
 
-> **Status:** in development, not yet deployed. Current shipped state: live
-> oracle data is read from the standalone **propbook** Pyth and Block Scholes
-> feeds (no in-package oracle); strikes are **absolute integer ticks**
-> (`raw_strike = tick × tick_size`); the LP layer is **asynchronous** — supply
-> and withdraw are queued and settled by a **privileged periodic flush** that
-> marks the whole pool at one **exact** NAV; and **terminal settlement is
-> passive**, preferring Propbook's exact Pyth history and permitting exact Block Scholes after a 30-second grace period when a normal redeem
-> or pool-rebalance flow first needs the settled branch. From package version 4,
-> mints and early sells use **delayed execution**: each order waits in its
-> market's queue and fills at Pyth's signed price for a fixed instant after it
-> was placed, and a filled order stays in the queue as an Open record. The queue
-> lives in a companion package, `deepbook_predict_orders`, and the pure pricing
-> math in a library, `deepbook_predict_math`, because Sui caps the size of a
-> package. Where a behaviour is
-> still changing, the docs describe it at the conceptual level and point to the
-> configuration that governs it rather than to specific values that may drift.
+> **Status:** in development, not yet deployed. Current shipped state: oracle data arrives **signed and inline**, as Pyth Lazer and Block Scholes values checked against each underlying's oracle binding (no in-package oracle, and no Propbook read since package version 6). Strikes are **absolute integer ticks** (`raw_strike = tick × tick_size`). The LP layer is **asynchronous** — supply and withdraw are queued and settled by a **privileged periodic flush** that marks the whole pool at one **exact** NAV. **Terminal settlement is explicit**, from the signed Pyth price at expiry, or a signed Block Scholes spot at expiry after a 30-second grace period. From package version 4, mints and early sells use **delayed execution**: each order waits in its market's queue and fills at Pyth's signed price for a fixed instant after it was placed, and a filled order stays in the queue as an Open record. The queue lives in a companion package, `deepbook_predict_orders`, and the pure pricing math in a library, `deepbook_predict_math`, because Sui caps the size of a package. Where a behaviour is still changing, the docs describe it at the conceptual level and point to the configuration that governs it rather than to specific values that may drift.
 
 ## Start here
 
@@ -41,9 +26,7 @@ How the protocol works:
   that share the order flow, how queued mints and early sells are placed,
   priced at τ, filled or refunded, held as Open records, and paid at
   settlement, plus the policy and the upgrade rules.
-- **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
-  formed from the propbook Pyth spot and split Block Scholes feeds, the forward
-  fallback, and freshness rules.
+- **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are formed from signed Pyth Lazer and Block Scholes data, the oracle binding, and the instant each flow prices at.
 - **[Fees and rebates](./concepts/fees-and-rebates.md)** — the fee components a
   trader pays and the isolated inventory-impact charge and rebate.
 - **[Liquidity and NAV](./concepts/liquidity-and-nav.md)** — the pool, PLP

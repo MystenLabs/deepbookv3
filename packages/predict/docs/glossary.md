@@ -28,7 +28,7 @@ these terms directly.
   (`PoolVault` plus each expiry's `ExpiryCash`) is the writer of record for
   every Predict contract and fully collateralizes its written payouts (code:
   `payout_liability`).
-- **Expiry market** — all contracts sharing one `(feed, expiry)` pair; code
+- **Expiry market** — all contracts sharing one `(underlying, expiry)` pair; code
   `ExpiryMarket`. Its tick grid is the expiry's option chain.
 
 ## Strikes and ticks
@@ -72,56 +72,35 @@ grid, no boundary indices).
 - **Mark value (live value)** — the contract's current model value,
   `quantity × range_probability`. "Live value" in these docs always means this
   mark-to-model value, not a traded price.
-- **Forward** — the model's forecast of the underlying at expiry, the input the
-  range probability is differenced off. The admin setting
-  `use_pyth_spot_for_forward` picks its source: on (the default) Predict builds
-  it as `spot × basis` when the Pyth spot is fresh and falls back to the Block
-  Scholes forward otherwise; off, it is always the Block Scholes forward.
-  Valuation and the mint quotes use that fallback, and the retired immediate
-  trades refused it. A queued fill re-anchors the basis on the committed Pyth
-  price for its τ instead.
-  Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
-- **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
-  the spot to the forward when live spot is applied. Code: derived in `pricing`
-  from the `BlockScholesValueStore` forward and spot series.
+- **Forward** — the model's forecast of the underlying at expiry, the input the range probability is differenced off. Predict builds it as `spot × basis`: the signed Pyth Lazer spot a flow prices at (an order's committed price, or a flush mark's), times the Block Scholes basis from the same flow's signed inputs. Up to package version 5 the admin setting `use_pyth_spot_for_forward` chose between that and the Block Scholes forward for live pricing, and since version 6 no path reads it. Code: built in `pricing::pricer_at`.
+- **Basis** — the Block Scholes `forward / spot` ratio for an expiry. It carries the signed Lazer spot to the forward. Code: derived in `pricing` from a `BsVol`'s forward and spot, which share one source time.
 
-## Oracles (propbook feeds)
+## Oracles (signed data)
 
-Live oracle data lives in the standalone, Predict-unaware `propbook` package;
-Predict reads it but does not own it.
+Oracle data reaches Predict signed and inline: the transaction that needs a price passes values that only `deepbook_predict_math` decodes, and only from updates the providers' on-chain verifiers accepted earlier in the same transaction. See [signed oracle data](./concepts/pricing-and-oracles.md#signed-oracle-data).
 
-- **`PythFeed`** — one global object per Pyth Lazer feed id holding the latest
-  source-native spot payload plus a normalized `Option<OracleRead<u64>>` view;
-  updated permissionlessly from a verified Lazer payload (`update`). Predict
-  reads `normalized_spot()` and the read's `source_timestamp_ms`. Code module
-  `propbook::pyth_feed`.
-- **`BlockScholesValueStore`** — one per-underlying store of ten recent BS spots in an inline ring, latest forwards keyed by signed series id, and separate insert-only exact minute-boundary spot history. Predict reads `forward(expiry_ms)` then `recent_spot_at(forward_source_timestamp_ms)` to select an exact source-time pair; each read retains its own landing time and writer digest. The selected source timestamp gates freshness and is reported in trade events. `spot_at(expiry_ms)` remains the settlement fallback. Code module `propbook::block_scholes_store`.
-- **`BlockScholesSVIStore`** — one per-underlying store of the latest BS SVI
-  parameter sets, keyed by signed series id under the store's admin-set provider
-  model (`"SVI"` until set). Predict reads `svi(expiry_ms)` and
-  its `source_timestamp_ms`, one clock for freshness, the roll-down anchor, and
-  trade-event reporting. Code module `propbook::block_scholes_store`.
+- **Oracle binding** — one underlying's `OracleBinding` on `ProtocolConfig`: the Pyth Lazer feed and channel, and the Block Scholes base asset, SVI model, and SVI decimals that price, settle, and value its markets. Admin-set, read live by every flow that takes signed data, and required to create a market. Code `protocol_config::set_oracle_binding`, `oracle_binding`.
+- **`BsVol`** — one expiry's Block Scholes inputs: a spot and forward stamped at one source time (`value_ms`) and an SVI tuple stamped at another (`svi_ms`), with the base asset, SVI model, and decimals it was decoded under. Only `deepbook_predict_math` builds one, from `bs_oracle`-verified updates, so holding one proves Block Scholes signed it. Commit and the flush take one. Code `block_scholes::BsVol`, built by `block_scholes::vols` and `vol_at`.
+- **`BsSpot`** — a Block Scholes spot and its source time, built the same way, for the settlement fallback. Code `block_scholes::BsSpot`, built by `block_scholes::spot_at`.
+- **Propbook** — the standalone source-oracle package whose `PythFeed` and Block Scholes stores earlier Predict versions read. Markets are still keyed by a Propbook underlying ID (`propbook_underlying_id`), and Predict still links the package because its version 5 signatures name Propbook types, but no Predict path reads its objects since package version 6. See [its README](../../propbook/README.md).
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are
-  differenced off. Predict enforces its pricing-safe SVI envelope at read time
-  (`|rho| <= 1`, bounded `b` and `m`, bounded sigma, positive minimum total
-  variance, which is the only constraint on `a`). Code `SVIParams`.
+  differenced off. Predict enforces its pricing-safe SVI envelope when it builds
+  a `Pricer` (`|rho| <= 1`, bounded `b` and `m`, bounded sigma, positive minimum
+  total variance, which is the only constraint on `a`). Code `pricing::PricingSVI`.
 - **`fixed_math`** — the standalone, Predict-unaware fixed-point + signed-integer
   (`i64`) math package both Predict and propbook depend on. It was once named
   `predict_math`, which is unrelated to today's `deepbook_predict_math`. Code
   package/address `fixed_math`.
-- **`deepbook_predict_math`** — the stateless library, in `packages/predict_math`,
-  that holds Predict's pure pricing math, the order-ID decode, and
-  `LazerPrice`. It moved out of Predict to keep Predict under Sui's package
-  size limit. See [its README](../../predict_math/README.md).
+- **`deepbook_predict_math`** — the stateless library, in `packages/predict_math`, that holds Predict's pure pricing math, the order-ID decode, `LazerPrice`, and the Block Scholes decode (`BsVol`, `BsSpot`). It moved out of Predict to keep Predict under Sui's package size limit. See [its README](../../predict_math/README.md).
 
 ## Fees
 
 - **Trading fee** — the sum of independently floored, expiry-ramped, and rounded fees for each finite boundary; a transaction cost, never part of the contract's terms. Infinite boundaries contribute zero. See [fees and rebates](./concepts/fees-and-rebates.md).
 - **Congestion surcharge** — a flat per-unit penalty the retired immediate
   trades added when the gas-price EWMA flagged abnormal congestion. Retired in
-  package version 4: queued fills and the mint quotes report `penalty_fee` 0,
-  and the EWMA setters abort. Code keeps DeepBook core's penalty vocabulary:
+  package version 4: queued fills report `penalty_fee` 0, and the EWMA setters
+  abort. Code keeps DeepBook core's penalty vocabulary:
   the charged amount is `penalty_fee` (event field), the per-unit rate is
   `penalty_rate`.
 - **Order fee** — a flat USDC fee per queued order, not per contract, escrowed
@@ -142,10 +121,10 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   `strike_payout_tree::walk_linear`, `Σ quantity × P(range)`, with no per-order
   correction), floored at zero. There is no approximation or
   uncertainty band — it is the true per-expiry recoverable value at the
-  valuation instant, up to fixed-point dust. Code `current_nav`.
+  valuation instant, up to fixed-point dust. Code `current_nav`. Since package version 6, which builds no live `Pricer`, it aborts `EUseV2`, and the flush evaluates the same NAV from its snapshot (`snapshot_nav`).
 - **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide USDC value the flush prices PLP at: `idle + Σ active-market snapshot-instant NAV`, net of the pending-protocol-profit exclusion. Computed once per flush and used for both supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
 - **Supply / withdraw queue** — the two FIFO request queues on `PoolVault` (`supply_queue` of escrowed USDC, `withdraw_queue` of escrowed PLP). An LP enqueues with `request_supply` / `request_withdraw` (routed through its account, with a minimum-output limit and an index that can be cancelled while no flush is in flight), and the flush fills eligible heads. Code `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
-- **The flush** — the three-stage valuation-and-drain cycle that marks the whole pool at one snapshot instant and fills eligible queued heads at that mark, with trading live throughout. **Snapshot** (one atomic transaction, scoped by the `SnapshotStage` hot potato): `start_pool_valuation` engages the valuation flag and records the active set, the start time, each queue's eligibility cutoff, and the per-queue drain budgets; `snapshot_expiry_pricer` freezes one `Pricer` per live market and stamps it; `seal_valuation_snapshot` proves completeness. **Valuation** (resumable, one market per transaction): each `value_expiry` folds one market's snapshot-instant NAV, read from the cash values and payout-tree shadows captured at the snapshot instant. **Finish**: `finish_flush` proves every market was valued exactly once, computes `pool_nav`, then `lp_book::drain` mints/burns PLP and delivers fills up to each queue's recorded cutoff (supplies first, then withdrawals FIFO until idle is dry, up to the per-queue `supply_budget`/`withdraw_budget` committed at the snapshot; non-executable queue heads are protocol-cancelled and refunded, as are live request-limit misses at the shipped attempt count of one — above one they carry until their attempts are exhausted). Fills are delivered to each account through the balance accumulator (`send_funds`); the account absorbs them lazily on its next capital op. The flush's **snapshot is privileged** — started only by a pool-valuation operator's `PoolValuationCap` (`start_pool_valuation`). Once it seals, `value_expiry` is permissionless, because the frozen mark and the per-queue budgets are both fixed at the snapshot. `finish_flush` accepts only an address on the flush-operator allowlist, because its fills move idle cash that the keeper funding queued orders relies on. `finish_flush` refuses a flush older than `max_valuation_window_ms` (for everyone, including the operator); a stalled flush is not aborted but superseded by a fresh `start_pool_valuation`, which discards it and re-snapshots (there is no abort or restart entrypoint). Code `PoolValuation` (vault-held valuation state), event `FlushExecuted`.
+- **The flush** — the three-stage valuation-and-drain cycle that marks the whole pool at one snapshot instant and fills eligible queued heads at that mark, with trading live throughout. **Snapshot** (one atomic transaction, scoped by the `SnapshotStage` hot potato): `start_pool_valuation` engages the valuation flag and records the active set, the start time, each queue's eligibility cutoff, and the per-queue drain budgets; `snapshot_expiry_pricer_v2` builds one `Pricer` per live market from a signed Lazer price and Block Scholes inputs stamped at one instant inside the freshness window before the start, freezes it, and stamps the market. `seal_valuation_snapshot` proves completeness. **Valuation** (resumable, one market per transaction): each `value_expiry` folds one market's snapshot-instant NAV, read from the cash values and payout-tree shadows captured at the snapshot instant. **Finish**: `finish_flush` proves every market was valued exactly once, computes `pool_nav`, then `lp_book::drain` mints/burns PLP and delivers fills up to each queue's recorded cutoff (supplies first, then withdrawals FIFO until idle is dry, up to the per-queue `supply_budget`/`withdraw_budget` committed at the snapshot; non-executable queue heads are protocol-cancelled and refunded, as are live request-limit misses at the shipped attempt count of one — above one they carry until their attempts are exhausted). Fills are delivered to each account through the balance accumulator (`send_funds`); the account absorbs them lazily on its next capital op. The flush's **snapshot is privileged** — started only by a pool-valuation operator's `PoolValuationCap` (`start_pool_valuation`). Once it seals, `value_expiry` is permissionless, because the frozen mark and the per-queue budgets are both fixed at the snapshot. `finish_flush` accepts only an address on the flush-operator allowlist, because its fills move idle cash that the keeper funding queued orders relies on. `finish_flush` refuses a flush older than `max_valuation_window_ms` (for everyone, including the operator); a stalled flush is not aborted but superseded by a fresh `start_pool_valuation`, which discards it and re-snapshots (there is no abort or restart entrypoint). Code `PoolValuation` (vault-held valuation state), event `FlushExecuted`.
 - **Valuation stamp / book snapshot** — the per-market capture that keeps trading live during a flush. The snapshot stage stamps each live market with its flush ordinal, copying the two cash rows NAV reads at that instant; the payout tree holds its own snapshot, each node copying its boundary quantities into a shadow before its first mutation under that flush (an emptied node is retained as a live-zero husk until `value_expiry` reads and releases the snapshot). Trades record nothing and have no budget; a stamp left by an aborted flush is stale and lazily discarded by the next trade or settle attempt. Code `ValuationStamp`, `strike_payout_tree::snap_on`/`walk_frozen`/`snap_done`.
 
 ## Delayed execution
@@ -159,9 +138,7 @@ in the order-flow companion package. See
   the queues, each queued order's escrow, the policy, the order entry points,
   and the queue events. It depends on Predict, and Predict never names it. See
   [its README](../../predict_orders/README.md).
-- **Order-flow primitive** — one of Predict's six calls the companion drives:
-  `admit_mint`, `admit_sell`, `commit`, `try_fill`, `release`, and
-  `try_pay_settled`. Each is one complete Predict operation.
+- **Order-flow primitive** — one of Predict's six calls the companion drives: `admit_mint_v2`, `admit_sell_v2`, `commit_v2`, `try_fill`, `release`, and `try_pay_settled`. Each is one complete Predict operation. The earlier `admit_mint` and `admit_sell`, which read Propbook objects, and the Lazer-only `commit` abort `EUseV2` since package version 6.
 - **Witness** — the companion's `OrderFlow` type. Predict serves admission,
   commit, and fills only to a witness type an admin allowlisted with
   `set_order_flow<W>`. Code `protocol_config::is_order_flow`.
@@ -181,14 +158,14 @@ in the order-flow companion package. See
   trading call reads it. Code `deepbook_predict_orders::desk::QueueRegistry`.
 - **`LazerPrice`** — a Pyth Lazer price that only `deepbook_predict_math` builds,
   and only from a Pyth-verified update, so holding one proves Pyth signed it.
-  `commit` takes one. Code `lazer_price::LazerPrice`.
+  `commit_v2`, settlement, the reference tick, and the flush take one. Code `lazer_price::LazerPrice`.
 - **τ (tau)** — an order's price time: the last tick of the policy's Pyth Lazer
   channel at or before `t₀ + delay_ms`, never earlier than the market's last τ
   and always after its newest committed τ. t₀ is the Sui clock of the placing
   transaction. Launch runs `delay_ms` at 800 ms on the 200 ms channel, so τ
   falls 600 to 800 ms after the order. Code `tau_ms`.
 - **Cohort** — every order in one market that shares one τ, and therefore one
-  signed update, one deadline, and one channel. A cohort commits whole or not at
+  signed update, one set of Block Scholes inputs, one deadline, and one channel. A cohort commits whole or not at
   all, and each cohort fills on its own. Code `CohortSpan`.
 - **Deadline** — `min(τ + stall_timeout_ms, expiry)`, never earlier than the
   market's last deadline. At or past it an order can only be refunded in full.
@@ -203,20 +180,19 @@ in the order-flow companion package. See
   the placing account and holding a live position in its open receipt. A
   queued fill never enters the account. It is sold with `enqueue_redeem_open`
   or paid by `settle_step` or `pay_open`. Code `order_queue::status_open`.
-- **Commit** — attaching Pyth's verified price stamped exactly τ (or, when the
-  backup tick is switched on, the next tick of the cohort's channel) to a
-  waiting cohort. Permissionless. Code `queue::commit`, which calls Predict's
-  `expiry_market::commit` for each order.
+- **Commit** — attaching Pyth's verified price stamped exactly τ (or, when the backup tick is switched on, the next tick of the cohort's channel) and the Block Scholes inputs at τ's slots to a waiting cohort. Permissionless. Code `queue::commit_v2`, which calls Predict's `expiry_market::commit_v2` for each order.
+- **Block Scholes timing** — the companion's rule for which signed Block Scholes slots price a cohort: spot and forward at the 500 ms boundary at or before `τ − value_lag_ms`, SVI at the 1,000 ms boundary at or before `τ − svi_lag_ms`, and, once `gap_wait_ms` has passed after τ, the next slot of either. Admin-set on the `OrderDesk`. Code `delayed_execution_config::BsTiming`, `desk::set_bs_timing`.
 - **Resolve** — filling or refunding committed orders at their τ price from the
   market's own cash, at most 450 records per call, a cap on events that does
   not bound the objects a call loads. Permissionless. Code
   `queue::resolve`, which calls Predict's `try_fill` for each order.
 - **Settlement walk** — the companion's `settle_step`, which drains a market's
   unfinished orders and then pays its Open records after Predict's
-  `try_settle`, one bounded phase per call. Permissionless.
+  `try_settle_v2`, one bounded phase per call. Permissionless.
 - **Refund reason** — why an order was refunded: limits (1), admission (2),
-  missing node (4), deadline (5), admin (7), no cash (8), or recipient denied
-  (9), with 3 and 6 reserved. The order fee is kept for reasons 1 and 2 and returned otherwise.
+  missing node (4), deadline (5), admin (7), no cash (8), recipient denied (9),
+  or committed Block Scholes inputs that do not price at the tick (10), with 3
+  and 6 reserved. The order fee is kept for reasons 1 and 2 and returned otherwise.
   Code `order_queue::reason_*`.
 - **Spare cash** — market cash minus required cash.
 - **Cash need** — the most an order's fill could take out of spare cash.
@@ -249,7 +225,7 @@ in the order-flow companion package. See
 | --- | --- | --- |
 | `enqueue_exact_quantity` / `enqueue_exact_amount` / `enqueue_exact_cost` | write / open | The buyer queues an order. The pool writes the contract at the τ premium when the order fills. |
 | `enqueue_redeem_open` | sell to close / close-out | The holder queues a sale of an Open record back to the writer at the τ mark. |
-| `commit` / `resolve` | — | Anyone attaches the τ price and fills or refunds the order. |
-| `try_settle` / `settle_step` | cash settlement | `try_settle` records exact Pyth at expiry when available, or exact Block Scholes after the 30-second Pyth-exclusive window, plus terminal payout liability. `settle_step` then refunds waiting orders and pays each Open record the full `notional` in range and zero out of range. |
+| `commit_v2` / `resolve` | — | Anyone attaches the τ price and Block Scholes inputs and fills or refunds the order. |
+| `try_settle_v2` / `settle_step` | cash settlement | `try_settle_v2` records the signed Pyth price at exactly expiry when passed, or a signed Block Scholes spot stamped at expiry after the 30-second Pyth-exclusive window, plus terminal payout liability. `settle_step` then refunds waiting orders and pays each Open record the full `notional` in range and zero out of range. |
 | `redeem_settled` | cash settlement | The settled redeem of a position an immediate mint left in an account. It aborts `EDelayedExecutionRequired` from package version 5. |
 | `mint_exact_*` / `redeem_live` | write / close-out | The retired immediate paths. They abort `EDelayedExecutionRequired` in package version 4. |
