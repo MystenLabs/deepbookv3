@@ -32,7 +32,7 @@ const THREE_EVENTS: u64 = 3;
 // The companion version this source publishes: `init` seeds the desk's floor at
 // it. The Mainnet and Testnet desks were shared at version 1 and keep that floor
 // until a bump.
-const LAUNCH_VERSION: u64 = 2;
+const LAUNCH_VERSION: u64 = 3;
 
 // Spec defaults.
 const DEFAULT_DELAY_MS: u64 = 800;

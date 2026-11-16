@@ -35,7 +35,6 @@ const STALE_PYTH_CLOCK_MS: u64 = 121_000;
 /// to fall outside `TIGHT_PYTH_FRESHNESS_MS`.
 const STALE_PYTH_SOURCE_MS: u64 = 119_500;
 /// Idle seed large enough to bootstrap PLP supply so a flush may start.
-const BOOTSTRAP_IDLE: u64 = 1_200_000_000_000;
 
 #[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
 fun write_feed_then_load_pricer_same_tx_aborts() {
@@ -436,24 +435,4 @@ fun price_then_write_same_tx_is_permitted() {
 
     helpers::return_market_bundle(market);
     fx.finish();
-}
-
-#[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
-fun write_feed_then_snapshot_flush_same_tx_aborts() {
-    let (mut fx, expiry_id, _trader) = helpers::setup_live_market(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    // A flush needs a bootstrapped pool before it can start.
-    fx.bootstrap_lock(BOOTSTRAP_IDLE);
-
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-
-    // The flush's oracle read lives in the snapshot stage, so the guard's coverage sits there: a keeper that refreshes the surface and snapshots in one PTB is refused — the refresh must be a strictly earlier transaction, and the snapshot must then land inside the feeds' freshness windows. The snapshot stage is atomic, so this abort reverts `start_pool_valuation` with it and the valuation flag is never left engaged by a failed refresh.
-    fx.set_clock_for_testing(FRESHER_SOURCE_TS);
-    fx.write_live_oracle_in_current_tx_bundle(&mut market, FRESHER_PRICE, FRESHER_SOURCE_TS);
-    fx.start_flush_bundle(&mut market);
-
-    abort 999
 }

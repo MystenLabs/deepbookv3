@@ -41,9 +41,11 @@ use deepbook_predict::{
     pricing_reference_data as ref_data,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
+    signed_data,
     test_constants,
     test_helpers
 };
+use deepbook_predict_math::{block_scholes::{BsSpot, BsVol}, lazer_price::LazerPrice};
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -193,6 +195,7 @@ public fun setup_market(tick: u64): Fixture {
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
     config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
+    test_helpers::set_oracle_binding(&mut config, &admin_cap, 9, scenario.ctx());
     // Model the production window between the package upgrade and its watermark
     // bump: this package runs while the watermark still names the previous
     // version, so the immediate mint and redeem paths stay live for the legacy
@@ -356,30 +359,30 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
-    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
-    let expiry_id = registry.create_and_share_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &creation_clock,
         self.scenario.ctx(),
     );
     creation_clock.destroy_for_testing();
     return_shared(config);
-    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
     expiry_id
 }
 
-/// `create_expiry` through `create_and_share_expiry_market_with_band`, narrowing the
+/// `create_expiry` through `create_and_share_expiry_market_v2`, narrowing the
 /// new market's entry band to `[min_entry_probability, max_entry_probability]`.
 public fun create_expiry_with_band(
     self: &mut Fixture,
@@ -390,14 +393,12 @@ public fun create_expiry_with_band(
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
-    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
-    let expiry_id = registry.create_and_share_expiry_market_with_band(
+    let expiry_id = registry.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
@@ -409,7 +410,6 @@ public fun create_expiry_with_band(
     );
     creation_clock.destroy_for_testing();
     return_shared(config);
-    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
@@ -420,20 +420,20 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
-    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry.create_and_share_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         cadence_id,
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &self.clock,
         self.scenario.ctx(),
     );
     return_shared(config);
-    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
@@ -1661,7 +1661,7 @@ public fun quote_mint_bundle(
 ): MintQuote {
     let pricer = market
         .market
-        .load_live_pricer(
+        .load_live_pricer_for_testing(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
@@ -1697,7 +1697,7 @@ public fun quote_mint_amount_bundle(
 ): MintQuote {
     let pricer = market
         .market
-        .load_live_pricer(
+        .load_live_pricer_for_testing(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
@@ -1732,7 +1732,7 @@ public fun quote_mint_for_account_bundle(
 ): MintQuote {
     let pricer = market
         .market
-        .load_live_pricer(
+        .load_live_pricer_for_testing(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
@@ -1771,7 +1771,7 @@ public fun quote_mint_for_account_amount_bundle(
 ): MintQuote {
     let pricer = market
         .market
-        .load_live_pricer(
+        .load_live_pricer_for_testing(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
@@ -1811,7 +1811,7 @@ public fun quote_mint_exact_cost_for_account_bundle(
 ): MintQuote {
     let pricer = market
         .market
-        .load_live_pricer(
+        .load_live_pricer_for_testing(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
@@ -1849,7 +1849,7 @@ public fun production_quote_mint_for_account_bundle(
     let pricer = self.load_pricer_bundle(market);
     market
         .market
-        .quote_mint_for_account(
+        .quote_mint_for_account_v5_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1878,7 +1878,7 @@ public fun production_quote_mint_exact_cost_for_account_bundle(
     let pricer = self.load_pricer_bundle(market);
     market
         .market
-        .quote_mint_exact_cost_for_account(
+        .quote_mint_exact_cost_for_account_v5_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1906,7 +1906,7 @@ public fun quote_mint_with_builder_fee_bundle(
     let pricer = self.load_pricer_bundle(market);
     market
         .market
-        .quote_mint_with_builder_fee(
+        .quote_mint_with_builder_fee_v5_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1937,7 +1937,7 @@ public fun quote_mint_exact_cost_with_builder_fee_bundle(
     let pricer = self.load_pricer_bundle(market);
     market
         .market
-        .quote_mint_exact_cost_with_builder_fee(
+        .quote_mint_exact_cost_with_builder_fee_v5_for_testing(
             &account.wrapper,
             &market.config,
             &pricer,
@@ -1969,7 +1969,7 @@ public fun mint_exact_quantity(
     max_probability: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer(
+    let pricer = market.load_live_pricer_for_testing(
         config,
         oracle_registry,
         pyth,
@@ -2039,7 +2039,7 @@ public fun mint_exact_amount(
     max_cost: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer(
+    let pricer = market.load_live_pricer_for_testing(
         config,
         oracle_registry,
         pyth,
@@ -2106,7 +2106,7 @@ public fun mint_exact_cost(
     min_quantity: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer(
+    let pricer = market.load_live_pricer_for_testing(
         config,
         oracle_registry,
         pyth,
@@ -2227,7 +2227,7 @@ public fun redeem_live(
     min_proceeds: u64,
 ): Option<u256> {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer(
+    let pricer = market.load_live_pricer_for_testing(
         config,
         oracle_registry,
         pyth,
@@ -2407,17 +2407,25 @@ public fun redeem_settled_with_owner_auth_bundle(
     )
 }
 
-/// Try the explicit settlement transition against the fixture clock and return
-/// whether the market is settled after the attempt.
+/// Try the explicit settlement transition (`try_settle_v2`) against the fixture
+/// clock and return whether the market is settled after the attempt. The signed
+/// observations are the test feeds' exact rows at expiry (`signed_data`): the
+/// Pyth row as the binding's Lazer price, and the Block Scholes spot.
 public fun try_settle(
     self: &Fixture,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
 ): bool {
-    market.try_settle(config, oracle_registry, pyth, bs_values, &self.clock)
+    let expiry = market.expiry();
+    market.try_settle_v2(
+        config,
+        signed_data::exact_pyth(pyth, expiry),
+        signed_data::exact_bs_spot(bs_values, expiry),
+        &self.clock,
+    )
 }
 
 /// Try the explicit settlement transition through a market bundle.
@@ -2429,6 +2437,47 @@ public fun try_settle_bundle(self: &Fixture, market: &mut MarketBundle): bool {
         &market.pyth,
         market.bs.values(),
     )
+}
+
+/// The feeds' latest Block Scholes inputs signed at τ's canonical slots under the
+/// companion's launch timing (spot and forward at the 500 ms boundary at or before
+/// `τ - 500`, SVI at the 1 s boundary at or before `τ - 1_000`), for dependent
+/// packages' commit tests. Empty when the feeds hold none.
+public fun canonical_vols_bundle(market: &MarketBundle, tau_ms: u64): vector<BsVol> {
+    let value_at = tau_ms - 500;
+    let svi_at = tau_ms - 1_000;
+    let vol = signed_data::latest_vol_at(
+        &market.bs,
+        market.market.expiry(),
+        value_at - value_at % 500,
+        svi_at - svi_at % 1_000,
+    );
+    let mut vols = vector[];
+    vol.do!(|vol| vols.push_back(vol));
+    vols
+}
+
+/// `try_settle_v2` through a market bundle with explicit signed observations.
+public fun try_settle_v2_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    price: Option<LazerPrice>,
+    spot: Option<BsSpot>,
+): bool {
+    market.market.try_settle_v2(&market.config, price, spot, &self.clock)
+}
+
+/// The retired `try_settle` through a market bundle, for its `EUseV2` test.
+public fun try_settle_v1_bundle(self: &Fixture, market: &mut MarketBundle): bool {
+    market
+        .market
+        .try_settle(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.values(),
+            &self.clock,
+        )
 }
 
 /// Try settlement through a market bundle while substituting an explicit Pyth
@@ -2471,20 +2520,19 @@ public fun snapshot_expiry_pricer(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ) {
-    vault.snapshot_expiry_pricer(
+    let instant = signed_data::flush_instant(self.clock.timestamp_ms());
+    let expiry = market.expiry();
+    vault.snapshot_expiry_pricer_v2(
         stage,
         market,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
+        signed_data::latest_pyth_at(pyth, instant),
+        signed_data::latest_vol_at(bs, expiry, instant, instant),
         &self.clock,
-        self.scenario.ctx(),
     );
 }
 
@@ -2494,22 +2542,28 @@ public fun snapshot_expiry_pricer_bundle(
     stage: &SnapshotStage,
     market: &mut MarketBundle,
 ) {
+    let instant = signed_data::flush_instant(self.clock.timestamp_ms());
+    let expiry = market.market.expiry();
+    let price = signed_data::latest_pyth_at(&market.pyth, instant);
+    let vol = signed_data::latest_vol_at(&market.bs, expiry, instant, instant);
     market
         .vault
-        .snapshot_expiry_pricer(
+        .snapshot_expiry_pricer_v2(
             stage,
             &mut market.market,
             &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
+            price,
+            vol,
             &self.clock,
-            self.scenario.ctx(),
         );
 }
 
 /// Close the snapshot stage; valuation may then span transactions.
+/// Close the snapshot stage through a market bundle.
+public fun seal_snapshot_bundle(stage: SnapshotStage, market: &mut MarketBundle) {
+    seal_snapshot(stage, &mut market.vault, &mut market.config);
+}
+
 public fun seal_snapshot(stage: SnapshotStage, vault: &mut PoolVault, config: &mut ProtocolConfig) {
     vault.seal_valuation_snapshot(stage, config);
 }
@@ -2554,7 +2608,7 @@ public fun current_nav(
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ): u64 {
-    let pricer = market.load_live_pricer(
+    let pricer = market.load_live_pricer_for_testing(
         config,
         oracle_registry,
         pyth,
@@ -2563,7 +2617,7 @@ public fun current_nav(
         &self.clock,
         self.scenario.ctx(),
     );
-    market.current_nav(&pricer)
+    market.current_nav_v5_for_testing(&pricer)
 }
 
 /// Read live NAV through a market bundle.
@@ -2580,7 +2634,7 @@ public fun current_nav_bundle(self: &mut Fixture, market: &MarketBundle): u64 {
 /// Read one order's gross-of-fees live holder value through a market bundle.
 public fun live_order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.live_order_value(&pricer, order_id)
+    market.market.live_order_value_v5_for_testing(&pricer, order_id)
 }
 
 /// Read one settled order's terminal holder payout.
@@ -2596,7 +2650,7 @@ public fun load_pricer(
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ): pricing::Pricer {
-    market.load_live_pricer(
+    market.load_live_pricer_for_testing(
         config,
         oracle_registry,
         pyth,
@@ -2677,6 +2731,76 @@ public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle) {
 /// Start a flush through a bundle and stop mid-snapshot: start, freeze that market's
 /// pricer, and hand the still-open `SnapshotStage` back. For tests that need the
 /// stage open — `start_flush_bundle` seals it.
+/// Start a flush through a market bundle without snapshotting any market, for
+/// tests that drive `snapshot_expiry_pricer_v2` themselves.
+public fun start_flush_unsnapshotted(self: &mut Fixture, market: &mut MarketBundle): SnapshotStage {
+    let registry = self.scenario.take_shared<Registry>();
+    let proof = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
+    return_shared(registry);
+    plp::start_pool_valuation(
+        &mut market.config,
+        &mut market.vault,
+        proof,
+        option::none(),
+        option::none(),
+        &self.clock,
+    )
+}
+
+/// `snapshot_expiry_pricer_v2` through a market bundle with explicit signed data.
+public fun snapshot_v2_bundle(
+    self: &Fixture,
+    stage: &SnapshotStage,
+    market: &mut MarketBundle,
+    price: Option<LazerPrice>,
+    vol: Option<BsVol>,
+) {
+    market
+        .vault
+        .snapshot_expiry_pricer_v2(
+            stage,
+            &mut market.market,
+            &market.config,
+            price,
+            vol,
+            &self.clock,
+        );
+}
+
+/// The retired `snapshot_expiry_pricer` through a market bundle, for its `EUseV2` test.
+public fun snapshot_v1_bundle(
+    self: &mut Fixture,
+    stage: &SnapshotStage,
+    market: &mut MarketBundle,
+) {
+    market
+        .vault
+        .snapshot_expiry_pricer(
+            stage,
+            &mut market.market,
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.values(),
+            market.bs.svi(),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// The feed's latest Pyth spot and Block Scholes inputs re-signed at `instant_ms`,
+/// as a flush keeper passes them (`signed_data`).
+public fun flush_data_at(
+    market: &MarketBundle,
+    instant_ms: u64,
+): (Option<LazerPrice>, Option<BsVol>) {
+    let expiry = market.market.expiry();
+    (
+        signed_data::latest_pyth_at(&market.pyth, instant_ms),
+        signed_data::latest_vol_at(&market.bs, expiry, instant_ms, instant_ms),
+    )
+}
+
 public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundle): SnapshotStage {
     let registry = self.scenario.take_shared<Registry>();
     let proof = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
@@ -2834,6 +2958,8 @@ public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario 
 
 public fun clock(self: &Fixture): &Clock { &self.clock }
 
+public fun admin_cap(self: &Fixture): &AdminCap { &self.admin_cap }
+
 /// Borrow the fixture clock and the scenario context together, so a helper can
 /// pass both to one call.
 public fun clock_and_ctx(self: &mut Fixture): (&Clock, &mut TxContext) {
@@ -2866,6 +2992,8 @@ public fun config(bundle: &MarketBundle): &ProtocolConfig { &bundle.config }
 public fun config_mut(bundle: &mut MarketBundle): &mut ProtocolConfig { &mut bundle.config }
 
 public fun pyth(bundle: &MarketBundle): &PythFeed { &bundle.pyth }
+
+public fun bs(bundle: &MarketBundle): &BlockScholesFeed { &bundle.bs }
 
 public fun oracle_registry(bundle: &MarketBundle): &OracleRegistry { &bundle.oracle_registry }
 

@@ -16,7 +16,12 @@
 module deepbook_predict_orders::enqueue_refusal_tests;
 
 use deepbook_predict::{expiry_market, flow_test_helpers as helpers, test_constants};
-use deepbook_predict_orders::{queue, queue_fixture::{Self as fixture, QueueTest}};
+use deepbook_predict_orders::{
+    order_queue,
+    queue,
+    queue_event_views as events,
+    queue_fixture::{Self as fixture, QueueTest}
+};
 use std::unit_test::assert_eq;
 
 /// The policy's default flat order fee: 0.02 USDC.
@@ -129,6 +134,11 @@ const ZERO_DELAY_MS: u64 = 0;
 const FILL_TAU_MS: u64 = 121_000;
 /// The fill clock for the Open-record scenarios: one tick after τ 121_000.
 const FILL_AT_MS: u64 = 121_200;
+/// τ of a mint placed at the fixture clock 120_000, and of a sell placed at
+/// FILL_AT_MS: floor((t₀ + 1_000) / 200) * 200.
+const MINT_TAU_MS: u64 = 121_000;
+const SELL_TAU_MS: u64 = 122_200;
+const RESOLVE_ALL_ORDERS: u64 = 10;
 /// A record ID no order has used.
 const MISSING_RECORD: u64 = 7;
 
@@ -317,13 +327,19 @@ fun a_mint_with_a_balance_equal_to_the_fee_aborts() {
     abort 999
 }
 
-/// One unit above the fee passes the queue's fee check; the 1-unit budget then
-/// fails the minimum premium in Predict's admission dry run.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_mint_one_unit_above_the_fee_reaches_the_dry_run() {
+/// One unit above the fee passes the queue's fee check, and the order goes in:
+/// placement reads no price. Its 1-unit budget is its cost cap, which the fill
+/// misses at τ (reason 1).
+#[test]
+fun a_mint_one_unit_above_the_fee_goes_in_and_misses_its_cost_cap_at_tau() {
     let (mut q, _) = fixture::new().new_trader(test_constants::bob(), ORDER_FEE + 1);
-    enqueue_small(&mut q);
-    abort 999
+    let record_id = enqueue_small(&mut q);
+    let (refunded, reason, fee_returned) = refund_at(&mut q, MINT_TAU_MS);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 /// A sell escrows only the fee, so a balance equal to it is enough.
@@ -350,43 +366,73 @@ fun a_sell_with_a_balance_below_the_fee_aborts() {
 
 // === Predict's admission dry run ===
 
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_mint_above_its_probability_cap_at_t0_aborts() {
+/// Placement reads no price, so the order goes in and the fill refunds it at τ.
+#[test]
+fun a_mint_above_its_probability_cap_is_refunded_at_tau() {
     let mut q = fixture::new();
-    q.enqueue_quantity(
+    let record_id = q.enqueue_quantity(
         helpers::strike_tick(),
         helpers::pos_inf_tick(),
         test_constants::mint_quantity(),
         WIDE_MAX_COST,
         LOW_MAX_PROBABILITY,
     );
-    abort 999
+    let (refunded, reason, fee_returned) = refund_at(&mut q, MINT_TAU_MS);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_mint_costing_more_than_its_cap_at_t0_aborts() {
+/// Placement reads no price, so the order goes in and the fill refunds it at τ.
+#[test]
+fun a_mint_costing_more_than_its_cap_is_refunded_at_tau() {
     let mut q = fixture::new();
-    q.enqueue_atm(test_constants::mint_quantity(), LOW_MAX_COST);
-    abort 999
+    let record_id = q.enqueue_atm(test_constants::mint_quantity(), LOW_MAX_COST);
+    let (refunded, reason, fee_returned) = refund_at(&mut q, MINT_TAU_MS);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_budget_below_the_minimum_premium_aborts() {
+/// Placement reads no price, so the order goes in. The premium its budget buys
+/// at τ is below the minimum, which the fill refuses as admission (reason 2).
+#[test]
+fun a_budget_below_the_minimum_premium_is_refunded_at_tau() {
     let mut q = fixture::new();
-    q.enqueue_cost(
+    let record_id = q.enqueue_cost(
         helpers::strike_tick(),
         helpers::pos_inf_tick(),
         BELOW_MIN_PREMIUM,
         NO_MIN_QUANTITY,
     );
-    abort 999
+    let (refunded, reason, fee_returned) = refund_at(&mut q, MINT_TAU_MS);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_admission());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_sell_below_its_probability_floor_at_t0_aborts() {
+/// Placement reads no price, so the order goes in and the fill refunds it at τ.
+#[test]
+fun a_sell_below_its_probability_floor_is_refunded_at_tau() {
     let mut q = open_record_market();
-    q.enqueue_sell(FIRST_RECORD, test_constants::mint_quantity(), HIGH_MIN_PROBABILITY, UNUSED);
-    abort 999
+    let record_id = q.enqueue_sell(
+        FIRST_RECORD,
+        test_constants::mint_quantity(),
+        HIGH_MIN_PROBABILITY,
+        UNUSED,
+    );
+    let (refunded, reason, fee_returned) = refund_at(&mut q, SELL_TAU_MS);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 // === Predict's spare-cash check ===
@@ -571,4 +617,14 @@ fun trader_address(index: u64): address {
 fun assert_pending_mints(q: &QueueTest, expected: u64) {
     let (pending_mints, _) = q.queue().pending_counts();
     assert_eq!(pending_mints, expected);
+}
+
+/// Commit the waiting order at `tau` at the live price, resolve it, and return
+/// the refunded record, its reason, and the order fee it returned.
+fun refund_at(q: &mut QueueTest, tau: u64): (u64, u8, u64) {
+    q.commit_at(tau, fixture::live_price());
+    assert_eq!(q.resolve(RESOLVE_ALL_ORDERS), 1);
+    let refunds = events::refunds();
+    let refund = refunds[refunds.length() - 1];
+    (refund.refund_record_id(), refund.refund_reason(), refund.refund_order_fee_returned())
 }

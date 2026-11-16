@@ -4,8 +4,7 @@
 /// Predict's version floor above the Predict version this companion links: a
 /// Predict floor bumped before the companion relinked. Every walker that calls
 /// one of Predict's primitives aborts at Predict's floor and moves nothing,
-/// while `cleanup`, the queue reads, and `quote_redeem_open`, which only read
-/// Predict, keep working and the waiting escrow stays where it was. Restoring
+/// while `cleanup` and the queue reads, which only read Predict, keep working and the waiting escrow stays where it was. Restoring
 /// the floor (the relink's stand-in here) lets refunds and settlement finish.
 ///
 /// Orders are 100m mints over `(strike, +inf]` with a 90 USDC budget on the
@@ -96,9 +95,6 @@ fun reads_and_the_sell_quote_work_above_the_floor_and_refunds_resume_once_restor
     let (pending_mints, pending_sells) = q.queue().pending_counts();
     assert_eq!(pending_mints, 1);
     assert_eq!(pending_sells, 0);
-    let pricer = q.load_pricer();
-    let quote = q.quote_redeem_open(&pricer, filled, QUANTITY);
-    assert_eq!(quote.redeem_close_quantity(), QUANTITY);
     assert_eq!(q.record(filled).status(), order_queue::status_open());
     q.assert_invariants();
 

@@ -47,7 +47,6 @@ const NO_PYTH_OBSERVATION_MS: u64 = 0;
 /// follow, so the fallback forward and a Pyth-anchored one disagree.
 const MOVED_BLOCK_SCHOLES_PRICE: u64 = 110_000_000_000;
 /// Idle seed large enough to bootstrap PLP supply and fund one market.
-const IDLE_SEED: u64 = 1_200_000_000_000;
 
 /// Leave the Pyth spot at its seed (`live_source_timestamp_ms`) and move the
 /// clock and the Block Scholes surface `age_ms` past it. Every other input stays
@@ -518,64 +517,6 @@ fun current_nav_on_a_stale_pyth_spot_still_prices() {
     // Guard against a vacuous match: a fresh Pyth spot at the seeded level
     // re-anchors the forward away from the moved surface and marks differently.
     fx.set_use_pyth_spot_for_forward_bundle(&mut market, true);
-    fx.set_pyth_price_for_testing_bundle(
-        &mut market,
-        test_constants::default_live_price(),
-        stale_at_ms,
-    );
-    assert!(fx.current_nav_bundle(&market) != nav_on_block_scholes);
-
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-/// The flush snapshot loads each market's pricer on the same fallback, so a gap
-/// in Pyth updates does not stall pool valuation: with Pyth selected but stale,
-/// the market is snapshotted, valued, and folded into the pool mark at its Block
-/// Scholes-forward NAV, the mark it has with Pyth deselected, not the one a fresh
-/// Pyth spot would give it.
-#[test]
-fun flush_on_a_stale_pyth_spot_completes() {
-    let mut fx = helpers::setup_market_default();
-    let trader = fx.create_funded_manager(test_constants::mint_deposit());
-    fx.bootstrap_lock(IDLE_SEED);
-    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(expiry_id);
-    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.rebalance_expiry_cash_bundle(&mut market);
-    helpers::return_market_bundle(market);
-    // An open position gives the mark a liability that depends on the forward.
-    open_position(&mut fx, expiry_id, &trader);
-
-    // The state every live trade above refuses to execute in, with the surface
-    // moved away from the stale Pyth spot so the two forwards mark differently.
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let stale_at_ms = test_constants::live_source_timestamp_ms() + PYTH_WINDOW_MS + 1;
-    fx.advance_block_scholes_bundle_to(&mut market, MOVED_BLOCK_SCHOLES_PRICE, stale_at_ms);
-    // The reference mark reads no Pyth at all.
-    fx.set_use_pyth_spot_for_forward_bundle(&mut market, false);
-    let nav_on_block_scholes = fx.current_nav_bundle(&market);
-    fx.set_use_pyth_spot_for_forward_bundle(&mut market, true);
-
-    // The forward move takes the up position deep into the money, so the market
-    // is worth less than the cash the pool sent it and nothing has settled: no
-    // protocol profit share is held out, and the pool mark is idle plus the
-    // market's NAV.
-    let vault = helpers::vault(&market);
-    assert!(vault.profit_basis_credits() + nav_on_block_scholes < vault.profit_basis_debits());
-    assert_eq!(vault.pending_protocol_profit(), 0);
-    let expected_pool_nav = vault.idle_balance() + nav_on_block_scholes;
-
-    fx.start_flush_bundle(&mut market);
-    assert!(helpers::market(&market).is_pending_valuation(helpers::config(&market)));
-    fx.value_expiry_bundle(&mut market);
-    assert_eq!(fx.finish_flush_bundle(&mut market), expected_pool_nav);
-
-    // Guard against a vacuous match: a fresh Pyth spot at the seeded level
-    // re-anchors the forward away from the moved surface and marks differently.
     fx.set_pyth_price_for_testing_bundle(
         &mut market,
         test_constants::default_live_price(),

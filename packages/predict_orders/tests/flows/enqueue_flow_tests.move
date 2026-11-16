@@ -62,10 +62,9 @@ const QUANTITY_MAX_PROBABILITY: u64 = 600_000_000;
 /// min(max_cost 600_000_000, available 1_000_000_000 - fee 20_000, quantity
 /// 1_000_000_000).
 const QUANTITY_BUDGET: u64 = 600_000_000;
-/// The t₀ pre-subsidy trading fee. At base fee 1 the Bernoulli rate rounds to
-/// 0, so the 0.005 minimum fee binds a year from expiry with no ramp: 0.005 *
-/// 1_000_000_000 = 5_000_000, below the budget.
-const QUANTITY_SUBSIDY_BOUND: u64 = 5_000_000;
+/// Admission reads no price, so a mint's subsidy bound is 0 until its commit
+/// prices it at τ (the record keeps the value it was placed with).
+const QUANTITY_SUBSIDY_BOUND: u64 = 0;
 /// ceil(1_000_000_000 * (1 - 0.01)) + 1.
 const QUANTITY_CASH_NEED: u64 = 990_000_001;
 

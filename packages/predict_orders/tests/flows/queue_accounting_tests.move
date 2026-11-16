@@ -106,11 +106,11 @@ fun a_subsidized_fill_uses_its_reservation_once() {
     q.finish();
 }
 
-/// A premium-budget mint sized at t₀ to 4m reserves 20% of that fee, then buys
-/// fewer contracts at a higher price and pays a smaller fee. The unused part of
-/// the reservation goes back to the incentives at the fill.
+/// A premium-budget mint's commit prices it at τ, where it buys fewer contracts
+/// at a higher price, and reserves 20% of that τ fee. Its size depends only on the
+/// premium, so the fill pays the same fee and uses the whole reservation.
 #[test]
-fun a_partly_used_reservation_returns_the_rest_at_the_fill() {
+fun a_commit_reserves_the_subsidy_of_the_tau_fee_and_the_fill_uses_it() {
     let mut q = fixture::new();
     q.fund_incentives(INCENTIVES);
     let record_id = q.enqueue_amount(
@@ -121,20 +121,19 @@ fun a_partly_used_reservation_returns_the_rest_at_the_fill() {
         MAX_COST,
     );
     q.commit_at(TAU, LIMIT_SPOT);
-    assert_eq!(q.record(record_id).escrow().subsidy_reserved(), RESERVED_SUBSIDY);
+    let reserved = q.record(record_id).escrow().subsidy_reserved();
     let incentives_after_commit = q.market().fee_incentive_balance();
 
     assert_eq!(q.resolve(RESOLVE_ALL), 1);
 
     let fill = events::fills()[0];
     let used = fill.subsidy_used();
-    assert!(used > 0 && used < RESERVED_SUBSIDY);
     assert!(fill.quantity() < QUANTITY);
+    // 20% of the fee, floored: `mul_down(fee, 0.2)` is `fee / 5`.
+    assert_eq!(used, fill.trading_fee() / 5);
+    assert_eq!(used, reserved);
     // Conservation: the reservation is either used or back in the incentives.
-    assert_eq!(
-        q.market().fee_incentive_balance(),
-        incentives_after_commit + (RESERVED_SUBSIDY - used),
-    );
+    assert_eq!(q.market().fee_incentive_balance(), incentives_after_commit + (reserved - used));
     assert_eq!(q.record(record_id).funds(), 0);
     assert_fill_ledger(&q);
     q.assert_backed();

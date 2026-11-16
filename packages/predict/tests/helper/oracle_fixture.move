@@ -90,7 +90,8 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
-    let config = scenario.take_shared<ProtocolConfig>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
+    test_helpers::set_oracle_binding(&mut config, &admin_cap, 9, scenario.ctx());
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
         &config,
@@ -128,7 +129,6 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     scenario.next_tx(test_constants::admin());
     let mut vault = scenario.take_shared<PoolVault>();
     let mut registry = scenario.take_shared<Registry>();
-    let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
@@ -137,19 +137,20 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &admin_cap,
         scenario.ctx(),
     );
-    let expiry_id = registry.create_and_share_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &creation_clock,
         scenario.ctx(),
     );
     creation_clock.destroy_for_testing();
     return_shared(config);
-    return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
 
@@ -902,6 +903,8 @@ public fun oracle_registry(oracle: &OracleBundle): &OracleRegistry { &oracle.ora
 
 public fun config(oracle: &OracleBundle): &ProtocolConfig { &oracle.config }
 
+public fun config_mut(oracle: &mut OracleBundle): &mut ProtocolConfig { &mut oracle.config }
+
 /// Tighten the live Pyth freshness window below the Block Scholes price window, restoring the
 /// stale-Pyth/fresh-BS gap that the equal production defaults no longer provide.
 public fun set_pyth_spot_freshness_for_testing(
@@ -913,6 +916,8 @@ public fun set_pyth_spot_freshness_for_testing(
 }
 
 public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }
+
+public fun admin_cap(self: &OracleFixture): &AdminCap { &self.admin_cap }
 
 public fun clock(self: &OracleFixture): &Clock { &self.clock }
 

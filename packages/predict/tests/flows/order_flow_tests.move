@@ -32,13 +32,16 @@ use deepbook_predict::{
     flow_test_helpers::{Self as helpers, Fixture, MarketBundle, AccountBundle},
     order,
     order_events,
+    pricing,
     protocol_config,
+    signed_data,
     test_constants,
     test_helpers,
     usdc_deny_list
 };
-use deepbook_predict_math::lazer_price::{Self, LazerPrice};
-use std::unit_test::{assert_eq, destroy};
+use deepbook_predict_math::{block_scholes::{Self, BsVol}, lazer_price::{Self, LazerPrice}};
+use fixed_math::i64;
+use std::{string::String, unit_test::{assert_eq, destroy}};
 use sui::{
     balance::{Self, Balance},
     bcs,
@@ -195,6 +198,16 @@ const ROUNDED_DOWN_FEE: u64 = 29_999;
 /// 2_004_974 + 40_100 = 2_045_074. Searched at 1x the same budget would buy
 /// 4.03m (2_014_974 + 20_150 = 2_035_124), whose 2x fee is over budget.
 const BANDED_BUDGET_QUANTITY: u64 = 4_000_000;
+/// τ's canonical Block Scholes slots at the launch lags: spot and forward at the 500 ms
+/// boundary at or before τ - 500, SVI at the 1 s boundary at or before τ - 1_000.
+const VALUE_SLOT_MS: u64 = 120_500;
+const SVI_SLOT_MS: u64 = 120_000;
+/// `constants::max_svi_max_age_ms!()`: the oldest input a commit takes, before τ.
+const MAX_VOL_AGE_MS: u64 = 120_000;
+const ONE_MINUTE_MS: u64 = 60_000;
+/// One past the highest mint kind.
+const UNKNOWN_KIND: u8 = 3;
+const LOT: u64 = 10_000;
 
 // === Mints ===
 
@@ -224,12 +237,15 @@ fun a_mint_admits_commits_and_fills_into_a_canonical_open_receipt() {
     assert_eq!(order_id, 0);
     assert_eq!(feed_id, test_constants::pyth_feed_id());
     assert_eq!(cash_need, MINT_CASH_NEED);
-    // The t₀ trading fee, below the budget.
-    assert_eq!(subsidy_bound, TRADING_FEE);
+    // Admission reads no price, so the subsidy bound waits for the commit.
+    assert_eq!(subsidy_bound, 0);
 
     // The market holds no incentives, so the reservation is empty.
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     assert_eq!(subsidy.value(), 0);
+    // The commit set the bound to the trading fee at τ, below the budget.
+    let (_, _, _, _, _, _, committed_bound, _) = expiry_market::receipt_info(&receipt);
+    assert_eq!(committed_bound, TRADING_FEE);
     let cash_before = helpers::market(&market).cash_balance();
     let (reason, kept, change, quantity, amount, fee, builder, referral, used, impact) = fill(
         &mut fx,
@@ -403,7 +419,7 @@ fun quote_mint_prices_like_a_queued_fill_at_the_clock() {
     let (mut fx, market, account) = setup();
     let pricer = fx.load_pricer_bundle(&market);
     let (clock, ctx) = fx.clock_and_ctx();
-    let quote = helpers::market(&market).quote_mint(
+    let quote = helpers::market(&market).quote_mint_v5_for_testing(
         helpers::config(&market),
         &pricer,
         helpers::strike_tick(),
@@ -566,7 +582,7 @@ fun quote_close_prices_the_close_a_sell_fills() {
     let (mut fx, mut market, account, receipt) = filled_mint();
     fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
     let pricer = fx.load_pricer_bundle(&market);
-    let quote = helpers::market(&market).quote_close(
+    let quote = helpers::market(&market).quote_close_v5_for_testing(
         &pricer,
         &receipt,
         HALF,
@@ -619,19 +635,16 @@ fun a_settled_payout_the_market_cannot_cover_returns_the_receipt() {
 #[test, expected_failure(abort_code = protocol_config::EOrderFlowNotAllowed)]
 fun admitting_with_a_witness_no_one_allowlisted_aborts() {
     let (mut fx, mut market, mut account) = setup();
-    let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (em, config, _, _, _) = market.market_parts_mut();
     let (wrapper, _) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let holder = wrapper.load_account_mut(account::generate_auth(ctx));
-    let receipt = expiry_market::admit_mint(
+    let receipt = expiry_market::admit_mint_v2(
         OtherFlow(),
         em,
         config,
         holder,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
+        option::none(),
         constants::mint_kind_exact_quantity!(),
         helpers::strike_tick(),
         helpers::pos_inf_tick(),
@@ -641,12 +654,10 @@ fun admitting_with_a_witness_no_one_allowlisted_aborts() {
         NO_PROBABILITY_CAP,
         BUDGET,
         ORDER_FEE,
-        SVI_MAX_AGE_MS,
         CHANNEL_200MS,
         TAU,
         TAU + DEADLINE_AFTER_TAU_MS,
         clock,
-        ctx,
     );
     destroy(receipt);
     abort 999
@@ -1216,10 +1227,11 @@ fun a_builder_fee_up_to_the_budget_admits_and_fills_at_it() {
     finish(fx, market, account);
 }
 
-/// One fee step more prices the all-in cost one unit past BUDGET, so admission
-/// refuses the order: its dry run is the fill's own predicate.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_builder_fee_one_unit_past_the_budget_is_refused() {
+/// One fee step more prices the all-in cost one unit past BUDGET. Admission reads
+/// no price, so it admits the order, and the fill refunds it on its own limits
+/// (reason 1) and keeps the order fee.
+#[test]
+fun a_builder_fee_one_unit_past_the_budget_is_refunded_at_the_tick() {
     let (mut fx, expiry_id, trader) = live_setup(test_constants::default_expiry_ms());
     let code_id = fx.create_builder_code(BUILDER_CODE_INDEX, &trader);
     fx.scenario_mut().next_tx(trader.owner());
@@ -1227,9 +1239,22 @@ fun a_builder_fee_one_unit_past_the_budget_is_refused() {
     fx.set_builder_fee_cap_bundle(&mut market, WHOLE_PAYOUT_FEE);
     let mut account = fx.take_account_bundle(&trader);
     let builder = fx.builder_fee(code_id, FEE_PAST_BUDGET);
-    let receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
-    destroy(receipt);
-    abort 999
+    let mut receipt = admit_builder(&mut fx, &mut market, &mut account, builder);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let (reason, kept, change, _, amount, _, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+    assert_eq!(reason, constants::fill_reason_limits!());
+    assert_eq!(amount, 0);
+    assert!(kept.is_none());
+    // Reason 1 keeps the order fee: only the budget comes back.
+    assert_eq!(change.value(), BUDGET);
+    kept.destroy_none();
+    destroy(change);
+    finish(fx, market, account);
 }
 
 /// A plain sell of a position a builder's mint opened pays that builder nothing:
@@ -1389,66 +1414,65 @@ fun a_plain_sell_before_the_builder_fee_cutover_admits_and_fills() {
     finish(fx, market, account);
 }
 
-/// The frozen plain `admit_mint` admits exactly as `admit_mint_with_builder`
-/// naming no builder, which the companion now calls for every mint: the same
-/// receipt facts, no builder fee, and the same cash need on the ledger.
-#[test]
-fun the_plain_mint_admission_matches_a_builder_admission_naming_none() {
+/// The admissions and commit earlier versions published read Propbook objects or
+/// commit Lazer only. Each aborts `EUseV2`.
+#[test, expected_failure(abort_code = expiry_market::EUseV2)]
+fun the_plain_mint_admission_is_retired() {
     let (mut fx, mut market, mut account) = setup();
-    let plain = admit_plain(&mut fx, &mut market, &mut account);
-    let (waiting_after_plain, _, _) = helpers::market(&market).order_flow_state();
-    let named_none = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
-    let (waiting_after_both, _, _) = helpers::market(&market).order_flow_state();
-
-    assert_eq!(waiting_after_plain, MINT_CASH_NEED);
-    assert_eq!(waiting_after_both, 2 * MINT_CASH_NEED);
-    assert_receipts_match(&plain, &named_none, constants::receipt_stage_mint!(), MINT_CASH_NEED);
-    assert_eq!(plain.builder_fee_per_contract(), 0);
-    assert_eq!(named_none.builder_fee_per_contract(), 0);
-
-    // Both fill alike, which pins the terms `receipt_info` does not show.
-    fill_plain_mint(&mut fx, &mut market, plain);
-    fill_plain_mint(&mut fx, &mut market, named_none);
-    let (first_fee, first_code) = minted_builder_of(2, 0);
-    let (second_fee, second_code) = minted_builder_of(2, 1);
-    assert_eq!(first_fee, 0);
-    assert_eq!(first_code, option::none());
-    assert_eq!(second_fee, 0);
-    assert_eq!(second_code, option::none());
-    finish(fx, market, account);
+    let receipt = admit_plain(&mut fx, &mut market, &mut account);
+    destroy(receipt);
+    abort 999
 }
 
-/// The frozen plain `admit_sell` admits exactly as `admit_sell_with_builder`
-/// naming no builder: two equal open positions move to the same sell facts.
-#[test]
-fun the_plain_sell_admission_matches_a_builder_admission_naming_none() {
+#[test, expected_failure(abort_code = expiry_market::EUseV2)]
+fun the_builder_mint_admission_of_version_5_is_retired() {
     let (mut fx, mut market, mut account) = setup();
-    let mut plain = mint_and_fill(&mut fx, &mut market, &mut account);
-    let mut named_none = mint_and_fill(&mut fx, &mut market, &mut account);
-    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
-    let (waiting_before, _, _) = helpers::market(&market).order_flow_state();
+    let receipt = admit_v5_builder(&mut fx, &mut market, &mut account);
+    destroy(receipt);
+    abort 999
+}
 
-    admit_sell_plain(&mut fx, &mut market, &mut account, &mut plain);
-    let (waiting_after_plain, _, _) = helpers::market(&market).order_flow_state();
-    admit_sell(&mut fx, &mut market, &mut account, &mut named_none, HALF, 0, SELL_TAU);
-    let (waiting_after_both, _, _) = helpers::market(&market).order_flow_state();
+#[test, expected_failure(abort_code = expiry_market::EUseV2)]
+fun the_plain_sell_admission_is_retired() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    admit_sell_plain(&mut fx, &mut market, &mut account, &mut receipt);
+    destroy(receipt);
+    abort 999
+}
 
-    assert_eq!(waiting_after_plain - waiting_before, HALF_CASH_NEED);
-    assert_eq!(waiting_after_both - waiting_after_plain, HALF_CASH_NEED);
-    assert_receipts_match(&plain, &named_none, constants::receipt_stage_sell!(), HALF_CASH_NEED);
-    assert_eq!(plain.builder_fee_per_contract(), 0);
-    assert_eq!(named_none.builder_fee_per_contract(), 0);
+#[test, expected_failure(abort_code = expiry_market::EUseV2)]
+fun the_builder_sell_admission_of_version_5_is_retired() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    admit_sell_v5_builder(&mut fx, &mut market, &mut account, &mut receipt);
+    destroy(receipt);
+    abort 999
+}
 
-    // Both fill alike, which pins the terms `receipt_info` does not show.
-    fill_plain_half_sell(&mut fx, &mut market, plain);
-    fill_plain_half_sell(&mut fx, &mut market, named_none);
-    let (first_fee, first_code) = redeemed_builder_of(2, 0);
-    let (second_fee, second_code) = redeemed_builder_of(2, 1);
-    assert_eq!(first_fee, 0);
-    assert_eq!(first_code, option::none());
-    assert_eq!(second_fee, 0);
-    assert_eq!(second_code, option::none());
-    finish(fx, market, account);
+#[test, expected_failure(abort_code = expiry_market::EUseV2)]
+fun the_lazer_only_commit_is_retired() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    fx.set_clock_for_testing(TAU);
+    let committed = price(
+        test_constants::pyth_feed_id(),
+        CHANNEL_200MS,
+        TAU * US_PER_MS,
+        TAU * US_PER_MS,
+    );
+    let (em, config, _, _, _) = market.market_parts_mut();
+    let subsidy = expiry_market::commit(
+        TestFlow(),
+        em,
+        config,
+        &mut receipt,
+        &committed,
+        fx.clock(),
+    );
+    destroy(subsidy);
+    destroy(receipt);
+    abort 999
 }
 
 /// A sell naming a fee of `u64::MAX` is charged at the shipped 5c cap: the
@@ -1914,7 +1938,7 @@ fun quote_close_with_builder_fee_prices_the_builders_sell() {
     let (mut fx, mut market, account, receipt) = filled_mint();
     fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
     let pricer = fx.load_pricer_bundle(&market);
-    let quote = helpers::market(&market).quote_close_with_builder_fee(
+    let quote = helpers::market(&market).quote_close_with_builder_fee_v5_for_testing(
         helpers::config(&market),
         &pricer,
         &receipt,
@@ -1925,7 +1949,7 @@ fun quote_close_with_builder_fee_prices_the_builders_sell() {
     assert_eq!(quote.redeem_builder_fee(), HALF_BUILDER_FEE);
     assert_eq!(quote.redeem_proceeds(), HALF_PROCEEDS_WITH_BUILDER);
     // A `u64::MAX` fee is quoted at the shipped 5c cap, as admission caps it.
-    let at_cap = helpers::market(&market).quote_close_with_builder_fee(
+    let at_cap = helpers::market(&market).quote_close_with_builder_fee_v5_for_testing(
         helpers::config(&market),
         &pricer,
         &receipt,
@@ -1938,7 +1962,7 @@ fun quote_close_with_builder_fee_prices_the_builders_sell() {
     // At a whole-payout cap and fee the quote clamps the fee at the redeem value
     // left after the trading fee, as the fill does.
     fx.set_builder_fee_cap_bundle(&mut market, WHOLE_PAYOUT_FEE);
-    let clamped = helpers::market(&market).quote_close_with_builder_fee(
+    let clamped = helpers::market(&market).quote_close_with_builder_fee_v5_for_testing(
         helpers::config(&market),
         &pricer,
         &receipt,
@@ -1948,7 +1972,7 @@ fun quote_close_with_builder_fee_prices_the_builders_sell() {
     );
     assert_eq!(clamped.redeem_builder_fee(), HALF_REDEEM - HALF_FEE);
     assert_eq!(clamped.redeem_proceeds(), 0);
-    let plain = helpers::market(&market).quote_close(
+    let plain = helpers::market(&market).quote_close_v5_for_testing(
         &pricer,
         &receipt,
         HALF,
@@ -2160,12 +2184,13 @@ fun the_instant_mint_is_retired() {
 
 // === SVI at 18 decimals ===
 
-/// At 18 decimals the admission records the full-precision tuple and the fill prices from it,
-/// not from the receipt's 1e9 snapshot: `a = 1.4e-9` is snapshotted as one raw unit, a 40%
-/// variance error on this surface.
+/// Inputs signed at 18 decimals under an 18-decimal binding price from the full-precision
+/// tuple the commit keeps in the market's SVI cache, not from the receipt's 1e9 snapshot:
+/// `a = 1.4e-9` is snapshotted as one raw unit, a 40% variance error on this surface.
 #[test]
-fun a_fill_on_an_eighteen_decimal_store_prices_from_the_recorded_tuple() {
+fun a_fill_from_eighteen_decimal_inputs_prices_from_the_full_precision_tuple() {
     let (mut fx, mut market, mut account) = setup();
+    set_binding_decimals(&fx, &mut market, HIGH_PRECISION_SVI_DECIMALS);
     fx.set_svi_decimals_bundle(&mut market, HIGH_PRECISION_SVI_DECIMALS);
     seed_precise_svi(&mut fx, &mut market);
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
@@ -2188,14 +2213,11 @@ fun a_fill_on_an_eighteen_decimal_store_prices_from_the_recorded_tuple() {
     finish(fx, market, account);
 }
 
-/// A receipt admitted while the store was at 9 decimals has no recorded tuple, so its fill prices
-/// from the snapshot as before, even after the store moves to 18.
+/// Inputs signed at 9 decimals price from the receipt's 1e9 snapshot.
 #[test]
-fun a_receipt_admitted_at_nine_decimals_fills_from_its_snapshot() {
+fun a_fill_from_nine_decimal_inputs_prices_from_its_snapshot() {
     let (mut fx, mut market, mut account) = setup();
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
-    fx.set_svi_decimals_bundle(&mut market, HIGH_PRECISION_SVI_DECIMALS);
-    seed_precise_svi(&mut fx, &mut market);
     let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
     let (reason, kept, change, _, _, _, _, _, _, _) = fill(
         &mut fx,
@@ -2215,19 +2237,20 @@ fun a_receipt_admitted_at_nine_decimals_fills_from_its_snapshot() {
     finish(fx, market, account);
 }
 
-/// A receipt admitted at 9 decimals picks up full precision when a later admission caches the same
-/// publication at 18: the store switches, the provider's 18-decimal series carries the receipt's own
-/// SVI source time, and a second order admits on it. The fill keeps the receipt's `rho`, `m`, and
-/// `sigma` and takes `a` and `b` at 1e18, which round to the receipt's own, so it prices that
-/// calibration at full precision rather than its 1e9 rounding.
+/// Inputs from 18 decimals under an 18-decimal binding commit an order that waits on another
+/// one committed at 9 decimals under the binding before it moved, the same publication time: the
+/// cached tuple's `a` and `b` round to the earlier order's own, so that order also fills at full
+/// precision rather than its 1e9 rounding.
 #[test]
 fun a_nine_decimal_receipt_fills_at_full_precision_once_its_publication_is_cached() {
     let (mut fx, mut market, mut account) = setup();
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let mut second = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
+    set_binding_decimals(&fx, &mut market, HIGH_PRECISION_SVI_DECIMALS);
     fx.set_svi_decimals_bundle(&mut market, HIGH_PRECISION_SVI_DECIMALS);
     seed_precise_svi_at(&mut fx, &mut market, test_constants::live_source_timestamp_ms());
-    let second = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
-    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, LIMIT_SPOT);
+    let second_subsidy = commit_at(&mut fx, &mut market, &mut second, TAU, LIMIT_SPOT);
     let (reason, kept, change, _, _, _, _, _, _, _) = fill(
         &mut fx,
         &mut market,
@@ -2242,23 +2265,397 @@ fun a_nine_decimal_receipt_fills_at_full_precision_once_its_publication_is_cache
         PRECISE_FILL_BUDGET,
     );
     destroy(second);
+    destroy(second_subsidy);
     destroy(change);
     destroy(kept);
     finish(fx, market, account);
+}
+
+/// Move the oracle binding's SVI decimals, keeping its feed, channel, base asset, and model.
+fun set_binding_decimals(fx: &Fixture, market: &mut MarketBundle, decimals: u8) {
+    helpers::config_mut(market).set_oracle_binding(
+        fx.admin_cap(),
+        test_constants::propbook_underlying_id(),
+        test_constants::pyth_feed_id(),
+        test_helpers::binding_channel(),
+        test_constants::block_scholes_base_asset(),
+        test_helpers::binding_svi_model(),
+        decimals,
+        fx.clock(),
+    );
+}
+
+// === Version 6: oracle-free admission and commit_v2 ===
+
+/// Admission reads no oracle: a market whose feeds hold nothing admits a mint, and
+/// the receipt carries only the binding's Lazer feed until the commit.
+#[test]
+fun admission_reads_no_oracle_data() {
+    let (mut fx, mut market, mut account) = setup();
+    let receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let (_, _, _, _, feed_id, _, _, vol) = expiry_market::receipt_info(&receipt);
+    assert_eq!(feed_id, test_constants::pyth_feed_id());
+    assert_eq!(pricing::bs_spot(&vol), 0);
+    assert_eq!(pricing::svi_source_timestamp_ms(&vol), 0);
+    destroy(receipt);
+    finish(fx, market, account);
+}
+
+/// The commit writes the τ inputs into the receipt's snapshot.
+#[test]
+fun commit_v2_records_the_block_scholes_inputs() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let vol = vol_at(&market, VALUE_SLOT_MS, SVI_SLOT_MS);
+    let subsidy = commit_vol(&mut fx, &mut market, &mut receipt, &vol);
+    let (_, _, _, _, _, _, _, snapshot) = expiry_market::receipt_info(&receipt);
+    assert_eq!(pricing::bs_spot(&snapshot), vol.spot());
+    assert_eq!(pricing::bs_forward(&snapshot), vol.forward());
+    assert_eq!(pricing::bs_spot_source_timestamp_ms(&snapshot), VALUE_SLOT_MS);
+    assert_eq!(pricing::bs_forward_source_timestamp_ms(&snapshot), VALUE_SLOT_MS);
+    assert_eq!(pricing::svi_source_timestamp_ms(&snapshot), SVI_SLOT_MS);
+    assert_eq!(pricing::svi_sigma(&snapshot), vol.sigma());
+    destroy(subsidy);
+    destroy(receipt);
+    finish(fx, market, account);
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_with_another_base_asset_aborts() {
+    commit_wrong_vol(
+        test_constants::foreign_block_scholes_base_asset(),
+        b"SVI".to_string(),
+        9,
+        0,
+        VALUE_SLOT_MS,
+        SVI_SLOT_MS,
+    );
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_with_another_svi_model_aborts() {
+    commit_wrong_vol(
+        test_constants::block_scholes_base_asset(),
+        b"SVI_REGIME".to_string(),
+        9,
+        0,
+        VALUE_SLOT_MS,
+        SVI_SLOT_MS,
+    );
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_with_other_svi_decimals_aborts() {
+    commit_wrong_vol(
+        test_constants::block_scholes_base_asset(),
+        b"SVI".to_string(),
+        18,
+        0,
+        VALUE_SLOT_MS,
+        SVI_SLOT_MS,
+    );
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_for_another_expiry_aborts() {
+    commit_wrong_vol(
+        test_constants::block_scholes_base_asset(),
+        b"SVI".to_string(),
+        9,
+        ONE_MINUTE_MS,
+        VALUE_SLOT_MS,
+        SVI_SLOT_MS,
+    );
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_with_a_value_after_tau_aborts() {
+    commit_wrong_vol(
+        test_constants::block_scholes_base_asset(),
+        b"SVI".to_string(),
+        9,
+        0,
+        TAU + 1,
+        SVI_SLOT_MS,
+    );
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_with_svi_after_tau_aborts() {
+    commit_wrong_vol(
+        test_constants::block_scholes_base_asset(),
+        b"SVI".to_string(),
+        9,
+        0,
+        VALUE_SLOT_MS,
+        TAU + 1,
+    );
+}
+
+/// `constants::max_svi_max_age_ms!()` (120 s) before τ is the oldest an input may be.
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
+fun commit_v2_with_svi_older_than_the_ceiling_aborts() {
+    commit_wrong_vol(
+        test_constants::block_scholes_base_asset(),
+        b"SVI".to_string(),
+        9,
+        0,
+        VALUE_SLOT_MS,
+        TAU - MAX_VOL_AGE_MS - 1,
+    );
+}
+
+#[test]
+fun commit_v2_accepts_svi_exactly_at_the_ceiling() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let vol = vol_at(&market, VALUE_SLOT_MS, TAU - MAX_VOL_AGE_MS);
+    let subsidy = commit_vol(&mut fx, &mut market, &mut receipt, &vol);
+    let (_, _, _, _, _, _, _, snapshot) = expiry_market::receipt_info(&receipt);
+    assert_eq!(pricing::svi_source_timestamp_ms(&snapshot), TAU - MAX_VOL_AGE_MS);
+    destroy(subsidy);
+    destroy(receipt);
+    finish(fx, market, account);
+}
+
+/// Inputs that leave the pricing envelope build no price at the tick: the fill refunds
+/// with reason 10 and returns the order fee with the budget.
+#[test]
+fun inputs_outside_the_envelope_refund_with_reason_10_and_return_the_fee() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let good = vol_at(&market, VALUE_SLOT_MS, SVI_SLOT_MS);
+    // `rho` past 1 leaves `pmath::inputs_ok`.
+    let bad = block_scholes::new_vol_for_testing(
+        good.base_asset(),
+        good.svi_model(),
+        good.svi_decimals(),
+        good.expiry_ms(),
+        good.value_ms(),
+        good.spot(),
+        good.forward(),
+        good.svi_ms(),
+        good.a_magnitude(),
+        good.a_is_negative(),
+        good.b(),
+        i64::from_u64(2 * test_constants::float()),
+        good.m(),
+        good.sigma(),
+    );
+    let subsidy = commit_vol(&mut fx, &mut market, &mut receipt, &bad);
+    let cash_before = helpers::market(&market).cash_balance();
+    let (reason, kept, change, _, amount, _, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
+    );
+    assert_eq!(reason, constants::fill_reason_no_vol!());
+    assert_eq!(amount, 0);
+    assert!(kept.is_none());
+    assert_eq!(change.value(), BUDGET + ORDER_FEE);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
+    let (waiting, _, _) = helpers::market(&market).order_flow_state();
+    assert_eq!(waiting, 0);
+    kept.destroy_none();
+    destroy(change);
+    finish(fx, market, account);
+}
+
+#[test, expected_failure(abort_code = expiry_market::EInvalidOrderTerms)]
+fun admission_of_an_unknown_mint_kind_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let receipt = admit_kind_range(
+        &mut fx,
+        &mut market,
+        &mut account,
+        UNKNOWN_KIND,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+    );
+    destroy(receipt);
+    abort 999
+}
+
+/// A range off the admission grid, an empty range, and the whole line are refused before
+/// any node is pinned, as the version 5 dry run refused them.
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun admission_of_a_range_off_the_grid_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let receipt = admit_kind_range(
+        &mut fx,
+        &mut market,
+        &mut account,
+        constants::mint_kind_exact_quantity!(),
+        helpers::strike_tick() + 1,
+        helpers::pos_inf_tick(),
+    );
+    destroy(receipt);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun admission_of_an_empty_range_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let receipt = admit_kind_range(
+        &mut fx,
+        &mut market,
+        &mut account,
+        constants::mint_kind_exact_quantity!(),
+        helpers::strike_tick(),
+        helpers::strike_tick(),
+    );
+    destroy(receipt);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun admission_of_the_whole_line_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let receipt = admit_kind_range(
+        &mut fx,
+        &mut market,
+        &mut account,
+        constants::mint_kind_exact_quantity!(),
+        0,
+        helpers::pos_inf_tick(),
+    );
+    destroy(receipt);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun a_sell_above_the_held_position_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    admit_sell(&mut fx, &mut market, &mut account, &mut receipt, QUANTITY + LOT, 0, SELL_TAU);
+    destroy(receipt);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun a_sell_off_the_lot_grid_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    admit_sell(&mut fx, &mut market, &mut account, &mut receipt, HALF + 1, 0, SELL_TAU);
+    destroy(receipt);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
+fun a_zero_sell_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = mint_and_fill(&mut fx, &mut market, &mut account);
+    admit_sell(&mut fx, &mut market, &mut account, &mut receipt, 0, 0, SELL_TAU);
+    destroy(receipt);
+    abort 999
+}
+
+/// The test feeds' latest inputs re-signed with spot and forward at `value_ms` and SVI at
+/// `svi_ms`, decoded under the market's binding.
+fun vol_at(market: &MarketBundle, value_ms: u64, svi_ms: u64): BsVol {
+    let expiry = helpers::market(market).expiry();
+    signed_data::latest_vol_at(helpers::bs(market), expiry, value_ms, svi_ms).destroy_some()
+}
+
+/// Move the clock to TAU and commit the update stamped there at the live price with `vol`.
+fun commit_vol(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    receipt: &mut OrderReceipt,
+    vol: &BsVol,
+): Balance<USDC> {
+    fx.set_clock_for_testing(TAU);
+    let committed = price(
+        test_constants::pyth_feed_id(),
+        CHANNEL_200MS,
+        TAU * US_PER_MS,
+        TAU * US_PER_MS,
+    );
+    let (em, config, _, _, _) = market.market_parts_mut();
+    expiry_market::commit_v2(TestFlow(), em, config, receipt, &committed, vol, fx.clock())
+}
+
+/// Admit and commit an order with a `BsVol` built from the feed's latest values under the
+/// given base asset, model, and decimals, `expiry_offset_ms` past the market's expiry.
+fun commit_wrong_vol(
+    base: String,
+    model: String,
+    decimals: u8,
+    expiry_offset_ms: u64,
+    value_ms: u64,
+    svi_ms: u64,
+) {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let good = vol_at(&market, VALUE_SLOT_MS, SVI_SLOT_MS);
+    let vol = block_scholes::new_vol_for_testing(
+        base,
+        model,
+        decimals,
+        good.expiry_ms() + expiry_offset_ms,
+        value_ms,
+        good.spot(),
+        good.forward(),
+        svi_ms,
+        good.a_magnitude(),
+        good.a_is_negative(),
+        good.b(),
+        good.rho(),
+        good.m(),
+        good.sigma(),
+    );
+    let subsidy = commit_vol(&mut fx, &mut market, &mut receipt, &vol);
+    destroy(subsidy);
+    abort 999
+}
+
+fun admit_kind_range(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    kind: u8,
+    lower_tick: u64,
+    higher_tick: u64,
+): OrderReceipt {
+    let (em, config, _, _, _) = market.market_parts_mut();
+    let (wrapper, _) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let holder = wrapper.load_account_mut(account::generate_auth(ctx));
+    expiry_market::admit_mint_v2(
+        TestFlow(),
+        em,
+        config,
+        holder,
+        option::none(),
+        kind,
+        lower_tick,
+        higher_tick,
+        QUANTITY,
+        0,
+        0,
+        NO_PROBABILITY_CAP,
+        BUDGET,
+        ORDER_FEE,
+        CHANNEL_200MS,
+        TAU,
+        TAU + DEADLINE_AFTER_TAU_MS,
+        clock,
+    )
 }
 
 // === Fee bands ===
 
 /// A market created under a 2x band holding its contract price charges twice
 /// the trading fee on the queued mint fill and on the queued sell fill, and
-/// admission bounds the subsidy by the banded fee.
+/// the commit bounds the subsidy by the banded fee.
 #[test]
 fun a_banded_market_doubles_the_fee_on_mint_and_sell_fills() {
     let (mut fx, mut market, mut account) = banded_setup(vector[FORTY_CENTS, SIXTY_CENTS, TWO_X]);
     let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let (_, _, _, _, _, _, subsidy_bound, _) = expiry_market::receipt_info(&receipt);
     assert_eq!(subsidy_bound, BANDED_TRADING_FEE);
-    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
     let cash_before = helpers::market(&market).cash_balance();
     let (reason, kept, change, quantity, amount, fee, _, _, _, _) = fill(
         &mut fx,
@@ -2302,7 +2699,7 @@ fun a_fee_band_keys_on_the_contract_price() {
     let (mut fx, market, account) = banded_setup(vector[FIFTY_CENTS, SIXTY_CENTS, TWO_X]);
     let pricer = fx.load_pricer_bundle(&market);
     let (clock, ctx) = fx.clock_and_ctx();
-    let up = helpers::market(&market).quote_mint(
+    let up = helpers::market(&market).quote_mint_v5_for_testing(
         helpers::config(&market),
         &pricer,
         helpers::strike_tick(),
@@ -2315,7 +2712,7 @@ fun a_fee_band_keys_on_the_contract_price() {
     );
     assert!(up.entry_probability() < FIFTY_CENTS);
     assert_eq!(up.trading_fee(), TRADING_FEE);
-    let down = helpers::market(&market).quote_mint(
+    let down = helpers::market(&market).quote_mint_v5_for_testing(
         helpers::config(&market),
         &pricer,
         NEG_INF_TICK,
@@ -2341,7 +2738,7 @@ fun a_banded_fee_rounds_down() {
     ]);
     let pricer = fx.load_pricer_bundle(&market);
     let (clock, ctx) = fx.clock_and_ctx();
-    let quote = helpers::market(&market).quote_mint(
+    let quote = helpers::market(&market).quote_mint_v5_for_testing(
         helpers::config(&market),
         &pricer,
         helpers::strike_tick(),
@@ -2611,8 +3008,8 @@ fun admit_builder(
     )
 }
 
-/// Admit an exact-quantity mint through `admit_mint_with_builder`, the
-/// companion's admission for every order, naming `builder` or none.
+/// Admit an exact-quantity mint through `admit_mint_v2`, the companion's
+/// admission for every order, naming `builder` or none.
 fun admit_with(
     fx: &mut Fixture,
     market: &mut MarketBundle,
@@ -2623,19 +3020,15 @@ fun admit_with(
     channel: u8,
     tau_ms: u64,
 ): OrderReceipt {
-    let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (em, config, _, _, _) = market.market_parts_mut();
     let (wrapper, _) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let holder = wrapper.load_account_mut(account::generate_auth(ctx));
-    expiry_market::admit_mint_with_builder(
+    expiry_market::admit_mint_v2(
         TestFlow(),
         em,
         config,
         holder,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         builder,
         constants::mint_kind_exact_quantity!(),
         helpers::strike_tick(),
@@ -2646,12 +3039,10 @@ fun admit_with(
         max_probability,
         BUDGET,
         ORDER_FEE,
-        SVI_MAX_AGE_MS,
         channel,
         tau_ms,
         tau_ms + DEADLINE_AFTER_TAU_MS,
         clock,
-        ctx,
     )
 }
 
@@ -2698,8 +3089,8 @@ fun admit_sell_builder(
     )
 }
 
-/// Admit a sell through `admit_sell_with_builder`, the companion's admission for
-/// every sell, naming `builder` or none.
+/// Admit a sell through `admit_sell_v2`, the companion's admission for every
+/// sell, naming `builder` or none.
 fun admit_sell_with(
     fx: &mut Fixture,
     market: &mut MarketBundle,
@@ -2710,31 +3101,25 @@ fun admit_sell_with(
     min_proceeds: u64,
     tau_ms: u64,
 ) {
-    let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (em, config, _, _, _) = market.market_parts_mut();
     let (wrapper, _) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let holder = wrapper.load_account_mut(account::generate_auth(ctx));
-    expiry_market::admit_sell_with_builder(
+    expiry_market::admit_sell_v2(
         TestFlow(),
         em,
         config,
         holder,
         receipt,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         builder,
         close_quantity,
         0,
         min_proceeds,
         ORDER_FEE,
-        SVI_MAX_AGE_MS,
         CHANNEL_200MS,
         tau_ms,
         tau_ms + DEADLINE_AFTER_TAU_MS,
         clock,
-        ctx,
     );
 }
 
@@ -2800,8 +3185,9 @@ fun commit_price(
     receipt: &mut OrderReceipt,
     committed: &LazerPrice,
 ): Balance<USDC> {
-    let (em, config, _, _, _) = market.market_parts_mut();
-    expiry_market::commit(TestFlow(), em, config, receipt, committed, fx.clock())
+    let (em, config, _, _, bs) = market.market_parts_mut();
+    let vol = signed_data::stored_vol(bs, em.expiry()).destroy_some();
+    expiry_market::commit_v2(TestFlow(), em, config, receipt, committed, &vol, fx.clock())
 }
 
 /// Admit at τ and commit a price at clock `now_ms` that the provenance checks
@@ -2938,56 +3324,77 @@ fun admit_sell_plain(
     );
 }
 
-/// Commit an admitted plain mint at TAU and fill it at the no-builder cost.
-fun fill_plain_mint(fx: &mut Fixture, market: &mut MarketBundle, mut receipt: OrderReceipt) {
-    let subsidy = commit_at(fx, market, &mut receipt, TAU, live_price());
-    let (reason, kept, change, _, amount, _, builder, _, _, _) = fill(
-        fx,
-        market,
-        receipt,
-        escrow(BUDGET + ORDER_FEE, subsidy),
-    );
-    assert_eq!(reason, 0);
-    assert_eq!(amount, ALL_IN_COST);
-    assert_eq!(builder, 0);
-    assert_eq!(change.value(), BUDGET - ALL_IN_COST);
-    destroy(change);
-    destroy(kept);
+/// Version 5's `admit_mint_with_builder` naming no builder.
+fun admit_v5_builder(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+): OrderReceipt {
+    let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, _) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let holder = wrapper.load_account_mut(account::generate_auth(ctx));
+    expiry_market::admit_mint_with_builder(
+        TestFlow(),
+        em,
+        config,
+        holder,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        option::none(),
+        constants::mint_kind_exact_quantity!(),
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        QUANTITY,
+        0,
+        0,
+        NO_PROBABILITY_CAP,
+        BUDGET,
+        ORDER_FEE,
+        SVI_MAX_AGE_MS,
+        CHANNEL_200MS,
+        TAU,
+        TAU + DEADLINE_AFTER_TAU_MS,
+        clock,
+        ctx,
+    )
 }
 
-/// Commit an admitted plain half sell at SELL_TAU and fill it at the
-/// no-builder proceeds.
-fun fill_plain_half_sell(fx: &mut Fixture, market: &mut MarketBundle, mut receipt: OrderReceipt) {
-    let subsidy = commit_at(fx, market, &mut receipt, SELL_TAU, live_price());
-    let (reason, kept, change, quantity, proceeds, fee, builder, _, _, _) = fill(
-        fx,
-        market,
+/// Version 5's `admit_sell_with_builder` of HALF at SELL_TAU naming no builder.
+fun admit_sell_v5_builder(
+    fx: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    receipt: &mut OrderReceipt,
+) {
+    let (em, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, _) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let holder = wrapper.load_account_mut(account::generate_auth(ctx));
+    expiry_market::admit_sell_with_builder(
+        TestFlow(),
+        em,
+        config,
+        holder,
         receipt,
-        escrow(ORDER_FEE, subsidy),
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        option::none(),
+        HALF,
+        0,
+        0,
+        ORDER_FEE,
+        SVI_MAX_AGE_MS,
+        CHANNEL_200MS,
+        SELL_TAU,
+        SELL_TAU + DEADLINE_AFTER_TAU_MS,
+        clock,
+        ctx,
     );
-    assert_eq!(reason, 0);
-    assert_eq!(quantity, HALF);
-    assert_eq!(fee, HALF_FEE);
-    assert_eq!(builder, 0);
-    assert_eq!(proceeds, HALF_PROCEEDS);
-    destroy(change);
-    destroy(kept);
-}
-
-/// Two receipts admitted alike: the same market, account, Pyth source, subsidy
-/// bound and volatility snapshot, at `stage` with `cash_need`.
-fun assert_receipts_match(a: &OrderReceipt, b: &OrderReceipt, stage: u8, cash_need: u64) {
-    let (a_market, a_stage, a_account, _, a_source, a_need, a_bound, a_vol) = a.receipt_info();
-    let (b_market, b_stage, b_account, _, b_source, b_need, b_bound, b_vol) = b.receipt_info();
-    assert_eq!(a_stage, stage);
-    assert_eq!(a_need, cash_need);
-    assert_eq!(b_stage, a_stage);
-    assert_eq!(b_market, a_market);
-    assert_eq!(b_account, a_account);
-    assert_eq!(b_source, a_source);
-    assert_eq!(b_need, a_need);
-    assert_eq!(b_bound, a_bound);
-    assert_eq!(b_vol, a_vol);
 }
 
 /// The builder fee and code of the one `OrderMinted` this transaction emitted,

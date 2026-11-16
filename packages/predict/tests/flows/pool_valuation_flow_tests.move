@@ -374,10 +374,11 @@ fun empty_pool_valuation_returns_idle() {
 // === Oracle-width propagation and recovery ===
 
 /// Freezing the pricer is the mandatory per-market leg of a pool-wide flush, so an over-wide
-/// active market observation must surface the named pricing-boundary error there rather than a
-/// VM cast. The oracle read happens in the atomic snapshot stage rather than in `value_expiry`,
-/// so the abort lands inside the flush's first transaction.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+/// active market observation must surface a named error there rather than a VM cast: the
+/// library's decode drops the value (`block_scholes::vols`), and the snapshot aborts on the
+/// missing inputs. The oracle read happens in the atomic snapshot stage rather than in
+/// `value_expiry`, so the abort lands inside the flush's first transaction.
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
 fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
     let mut fx = helpers::setup_market_default();
     bootstrap_pool(&mut fx, IDLE_SEED);
@@ -608,8 +609,9 @@ fun a_tolerated_rise_is_charged_through_the_flush() {
 
 /// The flush freezes every active market's pricer in its atomic snapshot stage, so
 /// a surface the pricing-safe envelope rejects stops the pool-wide flush from
-/// starting. A `sigma` one raw unit under the 1e-7 floor still does.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+/// starting: no `Pricer` exists at the instant. A `sigma` one raw unit under the
+/// 1e-7 floor still does.
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
 fun svi_sigma_below_the_floor_aborts_pool_valuation_flush() {
     let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
         test_constants::pricing_min_svi_sigma() - 1,
@@ -680,26 +682,6 @@ fun market_with_short_dated_ssvi_shape(svi_sigma: u64): (helpers::Fixture, helpe
 }
 
 // === Completeness proof ===
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
-fun evicted_spot_pair_blocks_pool_snapshot() {
-    let mut fx = helpers::setup_market_default();
-    bootstrap_pool(&mut fx, IDLE_SEED);
-    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(e);
-    let mut i = 1;
-    while (i <= SPOT_BUFFER_SIZE) {
-        fx.set_bs_spot_raw_for_testing_bundle(
-            &mut market,
-            test_constants::live_source_timestamp_ms() + i,
-            (test_constants::default_live_price() as u128),
-        );
-        i = i + 1;
-    };
-    fx.start_flush_bundle(&mut market);
-    abort 999
-}
 
 #[test]
 fun newer_matched_pair_restores_pool_snapshot_after_eviction() {

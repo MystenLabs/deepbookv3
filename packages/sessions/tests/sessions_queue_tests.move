@@ -51,15 +51,18 @@ const SESSION: address = @0x5E5510;
 const OTHER_SESSION: address = @0x5E5511;
 const BOB: address = @0xB0B;
 const KEEPER: address = @0x4EE9;
+const FIVE_ORDERS: u64 = 5;
 
 const SESSION_DURATION_MS: u64 = 60_000;
 // The fixture clock starts at 120_000, so the grant expires at 120_000 + 60_000.
 const SESSION_EXPIRES_AT_MS: u64 = 180_000;
-// Mainnet Sessions runs version 3, so its live watermark is 3 until this
+// Mainnet Sessions runs version 4, so its live watermark is 4 until this
 // upgrade's bump.
-const MAINNET_WATERMARK: u64 = 3;
-// One past this package's version 4: a watermark that retires it.
-const RETIRING_WATERMARK: u64 = 5;
+const MAINNET_WATERMARK: u64 = 4;
+// One past this package's version 5: a watermark that retires it.
+const RETIRING_WATERMARK: u64 = 6;
+// The last Sessions version before builder approvals.
+const PRE_BUILDER_APPROVAL_WATERMARK: u64 = 3;
 
 // Spec default order fee, 0.02 USDC.
 const ORDER_FEE: u64 = 20_000;
@@ -188,7 +191,7 @@ fun unapproved_session_cannot_enqueue_exact_quantity() {
     let mut fixture = setup();
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity(
+    session_enqueue_exact_quantity_v2(
         &mut fixture,
         &mut tx,
         MINT_QUANTITY,
@@ -203,7 +206,7 @@ fun unapproved_session_cannot_enqueue_exact_amount() {
     let mut fixture = setup();
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_amount(
+    session_enqueue_exact_amount_v2(
         &mut fixture,
         &mut tx,
         AMOUNT_MAX_PREMIUM,
@@ -218,7 +221,7 @@ fun unapproved_session_cannot_enqueue_exact_cost() {
     let mut fixture = setup();
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_cost(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
+    session_enqueue_exact_cost_v2(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
     abort EUnexpectedSuccess
 }
 
@@ -227,7 +230,7 @@ fun unapproved_session_cannot_enqueue_redeem_open() {
     let mut fixture = setup();
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_redeem_open(
+    session_enqueue_redeem_open_v2(
         &mut fixture,
         &mut tx,
         MISSING_RECORD_ID,
@@ -245,7 +248,7 @@ fun session_at_exact_expiration_cannot_enqueue() {
     fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_cost(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
+    session_enqueue_exact_cost_v2(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
     abort EUnexpectedSuccess
 }
 
@@ -256,7 +259,7 @@ fun session_at_exact_expiration_cannot_sell() {
     fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_redeem_open(
+    session_enqueue_redeem_open_v2(
         &mut fixture,
         &mut tx,
         MISSING_RECORD_ID,
@@ -274,7 +277,7 @@ fun session_approved_on_one_account_cannot_enqueue_for_another() {
     // Bob's funded account never granted SESSION.
     fixture.predict.create_funded_manager_as(BOB, test_constants::mint_deposit());
     let mut tx = begin_tx(&mut fixture, SESSION, BOB);
-    session_enqueue_exact_cost(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
+    session_enqueue_exact_cost_v2(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
     abort EUnexpectedSuccess
 }
 
@@ -284,7 +287,7 @@ fun another_signer_cannot_sell_through_an_approved_session() {
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, BOB, owner);
-    session_enqueue_redeem_open(
+    session_enqueue_redeem_open_v2(
         &mut fixture,
         &mut tx,
         MISSING_RECORD_ID,
@@ -304,7 +307,7 @@ fun retired_package_version_cannot_enqueue() {
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
     session_config::set_version_watermark_for_testing(&mut tx.sessions_config, RETIRING_WATERMARK);
-    session_enqueue_exact_cost(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
+    session_enqueue_exact_cost_v2(&mut fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
     abort EUnexpectedSuccess
 }
 
@@ -315,7 +318,7 @@ fun retired_package_version_cannot_sell() {
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
     session_config::set_version_watermark_for_testing(&mut tx.sessions_config, RETIRING_WATERMARK);
-    session_enqueue_redeem_open(
+    session_enqueue_redeem_open_v2(
         &mut fixture,
         &mut tx,
         MISSING_RECORD_ID,
@@ -337,20 +340,20 @@ fun retired_package_version_cannot_enqueue_with_a_builder() {
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
     session_config::set_version_watermark_for_testing(&mut tx.sessions_config, RETIRING_WATERMARK);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
 #[test]
-fun session_enqueues_while_the_mainnet_watermark_still_names_version_three() {
+fun session_enqueues_while_the_mainnet_watermark_still_names_version_four() {
     // Between this upgrade and its bump the shared config still holds Mainnet's
-    // watermark 3, and the version 4 wrappers must already serve.
+    // watermark 4, and the version 5 wrappers must already serve.
     let mut fixture = setup();
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
     session_config::set_version_watermark_for_testing(&mut tx.sessions_config, MAINNET_WATERMARK);
-    let record_id = session_enqueue_exact_cost(
+    let record_id = session_enqueue_exact_cost_v2(
         &mut fixture,
         &mut tx,
         COST_MAX_COST,
@@ -427,21 +430,21 @@ fun session_places_every_order_kind_and_sells() {
 fun place_three_mints(fixture: &mut QueueSessionFixture): (u64, u64, u64, u64) {
     let owner = fixture.owner;
     let mut tx = begin_tx(fixture, SESSION, owner);
-    let quantity_id = session_enqueue_exact_quantity(
+    let quantity_id = session_enqueue_exact_quantity_v2(
         fixture,
         &mut tx,
         MINT_QUANTITY,
         QUANTITY_MAX_COST,
         QUANTITY_MAX_PROBABILITY,
     );
-    let amount_id = session_enqueue_exact_amount(
+    let amount_id = session_enqueue_exact_amount_v2(
         fixture,
         &mut tx,
         AMOUNT_MAX_PREMIUM,
         AMOUNT_MIN_QUANTITY,
         AMOUNT_MAX_COST,
     );
-    let cost_id = session_enqueue_exact_cost(fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
+    let cost_id = session_enqueue_exact_cost_v2(fixture, &mut tx, COST_MAX_COST, COST_MIN_QUANTITY);
     assert_quantity_mint_record(&tx, quantity_id, owner);
     assert_amount_mint_record(&tx, amount_id, owner);
     assert_cost_mint_record(&tx, cost_id, owner);
@@ -454,21 +457,52 @@ fun place_three_mints(fixture: &mut QueueSessionFixture): (u64, u64, u64, u64) {
     (quantity_id, amount_id, cost_id, tau_ms)
 }
 
+/// A keeper commits τ's update and fills the `count` orders waiting on it.
+fun fill_cohort_of(fixture: &mut QueueSessionFixture, tau_ms: u64, count: u64) {
+    fixture.predict.set_clock_for_testing(tau_ms + PRICE_LANDING_MS);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(fixture, KEEPER, owner);
+    let tx_fields = &mut tx;
+    let vols = predict_helpers::canonical_vols_bundle(&tx_fields.market, tau_ms);
+    let (market, config, _, _, _) = tx_fields.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    tx_fields
+        .queue
+        .commit_v2_for_testing(
+            market,
+            &tx_fields.desk,
+            config,
+            vector[queue_fixture::price_update(tau_ms, test_constants::default_live_price())],
+            vols,
+            clock,
+            ctx,
+        );
+    let deny_list = deny_list::new_for_testing(ctx);
+    let finished = tx_fields
+        .queue
+        .resolve(market, &tx_fields.desk, config, RESOLVE_BATCH, &deny_list, clock, ctx);
+    destroy(deny_list);
+    assert_eq!(finished, count);
+    end_tx(tx);
+}
+
 /// A keeper commits τ's Lazer update and fills every order in `record_ids`.
 fun fill_cohort(fixture: &mut QueueSessionFixture, tau_ms: u64, record_ids: vector<u64>) {
     fixture.predict.set_clock_for_testing(tau_ms + PRICE_LANDING_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(fixture, KEEPER, owner);
     let tx_fields = &mut tx;
+    let vols = predict_helpers::canonical_vols_bundle(&tx_fields.market, tau_ms);
     let (market, config, _, _, _) = tx_fields.market.market_parts_mut();
     let (clock, ctx) = fixture.predict.clock_and_ctx();
     tx_fields
         .queue
-        .commit_for_testing(
+        .commit_v2_for_testing(
             market,
             &tx_fields.desk,
             config,
             vector[queue_fixture::price_update(tau_ms, test_constants::default_live_price())],
+            vols,
             clock,
             ctx,
         );
@@ -511,7 +545,7 @@ fun sell_two_open_records(
     let cost_position = cost_order.position().order_id();
     let cost_quantity = cost_order.result().result_quantity();
     let balance_before_sells = account_balance(fixture, &tx);
-    let quantity_sell_id = session_enqueue_redeem_open(
+    let quantity_sell_id = session_enqueue_redeem_open_v2(
         fixture,
         &mut tx,
         quantity_id,
@@ -519,7 +553,7 @@ fun sell_two_open_records(
         QUANTITY_SELL_MIN_PROBABILITY,
         QUANTITY_SELL_MIN_PROCEEDS,
     );
-    let cost_sell_id = session_enqueue_redeem_open(
+    let cost_sell_id = session_enqueue_redeem_open_v2(
         fixture,
         &mut tx,
         cost_id,
@@ -551,6 +585,103 @@ fun sell_two_open_records(
     assert_eq!(record(&tx, amount_id).status(), order_queue::status_open());
     assert_cash_need_matches(&tx);
     end_tx(tx);
+}
+
+// === The version 5 wrappers ===
+
+/// The eight enqueue signatures version 5 published still place through a session,
+/// ignoring their Propbook arguments: every mint kind, each with and without a
+/// builder, then a sell of each.
+#[test]
+fun the_version_5_session_wrappers_still_place_every_order_kind() {
+    let mut fixture = setup();
+    authorize_session(&mut fixture, SESSION_DURATION_MS);
+    let code_a = create_code(&mut fixture, CODE_A_INDEX);
+    approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
+    let owner = fixture.owner;
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let quantity_id = session_enqueue_exact_quantity(
+        &mut fixture,
+        &mut tx,
+        MINT_QUANTITY,
+        QUANTITY_MAX_COST,
+        QUANTITY_MAX_PROBABILITY,
+    );
+    let amount_id = session_enqueue_exact_amount(
+        &mut fixture,
+        &mut tx,
+        AMOUNT_MAX_PREMIUM,
+        AMOUNT_MIN_QUANTITY,
+        AMOUNT_MAX_COST,
+    );
+    let cost_id = session_enqueue_exact_cost(
+        &mut fixture,
+        &mut tx,
+        COST_MAX_COST,
+        COST_MIN_QUANTITY,
+    );
+    end_tx(tx);
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let builder_quantity_id = session_enqueue_exact_quantity_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+    );
+    end_tx(tx);
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let builder_amount_id = session_enqueue_exact_amount_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+    );
+    vector[quantity_id, amount_id, cost_id, builder_quantity_id, builder_amount_id].do!(
+        |record_id| assert_eq!(record(&tx, record_id).status(), order_queue::status_pending()),
+    );
+    assert_eq!(tx.queue.builder_fee_per_contract(builder_quantity_id), APPROVED_MAX_FEE);
+    assert_eq!(tx.queue.builder_fee_per_contract(builder_amount_id), APPROVED_MAX_FEE);
+    let tau_ms = record(&tx, quantity_id).timing().tau_ms();
+    end_tx(tx);
+    fill_cohort_of(&mut fixture, tau_ms, FIVE_ORDERS);
+
+    // The per-account cap is 5, so the sixth mint waits for the fills.
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let builder_cost_id = session_enqueue_exact_cost_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+    );
+    assert_eq!(record(&tx, builder_cost_id).status(), order_queue::status_pending());
+    assert_eq!(tx.queue.builder_fee_per_contract(builder_cost_id), APPROVED_MAX_FEE);
+    end_tx(tx);
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let sell_id = session_enqueue_redeem_open(
+        &mut fixture,
+        &mut tx,
+        quantity_id,
+        MINT_QUANTITY,
+        ZERO_FLOOR,
+        ZERO_FLOOR,
+    );
+    end_tx(tx);
+    let mut tx = begin_tx(&mut fixture, SESSION, owner);
+    let builder_sell_id = session_enqueue_redeem_open_with_builder(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        APPROVED_MAX_FEE,
+        builder_quantity_id,
+        MINT_QUANTITY,
+        ZERO_FLOOR,
+        ZERO_FLOOR,
+    );
+    assert_eq!(record(&tx, sell_id).status(), order_queue::status_pending());
+    assert_eq!(record(&tx, builder_sell_id).status(), order_queue::status_pending());
+    assert_eq!(tx.queue.builder_fee_per_contract(builder_sell_id), APPROVED_MAX_FEE);
+    end_tx(tx);
+    finish(fixture);
 }
 
 // === Builder approvals ===
@@ -631,7 +762,7 @@ fun approving_a_builder_before_the_watermark_retires_older_sessions_aborts() {
     let tx_fields = &mut tx;
     session_config::set_version_watermark_for_testing(
         &mut tx_fields.sessions_config,
-        MAINNET_WATERMARK,
+        PRE_BUILDER_APPROVAL_WATERMARK,
     );
     let (_, ctx) = fixture.predict.clock_and_ctx();
     sessions::approve_session_builder(
@@ -735,7 +866,7 @@ fun an_approved_session_mint_records_its_fee_and_the_fill_pays_it() {
 
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let record_id = session_enqueue_exact_quantity_with_builder(
+    let record_id = session_enqueue_exact_quantity_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -759,7 +890,7 @@ fun a_session_mint_with_a_builder_but_no_approval_aborts() {
     let code_a = create_code(&mut fixture, CODE_A_INDEX);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -772,7 +903,7 @@ fun a_session_mint_with_another_code_aborts() {
     approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_b, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_b, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -784,7 +915,7 @@ fun a_session_mint_above_the_approved_fee_aborts() {
     approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(
+    session_enqueue_exact_quantity_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -803,7 +934,7 @@ fun a_revoked_and_reauthorized_session_needs_a_new_approval() {
     authorize_session(&mut fixture, SESSION_DURATION_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -814,7 +945,7 @@ fun a_session_amount_mint_with_a_builder_but_no_approval_aborts() {
     let code_a = create_code(&mut fixture, CODE_A_INDEX);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_amount_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_amount_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -825,7 +956,7 @@ fun a_session_cost_mint_with_a_builder_but_no_approval_aborts() {
     let code_a = create_code(&mut fixture, CODE_A_INDEX);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_cost_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_cost_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -836,7 +967,7 @@ fun a_session_sell_with_a_builder_but_no_approval_aborts() {
     let code_a = create_code(&mut fixture, CODE_A_INDEX);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_redeem_open_with_builder(
+    session_enqueue_redeem_open_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -857,7 +988,7 @@ fun a_session_amount_mint_above_the_approved_fee_aborts() {
     approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_amount_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
+    session_enqueue_exact_amount_with_builder_v2(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
     abort EUnexpectedSuccess
 }
 
@@ -869,7 +1000,7 @@ fun a_session_cost_mint_above_the_approved_fee_aborts() {
     approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_cost_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
+    session_enqueue_exact_cost_with_builder_v2(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
     abort EUnexpectedSuccess
 }
 
@@ -883,7 +1014,7 @@ fun a_session_sell_above_the_approved_fee_aborts() {
     approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_redeem_open_with_builder(
+    session_enqueue_redeem_open_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -909,7 +1040,7 @@ fun an_approved_session_trading_without_a_builder_pays_no_builder_fee() {
 
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let record_id = session_enqueue_exact_quantity(
+    let record_id = session_enqueue_exact_quantity_v2(
         &mut fixture,
         &mut tx,
         MINT_QUANTITY,
@@ -943,7 +1074,7 @@ fun a_session_fee_above_the_cap_is_recorded_and_charged_at_the_cap() {
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
     assert_eq!(predict_helpers::config(&tx.market).builder_fee_cap(), DEFAULT_BUILDER_FEE_CAP);
-    let record_id = session_enqueue_exact_quantity_with_builder(
+    let record_id = session_enqueue_exact_quantity_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -974,7 +1105,7 @@ fun a_named_fee_above_the_approval_aborts_even_when_the_cap_fits_it() {
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
     assert_eq!(predict_helpers::config(&tx.market).builder_fee_cap(), DEFAULT_BUILDER_FEE_CAP);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_CAP);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, FEE_ABOVE_CAP);
     abort EUnexpectedSuccess
 }
 
@@ -990,7 +1121,7 @@ fun a_zero_fee_approval_still_names_its_code_on_the_fill() {
 
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let record_id = session_enqueue_exact_quantity_with_builder(
+    let record_id = session_enqueue_exact_quantity_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -1022,7 +1153,7 @@ fun approved_session_amount_and_cost_mints_record_their_builder_fees() {
 
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let amount_id = session_enqueue_exact_amount_with_builder(
+    let amount_id = session_enqueue_exact_amount_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -1035,7 +1166,7 @@ fun approved_session_amount_and_cost_mints_record_their_builder_fees() {
     // The code was returned to the scenario, so the next mint takes it in a new
     // transaction.
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let cost_id = session_enqueue_exact_cost_with_builder(
+    let cost_id = session_enqueue_exact_cost_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -1059,7 +1190,7 @@ fun an_approved_session_sell_records_its_builder_fee() {
 
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let mint_id = session_enqueue_exact_quantity(
+    let mint_id = session_enqueue_exact_quantity_v2(
         &mut fixture,
         &mut tx,
         MINT_QUANTITY,
@@ -1082,7 +1213,7 @@ fun an_approved_session_sell_records_its_builder_fee() {
             now_ms,
         );
     let position = record(&tx, mint_id).position().order_id();
-    let sell_id = session_enqueue_redeem_open_with_builder(
+    let sell_id = session_enqueue_redeem_open_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -1118,7 +1249,7 @@ fun after_reapproval_the_old_code_is_refused() {
     approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, REPLACED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, REPLACED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1132,7 +1263,7 @@ fun after_reapproval_the_new_code_trades_at_its_new_max() {
     approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    let record_id = session_enqueue_exact_quantity_with_builder(
+    let record_id = session_enqueue_exact_quantity_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_b,
@@ -1155,7 +1286,7 @@ fun reapproval_replaces_the_approved_max_fee() {
     approve_builder(&mut fixture, code_b, REPLACED_MAX_FEE);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_b, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_b, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1172,7 +1303,7 @@ fun an_expired_session_cannot_trade_on_its_approval() {
     fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1187,7 +1318,12 @@ fun an_expired_session_is_refused_before_its_fee_is_checked() {
     fixture.predict.set_clock_for_testing(SESSION_EXPIRES_AT_MS);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, FEE_ABOVE_APPROVED);
+    session_enqueue_exact_quantity_with_builder_v2(
+        &mut fixture,
+        &mut tx,
+        code_a,
+        FEE_ABOVE_APPROVED,
+    );
     abort EUnexpectedSuccess
 }
 
@@ -1226,7 +1362,7 @@ fun a_revoked_session_cannot_enqueue_exact_quantity_with_a_builder() {
     revoke_session(&mut fixture);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1239,7 +1375,7 @@ fun a_revoked_session_cannot_enqueue_exact_amount_with_a_builder() {
     revoke_session(&mut fixture);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_amount_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_amount_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1252,7 +1388,7 @@ fun a_revoked_session_cannot_enqueue_exact_cost_with_a_builder() {
     revoke_session(&mut fixture);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_cost_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_cost_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1265,7 +1401,7 @@ fun a_revoked_session_cannot_sell_with_a_builder() {
     revoke_session(&mut fixture);
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_redeem_open_with_builder(
+    session_enqueue_redeem_open_with_builder_v2(
         &mut fixture,
         &mut tx,
         code_a,
@@ -1290,7 +1426,7 @@ fun a_session_the_old_revoke_removed_cannot_trade_on_its_leftover_approval() {
     assert!(session_builder(&mut fixture).is_some());
     let owner = fixture.owner;
     let mut tx = begin_tx(&mut fixture, SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1347,7 +1483,7 @@ fun another_session_on_the_account_cannot_use_its_approval() {
     let code_a = create_code(&mut fixture, CODE_A_INDEX);
     approve_builder(&mut fixture, code_a, APPROVED_MAX_FEE);
     let mut tx = begin_tx(&mut fixture, OTHER_SESSION, owner);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1362,7 +1498,7 @@ fun an_approval_on_one_account_does_not_reach_another() {
     fixture.predict.create_funded_manager_as(BOB, test_constants::mint_deposit());
     authorize_session_for(&mut fixture, BOB, SESSION, SESSION_DURATION_MS);
     let mut tx = begin_tx(&mut fixture, SESSION, BOB);
-    session_enqueue_exact_quantity_with_builder(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
+    session_enqueue_exact_quantity_with_builder_v2(&mut fixture, &mut tx, code_a, APPROVED_MAX_FEE);
     abort EUnexpectedSuccess
 }
 
@@ -1553,15 +1689,17 @@ fun fill_one(fixture: &mut QueueSessionFixture, tau_ms: u64) {
     let owner = fixture.owner;
     let mut tx = begin_tx(fixture, KEEPER, owner);
     let tx_fields = &mut tx;
+    let vols = predict_helpers::canonical_vols_bundle(&tx_fields.market, tau_ms);
     let (market, config, _, _, _) = tx_fields.market.market_parts_mut();
     let (clock, ctx) = fixture.predict.clock_and_ctx();
     tx_fields
         .queue
-        .commit_for_testing(
+        .commit_v2_for_testing(
             market,
             &tx_fields.desk,
             config,
             vector[queue_fixture::price_update(tau_ms, test_constants::default_live_price())],
+            vols,
             clock,
             ctx,
         );
@@ -2105,4 +2243,246 @@ fun assert_sell_record(
 fun assert_account_parties(tx: &SessionTx, order: &OrderView, owner: address) {
     assert_eq!(order.account_id(), tx.wrapper.load_account().account_id());
     assert_eq!(order.receive_address(), tx.account_registry.derived_wrapper_address(owner));
+}
+
+// === The `_v2` wrappers the tests place through ===
+
+fun session_enqueue_exact_quantity_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u64 {
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    sessions::enqueue_exact_quantity_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        quantity,
+        max_cost,
+        max_probability,
+        &tx.root,
+        clock,
+        ctx,
+    )
+}
+
+fun session_enqueue_exact_amount_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+): u64 {
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    sessions::enqueue_exact_amount_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        max_premium,
+        min_quantity,
+        max_cost,
+        &tx.root,
+        clock,
+        ctx,
+    )
+}
+
+fun session_enqueue_exact_cost_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    max_cost: u64,
+    min_quantity: u64,
+): u64 {
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    sessions::enqueue_exact_cost_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        max_cost,
+        min_quantity,
+        &tx.root,
+        clock,
+        ctx,
+    )
+}
+
+fun session_enqueue_exact_quantity_with_builder_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let record_id = sessions::enqueue_exact_quantity_with_builder_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        &code,
+        fee_per_contract,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        MINT_QUANTITY,
+        QUANTITY_MAX_COST,
+        QUANTITY_MAX_PROBABILITY,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+fun session_enqueue_exact_amount_with_builder_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let record_id = sessions::enqueue_exact_amount_with_builder_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        &code,
+        fee_per_contract,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        AMOUNT_MAX_PREMIUM,
+        AMOUNT_MIN_QUANTITY,
+        AMOUNT_MAX_COST,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+fun session_enqueue_exact_cost_with_builder_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let record_id = sessions::enqueue_exact_cost_with_builder_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        &code,
+        fee_per_contract,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        COST_MAX_COST,
+        COST_MIN_QUANTITY,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    record_id
+}
+
+fun session_enqueue_redeem_open_with_builder_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    code_id: ID,
+    fee_per_contract: u64,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+): u64 {
+    let code = fixture.predict.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    let sell_id = sessions::enqueue_redeem_open_with_builder_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        &code,
+        fee_per_contract,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        &tx.root,
+        clock,
+        ctx,
+    );
+    return_shared(code);
+    sell_id
+}
+
+fun session_enqueue_redeem_open_v2(
+    fixture: &mut QueueSessionFixture,
+    tx: &mut SessionTx,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+): u64 {
+    let (market, config, _, _, _) = tx.market.market_parts_mut();
+    let (clock, ctx) = fixture.predict.clock_and_ctx();
+    sessions::enqueue_redeem_open_v2(
+        &mut tx.queue,
+        market,
+        &tx.account_registry,
+        &mut tx.wrapper,
+        &tx.sessions_config,
+        &tx.desk,
+        config,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        &tx.root,
+        clock,
+        ctx,
+    )
 }

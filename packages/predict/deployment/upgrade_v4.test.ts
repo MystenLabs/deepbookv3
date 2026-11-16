@@ -150,8 +150,8 @@ test("the precheck requires paused trading, no freeze, and both floors below the
     assert.doesNotThrow(() => assertPrecheckState({ ...state, versionWatermark: "4" }, "3"));
     assert.throws(() => assertPrecheckState({ ...state, tradingPaused: false }, "1"), /not paused/);
     assert.throws(() => assertPrecheckState({ ...state, frozen: true }, "1"), /frozen/);
-    assert.throws(() => assertPrecheckState({ ...state, versionWatermark: "5" }, "1"), /already 5/);
-    assert.throws(() => assertPrecheckState(state, "4"), /Sessions' watermark is already 4/);
+    assert.throws(() => assertPrecheckState({ ...state, versionWatermark: "6" }, "1"), /already 6/);
+    assert.throws(() => assertPrecheckState(state, "5"), /Sessions' watermark is already 5/);
 
     // Later runs: trading stays paused until the reopen step, recorded or emitted and executed.
     const journal = { transactions: {} as Record<string, string>, emitted: {} as Record<string, never>, status: "running" as const };

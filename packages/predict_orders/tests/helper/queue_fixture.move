@@ -10,7 +10,7 @@
 /// The desk runs the launch policy except for a 1_000 ms delay, which the
 /// hand-derived fixtures assume: from the fixture clock 120_000, τ =
 /// floor((t₀ + 1_000) / 200) * 200 and the deadline is τ + 5_000. Commits use
-/// `queue::commit_for_testing`, because a real Lazer `Update` has no Move test
+/// `queue::commit_v2_for_testing`, because a real Lazer `Update` has no Move test
 /// constructor; `lazer_price` decodes real updates and has its own tests.
 #[test_only]
 module deepbook_predict_orders::queue_fixture;
@@ -23,15 +23,17 @@ use deepbook_predict::{
     plp::SnapshotStage,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
+    signed_data,
     test_constants,
     usdc_deny_list
 };
-use deepbook_predict_math::lazer_price;
+use deepbook_predict_math::{block_scholes::BsVol, lazer_price};
 use deepbook_predict_orders::{
+    delayed_execution_config,
     desk::{Self, OrderDesk, QueueRegistry},
     order_flow::OrderFlow,
     order_queue::{Self, OrderView},
-    queue::{Self, MarketQueue, TestUpdate}
+    queue::{Self, MarketQueue, TestUpdate, test_update_tick}
 };
 use std::unit_test::assert_eq;
 use sui::{
@@ -42,6 +44,11 @@ use sui::{
 use usdc::usdc::USDC;
 
 const CHANNEL_200MS: u8 = 3;
+/// The launch `BsTiming` lags and Block Scholes' grids.
+const BS_VALUE_LAG_MS: u64 = 500;
+const BS_SVI_LAG_MS: u64 = 1_000;
+const BS_VALUE_STEP_MS: u64 = 500;
+const BS_SVI_STEP_MS: u64 = 1_000;
 const US_PER_MS: u64 = 1_000;
 /// The delay the hand-derived fixtures assume.
 const FIXTURE_DELAY_MS: u64 = 1_000;
@@ -509,6 +516,117 @@ public fun set_limits(
     );
 }
 
+/// Set the desk's Block Scholes timing with the fixture's `AdminCap`.
+public fun set_bs_timing(q: &mut QueueTest, value_lag_ms: u64, svi_lag_ms: u64, gap_wait_ms: u64) {
+    let QueueTest { fx, market, desk, .. } = q;
+    let (admin_cap, clock, _) = fx.admin_parts();
+    desk.set_bs_timing(
+        admin_cap,
+        helpers::config(market),
+        value_lag_ms,
+        svi_lag_ms,
+        gap_wait_ms,
+        clock,
+    );
+}
+
+/// The retired Lazer-only `commit`, with no updates.
+public fun commit_v1(q: &mut QueueTest) {
+    let QueueTest { fx, market, desk, queue, .. } = q;
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    queue.commit(expiry_market, desk, config, vector[], clock, ctx);
+}
+
+/// `enqueue_quantity` through the signature version 5 published, with the
+/// market's Propbook objects, which the call ignores.
+public fun enqueue_quantity_v1(
+    q: &mut QueueTest,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+): u64 {
+    let QueueTest { fx, market, account, desk, queue, .. } = q;
+    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, root) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let auth = account::generate_auth(ctx);
+    queue.enqueue_exact_quantity(
+        expiry_market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `enqueue_sell` through the signature version 5 published.
+public fun enqueue_sell_v1(
+    q: &mut QueueTest,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+): u64 {
+    let QueueTest { fx, market, account, desk, queue, .. } = q;
+    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (wrapper, root) = account.account_parts_mut();
+    let (clock, ctx) = fx.clock_and_ctx();
+    let auth = account::generate_auth(ctx);
+    queue.enqueue_redeem_open(
+        expiry_market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The Block Scholes source times of `record_id`'s receipt snapshot: spot and
+/// forward, and SVI, read from its BCS.
+public fun committed_vol_times(q: &QueueTest, record_id: u64): (u64, u64, u64) {
+    let (_, _, _, _, _, _, _, vol) = q.queue.receipt_for_testing(record_id).receipt_info();
+    let mut bytes = sui::bcs::new(sui::bcs::to_bytes(&vol));
+    let _ = bytes.peel_u32();
+    let _ = bytes.peel_u64();
+    let _ = bytes.peel_u64();
+    // `svi_a`, `svi_b`, `svi_rho`, `svi_m`, `svi_sigma`.
+    let _ = bytes.peel_u64();
+    let _ = bytes.peel_bool();
+    let _ = bytes.peel_u64();
+    let _ = bytes.peel_u64();
+    let _ = bytes.peel_bool();
+    let _ = bytes.peel_u64();
+    let _ = bytes.peel_bool();
+    let _ = bytes.peel_u64();
+    (bytes.peel_u64(), bytes.peel_u64(), bytes.peel_u64())
+}
+
 public fun set_order_fee(q: &mut QueueTest, order_fee: u64) {
     let QueueTest { fx, market, desk, .. } = q;
     let (admin_cap, clock, _) = fx.admin_parts();
@@ -577,20 +695,16 @@ public fun enqueue_quantity(
     max_probability: u64,
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    queue.enqueue_exact_quantity(
+    queue.enqueue_exact_quantity_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         lower_tick,
         higher_tick,
         quantity,
@@ -622,20 +736,16 @@ public fun enqueue_amount(
     max_cost: u64,
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    queue.enqueue_exact_amount(
+    queue.enqueue_exact_amount_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         lower_tick,
         higher_tick,
         max_premium,
@@ -655,20 +765,16 @@ public fun enqueue_cost(
     min_quantity: u64,
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    queue.enqueue_exact_cost(
+    queue.enqueue_exact_cost_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         lower_tick,
         higher_tick,
         max_cost,
@@ -687,20 +793,16 @@ public fun enqueue_sell(
     min_proceeds: u64,
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    queue.enqueue_redeem_open(
+    queue.enqueue_redeem_open_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         record_id,
         close_quantity,
         min_probability,
@@ -722,20 +824,16 @@ public fun enqueue_atm_with_builder(
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
     let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    let record_id = queue.enqueue_exact_quantity_with_builder(
+    let record_id = queue.enqueue_exact_quantity_with_builder_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         &code,
         fee_per_contract,
         helpers::strike_tick(),
@@ -763,20 +861,16 @@ public fun enqueue_amount_with_builder(
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
     let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    let record_id = queue.enqueue_exact_amount_with_builder(
+    let record_id = queue.enqueue_exact_amount_with_builder_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         &code,
         fee_per_contract,
         helpers::strike_tick(),
@@ -803,20 +897,16 @@ public fun enqueue_cost_with_builder(
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
     let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    let record_id = queue.enqueue_exact_cost_with_builder(
+    let record_id = queue.enqueue_exact_cost_with_builder_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         &code,
         fee_per_contract,
         helpers::strike_tick(),
@@ -844,20 +934,16 @@ public fun enqueue_sell_with_builder(
 ): u64 {
     let QueueTest { fx, market, account, desk, queue, .. } = q;
     let code = fx.scenario_mut().take_shared_by_id<BuilderCode>(code_id);
-    let (expiry_market, config, oracle_registry, pyth, bs) = market.market_parts_mut();
+    let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (wrapper, root) = account.account_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
     let auth = account::generate_auth(ctx);
-    let sell_id = queue.enqueue_redeem_open_with_builder(
+    let sell_id = queue.enqueue_redeem_open_with_builder_v2(
         expiry_market,
         wrapper,
         auth,
         desk,
         config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
         &code,
         fee_per_contract,
         record_id,
@@ -888,11 +974,59 @@ public fun skip_record_ids(q: &mut QueueTest, count: u64) {
 
 // === Commit, resolve, refunds, settlement ===
 
+/// Commit `updates` with the Block Scholes inputs a keeper passes: the feeds'
+/// latest values signed at the canonical slots (launch `BsTiming`) of every τ
+/// an update can price, its own envelope or one tick of its channel earlier.
 public fun commit(q: &mut QueueTest, updates: vector<TestUpdate>) {
+    let mut taus = vector[];
+    updates.do_ref!(|update| {
+        let (channel, envelope_ms) = test_update_tick(update);
+        taus.push_back(envelope_ms);
+        taus.push_back(envelope_ms - delayed_execution_config::channel_tick_ms(channel));
+    });
+    let vols = q.canonical_vols(taus);
+    q.commit_with(updates, vols);
+}
+
+/// Commit `updates` with exactly `vols`.
+public fun commit_with(q: &mut QueueTest, updates: vector<TestUpdate>, vols: vector<BsVol>) {
     let QueueTest { fx, market, desk, queue, .. } = q;
     let (expiry_market, config, _, _, _) = market.market_parts_mut();
     let (clock, ctx) = fx.clock_and_ctx();
-    queue.commit_for_testing(expiry_market, desk, config, updates, clock, ctx);
+    queue.commit_v2_for_testing(expiry_market, desk, config, updates, vols, clock, ctx);
+}
+
+/// The feeds' latest Block Scholes inputs signed at the canonical slots of each of
+/// `taus`: spot and forward at the 500 ms boundary at or before `τ - 500`, SVI at
+/// the 1 s boundary at or before `τ - 1_000`.
+/// Feeds that hold no inputs for the market add none.
+public fun canonical_vols(q: &QueueTest, taus: vector<u64>): vector<BsVol> {
+    let mut vols = vector[];
+    taus.do!(|tau| q.try_vol_at(value_slot(tau), svi_slot(tau)).do!(|vol| vols.push_back(vol)));
+    vols
+}
+
+/// The feeds' latest Block Scholes inputs with spot and forward signed at
+/// `value_ms` and SVI at `svi_ms`.
+public fun vol_at(q: &QueueTest, value_ms: u64, svi_ms: u64): BsVol {
+    q.try_vol_at(value_ms, svi_ms).destroy_some()
+}
+
+public fun try_vol_at(q: &QueueTest, value_ms: u64, svi_ms: u64): Option<BsVol> {
+    let expiry = q.market().expiry();
+    signed_data::latest_vol_at(helpers::bs(&q.market), expiry, value_ms, svi_ms)
+}
+
+/// The canonical spot and forward slot of `tau` at the launch lag.
+public fun value_slot(tau: u64): u64 {
+    let at = tau - BS_VALUE_LAG_MS;
+    at - at % BS_VALUE_STEP_MS
+}
+
+/// The canonical SVI slot of `tau` at the launch lag.
+public fun svi_slot(tau: u64): u64 {
+    let at = tau - BS_SVI_LAG_MS;
+    at - at % BS_SVI_STEP_MS
 }
 
 /// Move the clock to `tick_ms` and commit the 200 ms update stamped and
