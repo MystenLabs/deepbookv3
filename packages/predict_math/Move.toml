@@ -9,6 +9,13 @@ fixed_math = { local = "../fixed_math" }
 # Mainnet replacement below matches `deepbook_predict`'s, so both packages resolve
 # one graph on every network.
 pyth_lazer = { local = "../../vendor/pyth_lazer" }
+# Block Scholes verifier and series ids, for the verified updates a `BsVol` and a
+# `BsSpot` are decoded from. The same pinned revision and Mainnet replacement as
+# `propbook` and `deepbook_predict`, so every package resolves one graph.
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
+bs_sid = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_sid", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
 
 [dep-replacements.mainnet]
 pyth_lazer = { local = "../../vendor/pyth_lazer_mainnet" }
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
+bs_sid = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_sid", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
