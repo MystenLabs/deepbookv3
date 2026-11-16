@@ -248,6 +248,27 @@ fun inputs_that_do_not_price_refund_with_reason_10_and_the_fee() {
     q.finish();
 }
 
+/// An order admitted under a Lazer feed the binding no longer names is skipped by
+/// the commit, not aborted on, and refunds at its deadline with the order fee.
+#[test]
+fun an_order_admitted_under_a_replaced_feed_refunds_at_its_deadline() {
+    let mut q = fixture::new();
+    let record_id = place_mint(&mut q);
+    q.set_binding_feed(test_constants::pyth_feed_id() + 1);
+    let vol = q.vol_at(VALUE_SLOT, SVI_SLOT);
+    commit_vols(&mut q, TAU, vector[vol]);
+    assert_eq!(status(&q, record_id), order_queue::status_pending());
+
+    q.set_clock(DEADLINE);
+    assert_eq!(q.resolve(RESOLVE_ALL), 1);
+    let refund = events::refunds()[0];
+    assert_eq!(refund.refund_record_id(), record_id);
+    assert_eq!(refund.refund_reason(), order_queue::reason_deadline());
+    assert_eq!(refund.refund_order_fee_returned(), ORDER_FEE);
+    q.assert_invariants();
+    q.finish();
+}
+
 /// Inputs decoded under another SVI model than the market's binding are refused
 /// by Predict's commit.
 #[test, expected_failure(abort_code = expiry_market::EWrongVol)]

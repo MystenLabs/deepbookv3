@@ -42,6 +42,12 @@ const IMPACT_AT_Q_A: u64 = 225_000_000;
 /// A (0, 100] q=3e9 then B (100, +inf] q=1e9 with `lambda = 1/2`:
 /// M = 3e9, T = 4e9, liability 3e9 + 1e9 / 2.
 const LIABILITY_A_B: u64 = 3_500_000_000;
+/// A (0, 100] q=3e9 then B on the same range q=1e9: the range's peak is 3e9, so
+/// M = 3e9 + 1e9 = T and the liability is 4e9.
+const LIABILITY_A_THEN_B_SAME_RANGE: u64 = 4_000_000_000;
+/// The same B priced as if the range's peak were zero: M = max(3e9, 1e9) = 3e9,
+/// T = 4e9, liability 3e9 + 1e9 / 2.
+const LIABILITY_B_WITHOUT_THE_BOOK: u64 = 3_500_000_000;
 const REASON_FILL: u8 = 0;
 const REASON_LIMITS: u8 = 1;
 const REASON_ADMISSION: u8 = 2;
@@ -179,7 +185,7 @@ fun an_unpriceable_surface_returns_none_instead_of_aborting() {
     let (mut fx, oracle, exposure) = fixture::setup_zero_forward(default_config(), IMPACT_SCALE);
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    assert!(exposure.try_rng(&pricer, STRIKE, pos_inf()).is_none());
+    assert!(exposure.try_rng(&pricer, STRIKE, pos_inf(), true).is_none());
     assert_admission_refund(&exposure, &pricer, STRIKE, pos_inf());
     let order = order::from_ticks(STRIKE, pos_inf(), Q_A, 0);
     assert!(exposure.try_close(&pricer, &order, Q_A).is_none());
@@ -207,7 +213,7 @@ fun try_quote_mint_range_samples_the_book_with_inventory_impact_off() {
     let terms_a = exposure.quote_mint_terms(&pricer, 0, STRIKE, 0, Q_A, true);
     exposure.allocate_mint_order(terms_a);
 
-    let range = exposure.try_rng(&pricer, STRIKE, pos_inf()).destroy_some();
+    let range = exposure.try_rng(&pricer, STRIKE, pos_inf(), true).destroy_some();
     assert_eq!(exposure.liab_add(&range, Q_B), LIABILITY_A_B);
     let (terms_b, reason) = exposure.try_terms(range, Q_B, Q_B);
     assert_eq!(reason, REASON_FILL);
@@ -215,6 +221,23 @@ fun try_quote_mint_range_samples_the_book_with_inventory_impact_off() {
     assert_eq!(terms_b.inventory_impact_charge(), 0);
     exposure.allocate_mint_order(terms_b);
     assert_eq!(exposure.payout_liability(), LIABILITY_A_B);
+    fixture::finish(fx, oracle, exposure);
+}
+
+/// The commit's fee bound prices without the book: the range's peak reads as zero,
+/// so the post-mint liability, and with it the inventory-impact charge, can only
+/// be lower than the fill's.
+#[test]
+fun a_range_priced_without_the_book_reads_a_zero_peak() {
+    let (mut fx, oracle, mut exposure) = fixture::setup(fixture::config(LAMBDA, 0), IMPACT_SCALE);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let terms_a = exposure.quote_mint_terms(&pricer, 0, STRIKE, 0, Q_A, true);
+    exposure.allocate_mint_order(terms_a);
+
+    let with_book = exposure.try_rng(&pricer, 0, STRIKE, true).destroy_some();
+    let without_book = exposure.try_rng(&pricer, 0, STRIKE, false).destroy_some();
+    assert_eq!(exposure.liab_add(&with_book, Q_B), LIABILITY_A_THEN_B_SAME_RANGE);
+    assert_eq!(exposure.liab_add(&without_book, Q_B), LIABILITY_B_WITHOUT_THE_BOOK);
     fixture::finish(fx, oracle, exposure);
 }
 
@@ -272,7 +295,7 @@ fun assert_admission_refund(
     lower_tick: u64,
     higher_tick: u64,
 ) {
-    assert!(exposure.try_rng(pricer, lower_tick, higher_tick).is_none());
+    assert!(exposure.try_rng(pricer, lower_tick, higher_tick, true).is_none());
     let (terms, reason) = exposure.try_quote_mint_terms(
         pricer,
         lower_tick,

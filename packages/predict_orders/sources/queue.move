@@ -972,8 +972,9 @@ public fun commit(
 /// `τ - value_lag_ms` and the SVI stamped at the 1,000 ms boundary at or before
 /// `τ - svi_lag_ms`, for this market's expiry. Once now is the timing's gap wait
 /// past τ it also accepts, in this order, the next SVI slot, the next value slot,
-/// and both. A cohort with no update or no inputs waits for a later commit or its
-/// deadline refund.
+/// and both. A cohort with no update or no inputs, or with an order admitted
+/// under a Pyth feed the market's oracle binding no longer names, waits for a
+/// later commit or its deadline refund.
 ///
 /// Each matched cohort then commits whole or not at all: one price per feed is
 /// decoded through `lazer_price::from_update`, every Pending order is checked
@@ -1657,6 +1658,11 @@ macro fun commit_updates(
     let now_ms = clock.timestamp_ms();
     let timing = desk.bs_timing();
     let expiry = market.expiry();
+    // Orders admitted under a feed the binding no longer names never commit, so
+    // they wait for their deadline refund rather than abort the commit.
+    let bound_feed = config
+        .oracle_binding(market.propbook_underlying_id())
+        .map!(|binding| binding.lazer_feed_id());
     let (cohort_indices, update_indices) = queue.match_cohorts(
         market,
         desk,
@@ -1677,13 +1683,18 @@ macro fun commit_updates(
         let mut record_id = span.span_first_id();
         while (usable && record_id < span.span_end_id()) {
             queue.book.pending_feed(record_id).do!(|feed_id| {
-                let mut slot = feed_ids.find_index!(|id| *id == feed_id);
-                if (slot.is_none()) {
-                    feed_ids.push_back(feed_id);
-                    prices.push_back($price_of(update_indices[i], feed_id));
-                    slot.fill(feed_ids.length() - 1);
-                };
-                usable = price_fits(&prices[slot.destroy_some()], tau_ms, now_ms);
+                // Checked before the decode, which aborts on an update without
+                // the feed.
+                usable =
+                    bound_feed.contains(&feed_id) && {
+                        let mut slot = feed_ids.find_index!(|id| *id == feed_id);
+                        if (slot.is_none()) {
+                            feed_ids.push_back(feed_id);
+                            prices.push_back($price_of(update_indices[i], feed_id));
+                            slot.fill(feed_ids.length() - 1);
+                        };
+                        price_fits(&prices[slot.destroy_some()], tau_ms, now_ms)
+                    };
             });
             record_id = record_id + 1;
         };

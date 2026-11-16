@@ -25,6 +25,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     signed_data,
     test_constants,
+    test_helpers,
     usdc_deny_list
 };
 use deepbook_predict_math::{block_scholes::BsVol, lazer_price};
@@ -526,6 +527,24 @@ public fun set_bs_timing(q: &mut QueueTest, value_lag_ms: u64, svi_lag_ms: u64, 
         value_lag_ms,
         svi_lag_ms,
         gap_wait_ms,
+        clock,
+    );
+}
+
+/// Rebind the market's underlying to Lazer feed `feed_id`, keeping the fixture's
+/// channel, base asset, model, and its SVI store's decimals.
+public fun set_binding_feed(q: &mut QueueTest, feed_id: u32) {
+    let QueueTest { fx, market, .. } = q;
+    let decimals = helpers::bs(market).svi().svi_decimals();
+    let (admin_cap, clock, _) = fx.admin_parts();
+    helpers::config_mut(market).set_oracle_binding(
+        admin_cap,
+        test_constants::propbook_underlying_id(),
+        feed_id,
+        test_helpers::binding_channel(),
+        test_constants::block_scholes_base_asset(),
+        test_helpers::binding_svi_model(),
+        decimals,
         clock,
     );
 }

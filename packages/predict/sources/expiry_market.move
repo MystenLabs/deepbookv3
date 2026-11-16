@@ -1282,10 +1282,11 @@ public fun admit_sell_v2<W: drop>(
 /// incentives left)`, records the rate and amount, and returns the reservation for
 /// the companion to escrow with the order. A sell returns a zero balance.
 ///
-/// The price must be the receipt's: its Pyth feed and channel, an envelope at
-/// exactly τ or one tick of that channel later (the backup tick), a generation
-/// time between τ and the envelope, an envelope at or before now, and a
-/// pricing-safe spot (`EWrongPrice`). `vol` must match the market's oracle
+/// The price must be the receipt's: its Pyth feed, which must still be the
+/// market's oracle binding's, and channel, an envelope at exactly τ or one tick
+/// of that channel later (the backup tick), a generation time between τ and the
+/// envelope, an envelope at or before now, and a pricing-safe spot
+/// (`EWrongPrice`). `vol` must match the market's oracle
 /// binding (base asset, SVI model, and decimals) and expiry, with both source
 /// times at or before τ and at most `constants::max_svi_max_age_ms!()` before it
 /// (`EWrongVol`). Which Block Scholes slots an order takes is the companion's
@@ -1316,8 +1317,12 @@ public fun commit_v2<W: drop>(
     let value_ms = vol.value_ms();
     let svi_ms = vol.svi_ms();
     let max_age = constants::max_svi_max_age_ms!();
+    let binding = config.binding(market.propbook_underlying_id);
+    // An order admitted under another feed commits under no binding: it waits for
+    // its deadline refund.
+    assert!(receipt.vol.pyth_source_id() == binding.lazer_feed_id(), EWrongPrice);
     assert!(
-        config.binding(market.propbook_underlying_id).vol_ok(vol, market.expiry)
+        binding.vol_ok(vol, market.expiry)
             && value_ms <= tau && tau - value_ms <= max_age
             && svi_ms <= tau && tau - svi_ms <= max_age,
         EWrongVol,
@@ -1329,7 +1334,8 @@ public fun commit_v2<W: drop>(
     receipt.generation_us = price.generation_us();
     if (!is_mint) return balance::zero();
     // The subsidy bound is the order's pre-subsidy trading fee at its tick, so one
-    // order cannot reserve more of the market's incentives than it can use.
+    // order cannot reserve more of the market's incentives than it can use. Priced
+    // without the payout-tree reads, so a whole cohort commits in one transaction.
     let pricer = pricing::pricer_at(
         &receipt.vol,
         &market.id,
@@ -1354,6 +1360,7 @@ public fun commit_v2<W: drop>(
             0,
             0,
             tick_ms,
+            false,
         );
         quote.trading_fee
     });
@@ -1656,7 +1663,7 @@ public(package) fun frozen_v2(
         EWrongVol,
     );
     let price = price.destroy_some();
-    let snapshot = pricing::snap_v2(vol.borrow(), binding.lazer_feed(), &mut market.id);
+    let snapshot = pricing::snap_v2(vol.borrow(), binding.lazer_feed_id(), &mut market.id);
     let pricer = pricing::pricer_at(
         &snapshot,
         &market.id,
@@ -2516,7 +2523,7 @@ fun admit_gates(
             && deadline_ms + constants::deadline_expiry_margin_ms!() <= expiry,
         EInvalidOrderTiming,
     );
-    pricing::feed_snap(config.binding(market.propbook_underlying_id).lazer_feed())
+    pricing::feed_snap(config.binding(market.propbook_underlying_id).lazer_feed_id())
 }
 
 /// The quote core behind the published mint previews, at tick `now` with the
@@ -2552,6 +2559,7 @@ fun quote_now(
         config.fee_incentive_subsidy_rate(),
         market.fee_incentive_balance.value(),
         now,
+        true,
     );
     assert!(reason == 0, EOrderFailsLimits);
     quote
@@ -2615,6 +2623,7 @@ fun fill_mint(
         receipt.subsidy_rate,
         receipt.subsidy_reserved,
         tick_ms,
+        true,
     );
     if (reason != 0) return (reason, quote, 0);
     if (!market.strike_exposure.nodes_exist(receipt.lower_tick, receipt.higher_tick)) {
@@ -2960,7 +2969,8 @@ fun unpin(pins: &mut VecMap<u64, u64>, tick: u64) {
 /// minimum premium, or costs more than its maximum payout. Reason 1 when the
 /// size is zero or below `min_quantity`, an exact-quantity order's probability is
 /// above its `max_probability`, or the all-in cost is above `cost_cap`. The
-/// liability comes from the range's own pre-mint book reads.
+/// liability comes from the range's own pre-mint book reads, taken only with
+/// `book` (`strike_exposure::try_rng`).
 fun price_mint(
     market: &ExpiryMarket,
     pricer: &Pricer,
@@ -2976,9 +2986,10 @@ fun price_mint(
     subsidy_rate: u64,
     subsidy_cap: u64,
     tick_ms: u64,
+    book: bool,
 ): (Option<MintTerms>, MintQuote, u64, u8) {
     assert!(kind <= constants::mint_kind_exact_cost!(), EInvalidOrderTerms);
-    let range = market.strike_exposure.try_rng(pricer, lower_tick, higher_tick);
+    let range = market.strike_exposure.try_rng(pricer, lower_tick, higher_tick, book);
     if (range.is_none()) {
         return (option::none(), empty_mint_q(), 0, constants::fill_reason_admission!())
     };

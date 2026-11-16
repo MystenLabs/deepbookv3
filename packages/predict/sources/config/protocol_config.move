@@ -311,6 +311,12 @@ public fun oracle_binding(
     option::some(*config.id.borrow(key))
 }
 
+/// The binding's Pyth Lazer feed. For the order-flow companion, which commits
+/// only orders admitted under the current feed.
+public fun lazer_feed_id(binding: &OracleBinding): u32 {
+    binding.lazer_feed_id
+}
+
 /// Return the runtime version floor. For SDK, keeper, and devInspect reads: the
 /// delayed-execution cutover is reached once it is at least 4
 /// (`constants::cutover_version!()`).
@@ -1022,10 +1028,6 @@ public(package) fun binding(config: &ProtocolConfig, propbook_underlying_id: u32
     let binding = config.oracle_binding(propbook_underlying_id);
     assert!(binding.is_some(), EOracleBindingMissing);
     binding.destroy_some()
-}
-
-public(package) fun lazer_feed(binding: &OracleBinding): u32 {
-    binding.lazer_feed_id
 }
 
 /// Whether `price` is the binding's exact observation at `source_ms`: its feed

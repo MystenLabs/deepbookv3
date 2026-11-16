@@ -2320,6 +2320,29 @@ fun commit_v2_records_the_block_scholes_inputs() {
     finish(fx, market, account);
 }
 
+/// An order admitted under one Lazer feed does not commit once the binding names
+/// another, even with a price from its own feed.
+#[test, expected_failure(abort_code = expiry_market::EWrongPrice)]
+fun commit_v2_after_the_binding_moved_to_another_feed_aborts() {
+    let (mut fx, mut market, mut account) = setup();
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let decimals = helpers::bs(&market).svi().svi_decimals();
+    helpers::config_mut(&mut market).set_oracle_binding(
+        fx.admin_cap(),
+        test_constants::propbook_underlying_id(),
+        test_constants::pyth_feed_id() + 1,
+        test_helpers::binding_channel(),
+        test_constants::block_scholes_base_asset(),
+        test_helpers::binding_svi_model(),
+        decimals,
+        fx.clock(),
+    );
+    let vol = vol_at(&market, VALUE_SLOT_MS, SVI_SLOT_MS);
+    let subsidy = commit_vol(&mut fx, &mut market, &mut receipt, &vol);
+    destroy(subsidy);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = expiry_market::EWrongVol)]
 fun commit_v2_with_another_base_asset_aborts() {
     commit_wrong_vol(

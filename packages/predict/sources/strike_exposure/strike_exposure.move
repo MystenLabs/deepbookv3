@@ -493,8 +493,11 @@ public(package) fun quote_mint_range(
 }
 
 /// Non-aborting `quote_mint_range`: `none` when the range cannot be priced or
-/// fails the entry-probability policy. Always samples the pre-mint book reads,
-/// even with inventory impact off, because resolve's no-cash check needs them.
+/// fails the entry-probability policy. With `book`, samples the pre-mint book
+/// reads even with inventory impact off, because resolve's no-cash check needs
+/// them. Without it, the range's peak reads as zero and no payout-tree node is
+/// loaded: the commit's fee bound uses that, and a zero peak never raises the
+/// inventory-impact charge, so the bound is never below the fill's fee.
 ///
 /// `none` covers every input `quote_mint_range` aborts on (an off-grid tick, a
 /// strike the pricer cannot price, the entry band) and also a tick pair no
@@ -504,6 +507,7 @@ public(package) fun try_rng(
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
+    book: bool,
 ): Option<MintRange> {
     if (
         !valid_range(lower_tick, higher_tick)
@@ -525,7 +529,7 @@ public(package) fun try_rng(
         price,
         max_payout,
         total_payout,
-        range_max_payout: exposure.payout.range_max(lower_tick, higher_tick),
+        range_max_payout: if (book) exposure.payout.range_max(lower_tick, higher_tick) else 0,
     })
 }
 
@@ -583,7 +587,7 @@ public(package) fun try_quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
 ): (Option<MintTerms>, u8) {
-    let range = exposure.try_rng(pricer, lower_tick, higher_tick);
+    let range = exposure.try_rng(pricer, lower_tick, higher_tick, true);
     if (range.is_none()) return (option::none(), constants::fill_reason_admission!());
     let range = range.destroy_some();
     let quantity = if (exact_quantity) {
