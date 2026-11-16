@@ -21,7 +21,7 @@ const EPoolNotAllowed: u64 = 2;
 // === Constants ===
 
 /// Every package upgrade must advance this compiled-in version.
-macro fun current_version(): u64 { 4 }
+macro fun current_version(): u64 { 5 }
 
 // === Structs ===
 
