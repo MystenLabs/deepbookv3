@@ -129,9 +129,3 @@ public fun stored_vol(bs: &BlockScholesFeed, expiry: u64): Option<BsVol> {
     let svi_ms = svi.borrow().read_source_timestamp_ms();
     latest_vol_with(bs, expiry, value_ms, svi_ms, value_ms)
 }
-
-/// The flush instant of a flush started at `started_at_ms`: the start of its
-/// minute.
-public fun flush_instant(started_at_ms: u64): u64 {
-    started_at_ms - started_at_ms % 60_000
-}

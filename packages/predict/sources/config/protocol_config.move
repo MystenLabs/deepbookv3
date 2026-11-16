@@ -945,7 +945,6 @@ public fun set_plp_withdraw_fee_rate(
 
 // === Public-Package Functions ===
 
-#[test_only]
 public(package) fun pr_cfg(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }

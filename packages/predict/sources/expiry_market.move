@@ -1615,25 +1615,31 @@ public(package) fun inc_in(market: &mut ExpiryMarket, incentives: Balance<USDC>)
     market.fee_incentive_balance.join(incentives);
 }
 
-/// The flush's frozen mark for this market at the flush instant `instant_ms`:
-/// the Pyth price and Block Scholes inputs signed for exactly that instant under
-/// the market's oracle binding, built into a `Pricer` as a fill builds one, with
-/// an 18-decimal SVI tuple kept in the market's SVI cache. Aborts `EWrongPrice`
-/// unless `price` is the binding's observation at the instant with a
-/// pricing-safe spot, and `EWrongVol` unless `vol` is the binding's, for this
-/// expiry, with spot, forward, and SVI all stamped at the instant and pricing
-/// there.
+/// The flush's frozen mark for this market, for a flush started at
+/// `started_at_ms`: the Pyth price and Block Scholes inputs signed for one
+/// instant under the market's oracle binding, built into a `Pricer` as a fill
+/// builds one, with an 18-decimal SVI tuple kept in the market's SVI cache. The
+/// instant is the price's envelope time. Aborts `EWrongPrice` unless `price` is
+/// the binding's observation with a pricing-safe spot, stamped at or before
+/// `started_at_ms` and at most the Block Scholes price freshness before it, and
+/// `EWrongVol` unless `vol` is the binding's, for this expiry, with spot,
+/// forward, and SVI all stamped at the instant and pricing there.
 public(package) fun frozen_v2(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     price: Option<LazerPrice>,
     vol: Option<BsVol>,
-    instant_ms: u64,
+    started_at_ms: u64,
 ): FrozenPricer {
     let binding = config.binding(market.propbook_underlying_id);
+    let instant_ms = price.map_ref!(|price| price.envelope_us() / 1000).destroy_or!(0);
     assert!(
         price.is_some_and!(
-            |price| binding.px_ok(price, instant_ms)
+            |
+                price,
+            | binding.px_ok(price, instant_ms)
+            && instant_ms <= started_at_ms
+            && started_at_ms - instant_ms <= config.pr_cfg().bs_age()
             && pricing::safe_spot(price.spot()),
         ),
         EWrongPrice,

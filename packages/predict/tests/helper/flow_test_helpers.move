@@ -2524,7 +2524,8 @@ public fun snapshot_expiry_pricer(
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ) {
-    let instant = signed_data::flush_instant(self.clock.timestamp_ms());
+    // Marked at the flush's own start, the newest instant it accepts.
+    let instant = self.clock.timestamp_ms();
     let expiry = market.expiry();
     vault.snapshot_expiry_pricer_v2(
         stage,
@@ -2542,7 +2543,7 @@ public fun snapshot_expiry_pricer_bundle(
     stage: &SnapshotStage,
     market: &mut MarketBundle,
 ) {
-    let instant = signed_data::flush_instant(self.clock.timestamp_ms());
+    let instant = self.clock.timestamp_ms();
     let expiry = market.market.expiry();
     let price = signed_data::latest_pyth_at(&market.pyth, instant);
     let vol = signed_data::latest_vol_at(&market.bs, expiry, instant, instant);

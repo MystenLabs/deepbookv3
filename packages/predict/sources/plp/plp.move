@@ -323,11 +323,11 @@ public fun snapshot_expiry_pricer(
 /// this instant.
 ///
 /// Holding `SnapshotStage` is what admits this call, and that potato cannot leave
-/// the transaction `start_pool_valuation` minted it in. Every market of one flush
-/// is marked at the same flush instant: the start of the minute holding the
-/// flush's start (`flush_instant`), which the transaction's clock fixes and no
-/// caller picks. `price` must be the market's Pyth Lazer price signed at exactly
-/// that instant under its oracle binding, and `vol` its Block Scholes spot,
+/// the transaction `start_pool_valuation` minted it in. The market is marked at
+/// the instant its Pyth Lazer price is stamped, which must fall at or before the
+/// flush's start and at most `block_scholes_price_freshness_ms` before it, the
+/// same bound live pricing put on a Block Scholes price. `price` must be the
+/// market's price under its oracle binding, and `vol` its Block Scholes spot,
 /// forward, and SVI stamped exactly at that instant
 /// (`expiry_market::frozen_v2`). This stage reads no state but the market's own
 /// — it never walks a payout tree — so all markets fit one PTB regardless of book
@@ -364,14 +364,14 @@ public fun snapshot_expiry_pricer_v2(
     // fail the whole flush (RP-31). Skipping is safe because
     // `expected_expiry_markets` is read on-chain here, not supplied: see
     // `seal_valuation_snapshot` for why nothing real can be skipped.
-    let instant_ms = {
+    let started_at_ms = {
         let valuation = vault.valuation.borrow();
         if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;
         assert!(
             !valuation.frozen_pricers.contains(&expiry_market_id),
             EExpiryPricerAlreadySnapshotted,
         );
-        flush_instant(valuation.started_at_ms)
+        valuation.started_at_ms
     };
 
     let frozen = if (market.is_settled()) {
@@ -382,7 +382,7 @@ public fun snapshot_expiry_pricer_v2(
         option::none()
     } else {
         assert!(clock.timestamp_ms() < market.expiry(), EExpiredMarketNotSettled);
-        option::some(market.frozen_v2(config, price, vol, instant_ms))
+        option::some(market.frozen_v2(config, price, vol, started_at_ms))
     };
     let stamp = frozen.is_some();
     vault.valuation.borrow_mut().frozen_pricers.insert(expiry_market_id, frozen);
@@ -1287,13 +1287,6 @@ fun materialize(vault: &mut PoolVault, config: &ProtocolConfig, expiry_market_id
 /// facts — the active expiry set, the start time, and each LP queue's
 /// eligibility cutoff — after requiring a bootstrapped pool with nonzero PLP
 /// supply.
-/// The flush instant: the start of the minute holding `started_at_ms`, a whole
-/// minute every Pyth fixed-rate channel and both Block Scholes grids land on, and
-/// before any live market's expiry, since expiries fall on minutes after it.
-fun flush_instant(started_at_ms: u64): u64 {
-    started_at_ms - started_at_ms % constants::one_minute_ms!()
-}
-
 fun start_val(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
