@@ -11,7 +11,7 @@
 /// `try_pay_settled` need no authority and are called directly.
 ///
 /// Admission takes an optional `BuilderFee` and passes it to Predict's
-/// `_with_builder` admission, which records the code and the capped fee in the
+/// oracle-free `_v2` admission, which records the code and the capped fee in the
 /// receipt for the fill. An order that names none pays no builder fee.
 module deepbook_predict_orders::order_flow;
 
@@ -21,12 +21,7 @@ use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket, OrderReceipt},
     protocol_config::ProtocolConfig
 };
-use deepbook_predict_math::lazer_price::LazerPrice;
-use propbook::{
-    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
-    pyth_feed::PythFeed,
-    registry::OracleRegistry
-};
+use deepbook_predict_math::{block_scholes::BsVol, lazer_price::LazerPrice};
 use sui::{balance::Balance, clock::Clock, deny_list::DenyList};
 use usdc::usdc::USDC;
 
@@ -39,10 +34,6 @@ public(package) fun admit_mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     account: &mut Account,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     builder: Option<BuilderFee>,
     kind: u8,
     lower_tick: u64,
@@ -53,22 +44,16 @@ public(package) fun admit_mint(
     max_probability: u64,
     budget: u64,
     order_fee: u64,
-    svi_max_age_ms: u64,
     channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
-    ctx: &TxContext,
 ): OrderReceipt {
-    expiry_market::admit_mint_with_builder(
+    expiry_market::admit_mint_v2(
         OrderFlow(),
         market,
         config,
         account,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         builder,
         kind,
         lower_tick,
@@ -79,12 +64,10 @@ public(package) fun admit_mint(
         max_probability,
         budget,
         order_fee,
-        svi_max_age_ms,
         channel,
         tau_ms,
         deadline_ms,
         clock,
-        ctx,
     )
 }
 
@@ -93,43 +76,31 @@ public(package) fun admit_sell(
     config: &ProtocolConfig,
     account: &mut Account,
     receipt: &mut OrderReceipt,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     builder: Option<BuilderFee>,
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
     order_fee: u64,
-    svi_max_age_ms: u64,
     channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
-    ctx: &TxContext,
 ) {
-    expiry_market::admit_sell_with_builder(
+    expiry_market::admit_sell_v2(
         OrderFlow(),
         market,
         config,
         account,
         receipt,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         builder,
         close_quantity,
         min_probability,
         min_proceeds,
         order_fee,
-        svi_max_age_ms,
         channel,
         tau_ms,
         deadline_ms,
         clock,
-        ctx,
     );
 }
 
@@ -138,9 +109,10 @@ public(package) fun commit(
     config: &ProtocolConfig,
     receipt: &mut OrderReceipt,
     price: &LazerPrice,
+    vol: &BsVol,
     clock: &Clock,
 ): Balance<USDC> {
-    expiry_market::commit(OrderFlow(), market, config, receipt, price, clock)
+    expiry_market::commit_v2(OrderFlow(), market, config, receipt, price, vol, clock)
 }
 
 public(package) fun try_fill(

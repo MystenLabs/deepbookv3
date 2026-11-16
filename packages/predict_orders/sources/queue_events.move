@@ -9,7 +9,7 @@ module deepbook_predict_orders::queue_events;
 
 use deepbook_predict::pricing::VolSnapshot;
 use deepbook_predict_orders::{
-    delayed_execution_config::DelayedExecutionPolicy,
+    delayed_execution_config::{BsTiming, DelayedExecutionPolicy},
     order_queue::{OrderRequest, HeldPosition, OrderTiming}
 };
 use sui::event;
@@ -179,6 +179,13 @@ public struct MarketPayoutsCompleted has copy, drop, store {
 public struct DelayedExecutionPolicyUpdated has copy, drop, store {
     desk_id: ID,
     policy: DelayedExecutionPolicy,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted by `desk::set_bs_timing`, with the complete post-state.
+public struct BsTimingUpdated has copy, drop, store {
+    desk_id: ID,
+    timing: BsTiming,
     onchain_timestamp_ms: u64,
 }
 
@@ -418,6 +425,14 @@ public(package) fun emit_record_funds_claimed(
 
 public(package) fun emit_market_payouts_completed(expiry_market_id: ID, onchain_timestamp_ms: u64) {
     event::emit(MarketPayoutsCompleted { expiry_market_id, onchain_timestamp_ms });
+}
+
+public(package) fun emit_bs_timing_updated(
+    desk_id: ID,
+    timing: BsTiming,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(BsTimingUpdated { desk_id, timing, onchain_timestamp_ms });
 }
 
 public(package) fun emit_policy_updated(
