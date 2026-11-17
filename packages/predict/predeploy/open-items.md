@@ -1,16 +1,16 @@
 # Predict Predeploy Open Items
 
-Updated 2026-11-16. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-11-17. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
-### S-11: The version 6 callers are not migrated off the retired entry points
+### S-11: The keepers, the SDK, and the upgrade transaction are not yet on the version 6 calls
 
 **Severity:** Deploy gate for package version 6.
 
-Version 6 retires every entry point that read Propbook or took a live `Pricer` (`EUseV2`) and adds an oracle binding every market needs (`EOracleBindingMissing`). The repository's own callers still use the version 5 calls: the deployment tool creates markets through `create_and_share_expiry_market` and sets no binding (`deployment/deploy.ts`), and the shared harness and simulation builders call the retired creation, commit, settlement, snapshot, and live-pricer functions (`devtools/ts/runtime.ts`). The localnet benchmark and any fresh deployment fail at those calls until they move. The keepers and the SDK outside this repository have the same dependency.
+Version 6 retires every entry point that read Propbook or took a live `Pricer` (`EUseV2`) and adds an oracle binding every market needs (`EOracleBindingMissing`). This repository's own callers have moved: the deployment tool creates markets through `create_and_share_expiry_market_v2` and sets the binding, and the optional `BsTiming`, with a read-back (`deployment/deploy.ts`). The harness and simulation builders sign Lazer and Block Scholes data for market creation, commits, settlement, and the flush (`devtools/ts/runtime.ts`), and the localnet benchmark runs on them. The keepers, the SDK, and the multisig upgrade transaction live outside this repository and still need the same move.
 
-**Action:** move the builders to the `_v2` calls with signed Lazer and Block Scholes data, add an idempotent `set_oracle_binding` step with read-back to the deployment and upgrade tooling, and land the keeper and SDK releases before the pause-and-drain cutover (decided 2026-11-16).
+**Action:** release the keepers and the SDK on the `_v2` calls, and build the upgrade transaction with its `set_oracle_binding` step, before the pause-and-drain cutover (decided 2026-11-16).
 
 ### S-12: The version 6 cutover still needs its Testnet rehearsal
 
