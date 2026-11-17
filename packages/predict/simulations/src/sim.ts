@@ -13,17 +13,16 @@ import {
 } from "./shared.js";
 import {
     CLEANUP_BATCH, POOL_VAULT_ID, PROTOCOL_CONFIG_ID, addFlushOperatorTx, address, bareFlushTx,
-    bindFeedsToUnderlyingTx, cleanupQueueTx, clockTimestampMs, combineExecutionReceipts,
+    cleanupQueueTx, clockTimestampMs, combineExecutionReceipts,
     commitAndResolveTx, createAccountTx, createExpiryMarketTx, createMarketQueueTx, depositToAccountTx,
-    deriveAccountWrapperId, deriveMarketQueueId, enableOrderFlowTx, execute, executeAndWait,
-    finalizeUsdcCurrencyRegistrationTx, keeperTrySettleTx, lockCapitalTx, mintLifecycleCapTx,
-    mintPoolValuationCapTx, mintRangeTicks, objectExists, readPredictEconomicState, readSettlementProgress,
-    rebalanceExpiryCashTx, refreshOracleAndEnqueueMintTxs, settleStepTx,
-    refreshOracleAndEnqueueRedeemOpenTxs, refreshOracleAndFlushTxs,
+    deriveAccountWrapperId, deriveMarketQueueId, enableOrderFlowTx, enqueueMintTx, enqueueRedeemOpenTx,
+    execute, executeAndWait, finalizeUsdcCurrencyRegistrationTx, flushInstantMs, keeperTrySettleTx,
+    lockCapitalTx, mintLifecycleCapTx, mintPoolValuationCapTx, mintRangeTicks, objectExists,
+    readPredictEconomicState, readSettlementProgress, rebalanceExpiryCashTx, settleStepTx,
     registerUnderlyingAndCreateFeedsTx, requestSupplyTx, requestWithdrawTx,
-    seedOracleTx, setBlockScholesSignerTx, setCadenceConfigTx,
-    setSimulationEconomicPolicyTx, setTemplateExpiryFeeConfigTx,
-    type ExecutionReceipt, updatePythTrustedSignerTx,
+    setBlockScholesSignerTx, setCadenceConfigTx, setFlushWindowTx, setOracleBindingTx,
+    setSimulationEconomicPolicyTx, setTemplateExpiryFeeConfigTx, signedFlushTxs,
+    type ExecutionReceipt, type SignedOracle, updatePythTrustedSignerTx,
 } from "../../devtools/ts/runtime.js";
 
 const CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
@@ -274,21 +273,24 @@ async function stateSnapshot(state: SimState): Promise<Record<string, string>> {
 function traceStep(row: ScenarioRow, receipt: ExecutionReceipt, wallMs: number, timestampMs: number): LocalTraceStep {
     return { step: row.step, action: row.action, digest: receipt.digest, pricingTimestampMs: timestampMs, wallMs, gas: receipt.gas, events: receipt.events.map((event: any) => ({ type: eventName(event), full_type: String(event.type ?? ""), parsedJson: event.parsedJson ?? {} })) };
 }
-function oracleParams(value: OracleRefreshData) {
-    return { spot: value.spot, forward: value.forward, svi: { a: value.a, aNegative: value.aNegative, b: value.b, rho: value.rho, rhoNegative: value.rhoNegative, m: value.m, mNegative: value.mNegative, sigma: value.sigma } };
+// A row's oracle values as the Block Scholes data the local signer signs for the market's expiry.
+function signedOracle(value: OracleRefreshData): SignedOracle {
+    return { bsSpot: value.spot, forward: value.forward, svi: { a: value.a, aNegative: value.aNegative, b: value.b, rho: value.rho, rhoNegative: value.rhoNegative, m: value.m, mNegative: value.mNegative, sigma: value.sigma } };
 }
 
 // Enqueue an order, then, unless the row leaves it uncommitted, commit `commitSpot` as the
-// locally signed Lazer price for its τ on its channel and resolve in one PTB. Both calls are
-// permissionless. The fill must land at τ itself and before the order's deadline, or the Python
-// replay, which prices at τ, would model a different outcome. Either one fails the run here.
+// locally signed Lazer price for its τ on its channel, with the row's Block Scholes values signed
+// at τ's canonical slots, and resolve in one PTB. Placement reads no oracle, and both later calls
+// are permissionless. The fill must land at τ itself and before the order's deadline, or the
+// Python replay, which prices at τ, would model a different outcome. Either one fails the run here.
 async function placeAndFill(
     state: SimState,
-    enqueueTxs: () => Promise<any[]>,
+    enqueueTx: () => any,
+    oracle: SignedOracle,
     commitSpot: bigint | null,
     label: string,
 ): Promise<RowExecution> {
-    const enqueue = await execute(enqueueTxs, label);
+    const enqueue = await execute(enqueueTx, label);
     const order = eventJson(onlyEvent(enqueue, "OrderEnqueued"));
     const recordId = BigInt(order.record_id);
     const tauMs = BigInt(order.timing.tau_ms);
@@ -298,8 +300,9 @@ async function placeAndFill(
     if (waitMs > 0) await sleep(waitMs);
     const fill = await execute(() => commitAndResolveTx({
         expiryMarketId: state.expiryMarketId,
+        expiryMs: BigInt(state.expiryMs),
         protocolConfigId: state.protocolConfigId,
-        prices: [{ tauMs, channel: Number(order.timing.pyth_channel), spot1e9: commitSpot }],
+        prices: [{ tauMs, channel: Number(order.timing.pyth_channel), spot1e9: commitSpot, oracle }],
         maxOrders: RESOLVE_BATCH,
     }), `${label}_fill`);
     const ofRecord = (event: any) => BigInt(eventJson(event).record_id) === recordId;
@@ -320,10 +323,10 @@ async function placeAndFill(
     return { receipt: combineExecutionReceipts([enqueue, fill]), pricingTimestampMs };
 }
 
-// `settle`: Predict's `try_settle` with the exact expiry observation. It settles from the oracle
-// alone, so one call settles the market.
+// `settle`: Predict's `try_settle_v2` with the Lazer price signed at exactly expiry. It settles
+// from that price alone, so one call settles the market.
 async function settleMarket(state: SimState, price: bigint, label: string): Promise<ExecutionReceipt> {
-    const receipt = await execute(() => keeperTrySettleTx({ pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, expiryMs: BigInt(state.expiryMs), price, marketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId }), label);
+    const receipt = await execute(() => keeperTrySettleTx({ expiryMs: BigInt(state.expiryMs), price, marketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId }), label);
     if (!(await readSettlementProgress(state.expiryMarketId)).settled) throw new Error(`${label}: try_settle did not settle the market`);
     return receipt;
 }
@@ -345,27 +348,34 @@ async function settleQueue(state: SimState, label: string): Promise<ExecutionRec
 }
 
 // Every trade row is queued in the order-flow companion: enqueue, then commit at τ and resolve
-// (`placeAndFill`). `settle` is Predict's `try_settle`. `settle_payout` is the queue's walk:
+// (`placeAndFill`). A flush marks the market from the row's values signed at the latest Clock
+// reading, which the trace records as its pricing time. `settle` is Predict's `try_settle_v2`. `settle_payout` is the queue's walk:
 // `settle_step` refunds the waiting orders and pays the Open records, then `cleanup` deletes the
 // finished records. The next `rebalance_expiry_cash` sweeps the settled market.
 async function executeRow(row: ScenarioRow, state: SimState, context: RunContext): Promise<RowExecution> {
-    const common = { expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, bsSviStoreId: state.bsSviStoreId };
+    const common = { expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId };
     const clocked = (receipt: ExecutionReceipt): RowExecution => ({ receipt, pricingTimestampMs: null });
     if (row.action === "mint") {
         // A queued mint needs a finite all-in cap, and a fill never costs more than its quantity.
-        return placeAndFill(state, () => refreshOracleAndEnqueueMintTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row), strike: row.strike, isUp: row.isUp, higherStrike: row.higherStrike, quantity: row.quantity, tickSize: BigInt(state.tickSize), maxCost: row.quantity, maxProbability: row.maxProbability }), row.commitSpot, `scenario_${row.step}_mint`);
+        return placeAndFill(state, () => enqueueMintTx({ ...common, strike: row.strike, isUp: row.isUp, higherStrike: row.higherStrike, quantity: row.quantity, tickSize: BigInt(state.tickSize), maxCost: row.quantity, maxProbability: row.maxProbability }), signedOracle(row), row.commitSpot, `scenario_${row.step}_mint`);
     }
     if (row.action === "redeem_open") {
         const recordId = context.aliases.recordIds.get(row.orderRef);
         if (!recordId) throw new Error(`unknown order_ref ${row.orderRef}`);
-        return placeAndFill(state, () => refreshOracleAndEnqueueRedeemOpenTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row.oracleRefresh), recordId: BigInt(recordId), closeQuantity: row.closeQuantity }), row.commitSpot, `scenario_${row.step}_redeem_open`);
+        return placeAndFill(state, () => enqueueRedeemOpenTx({ ...common, recordId: BigInt(recordId), closeQuantity: row.closeQuantity }), signedOracle(row.oracleRefresh), row.commitSpot, `scenario_${row.step}_redeem_open`);
     }
     if (row.action === "request_supply") return clocked(await execute(() => requestSupplyTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, amount: row.amount, minPlpOut: row.minOutput }), `scenario_${row.step}_request_supply`));
     if (row.action === "request_withdraw") return clocked(await execute(() => requestWithdrawTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, shares: row.shares, minUsdcOut: row.minOutput }), `scenario_${row.step}_request_withdraw`));
     if (row.action === "flush") {
         if (row.oracleRefresh === null) return clocked(await execute(() => bareFlushTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, poolValuationCapId: state.poolValuationCapId }), `scenario_${row.step}_flush_empty`));
         const oracle = row.oracleRefresh;
-        return clocked(await execute(() => refreshOracleAndFlushTxs({ ...common, poolVaultId: state.poolVaultId, poolValuationCapId: state.poolValuationCapId, expiry: BigInt(state.expiryMs), ...oracleParams(oracle) }), `scenario_${row.step}_flush`));
+        const instantMs = await flushInstantMs();
+        const receipt = await execute(() => signedFlushTxs(
+            { poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, poolValuationCapId: state.poolValuationCapId, expiryMarketId: state.expiryMarketId },
+            { id: state.expiryMarketId, expiryMs: BigInt(state.expiryMs), oracle: signedOracle(oracle) },
+            { instantMs, spot1e9: oracle.spot },
+        ), `scenario_${row.step}_flush`);
+        return { receipt, pricingTimestampMs: Number(instantMs) };
     }
     if (row.action === "rebalance_expiry_cash") return clocked(await execute(() => rebalanceExpiryCashTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, expiryMarketId: state.expiryMarketId }), `scenario_${row.step}_rebalance_expiry_cash`));
     if (row.action === "settle") {
@@ -403,7 +413,10 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     const pythFeedId = createdObjectId(feedResult, "pyth_feed::PythFeed");
     const bsValueStoreId = createdObjectId(feedResult, "BlockScholesValueStore");
     const bsSviStoreId = createdObjectId(feedResult, "BlockScholesSVIStore");
-    await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind_feeds_to_underlying");
+    // Every v6 call that prices checks its signed data against the underlying's binding, and
+    // market creation requires it.
+    await executeAndWait(setOracleBindingTx(), "set_oracle_binding");
+    await executeAndWait(setFlushWindowTx(), "set_flush_window");
     const policy = (key: string) => integer(config.protocol[key], `scenario config.protocol.${key}`);
     await executeAndWait(setSimulationEconomicPolicyTx({
         protocolConfigId: PROTOCOL_CONFIG_ID, baseFee: policy("base_fee"), minFee: policy("min_fee"),
@@ -446,7 +459,6 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     const creationTimestampMs = BigInt(marketResult.clockTimestampMs);
     const expectedExpiry = ((creationTimestampMs / periodMs) + 1n) * periodMs;
     if (BigInt(expiryMs) !== expectedExpiry) throw new Error(`expected cadence expiry ${expectedExpiry}, got ${expiryMs}`);
-    await executeAndWait(await seedOracleTx({ pythFeedId, bsValueStoreId, bsSviStoreId, expiry: BigInt(expiryMs), ...oracleParams(seed) }), "seed_oracle_surface");
     await executeAndWait(rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId }), "bootstrap_rebalance_expiry_cash");
     const state: SimState = { poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId, marketQueueId, expiryMs, pythFeedId, bsValueStoreId, bsSviStoreId, accountWrapperId, lifecycleCapId, poolValuationCapId, initialExpiryCash: initialExpiryCash.toString(), tickSize: tickSize.toString() };
     writeJson(STATE_PATH, state);

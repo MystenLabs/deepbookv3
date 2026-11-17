@@ -198,7 +198,15 @@ REASON_LIMITS = 1
 REASON_ADMISSION = 2
 REASON_DEADLINE = 5
 REASON_NO_CASH = 8
+REASON_NO_VOL = 10
 FEE_KEEPING_REASONS = (REASON_LIMITS, REASON_ADMISSION)
+# The order-flow desk's launch `BsTiming`: a commit at τ takes the Block Scholes spot and forward
+# stamped at the 500 ms boundary at or before τ - 500 and the SVI at the 1,000 ms boundary at or
+# before τ - 1,000, which the executor signs for every committed order.
+BS_VALUE_STEP_MS = 500
+BS_SVI_STEP_MS = 1_000
+BS_VALUE_LAG_MS = 500
+BS_SVI_LAG_MS = 1_000
 
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
@@ -1491,15 +1499,30 @@ def has_positive_min_variance(svi: dict[str, Any]) -> bool:
     return increment + svi["a"] > 0
 
 
-def tick_oracle(record: dict[str, Any], commit_spot: int, tick_ms: int) -> dict[str, Any] | None:
-    """The pricer resolve rebuilds from an order's volatility snapshot at its committed tick.
+def bs_value_slot_ms(tau_ms: int) -> int:
+    at = tau_ms - BS_VALUE_LAG_MS
+    return at - at % BS_VALUE_STEP_MS
 
-    Mirrors `pricing::pricer_at`: the snapshot's Block Scholes forward re-anchored on the
-    committed spot, with the raw SVI rolled from its source time to the tick. `None` where the
-    contract returns none: at or past expiry, on a zero forward, or when the rolled surface's
-    minimum total variance is not positive.
+
+def bs_svi_slot_ms(tau_ms: int) -> int:
+    at = tau_ms - BS_SVI_LAG_MS
+    return at - at % BS_SVI_STEP_MS
+
+
+def tick_oracle(record: dict[str, Any], commit_spot: int, tick_ms: int) -> dict[str, Any] | None:
+    """The pricer resolve rebuilds from an order's committed inputs at its tick.
+
+    Mirrors `pricing::pricer_at`: the committed Block Scholes forward re-anchored on the
+    committed spot, with the raw SVI rolled from its source time to the tick. The executor
+    commits every order at its τ, so `tick_ms` is τ, with the order's Block Scholes values
+    signed at τ's slots. `None` where the contract returns none: at or past expiry, on a zero
+    forward, or when the rolled surface's minimum total variance is not positive.
     """
-    vol = record["vol"]
+    vol = {
+        **record["vol"],
+        "priceSourceTimestampMs": bs_value_slot_ms(tick_ms),
+        "sviSourceTimestampMs": bs_svi_slot_ms(tick_ms),
+    }
     if tick_ms >= vol["expiryMs"]:
         return None
     forward = mul_div_round_down(commit_spot, vol["forward"], vol["spot"])
@@ -1555,8 +1578,8 @@ def enqueue_mint(
     """`enqueue_exact_quantity` with `max_cost = quantity`, the cap the executor passes.
 
     Escrows the budget, `min(max_cost, available - order_fee, quantity)`, and the order fee.
-    The t0 dry run changes nothing when it passes, and an order it refuses aborts the chain
-    transaction, so the model does not repeat it.
+    Placement reads no oracle and prices nothing, so the order's limits are checked only at its
+    tick.
     """
     if model["settlement_price"] is not None:
         raise ValueError("enqueue on a settled market")
@@ -1694,7 +1717,7 @@ def queued_fill_update(
 
 def oracle_source_timestamps(oracle: dict[str, Any], tick_ms: int) -> dict[str, str]:
     # A queued fill's Pyth source time is its committed price's generation time, which the
-    # local signer stamps at τ. The Block Scholes times are the order's snapshot.
+    # local signer stamps at τ. The Block Scholes times are the slots its commit signed.
     return {
         "pyth_spot_source_timestamp_ms": str(tick_ms),
         "block_scholes_spot_source_timestamp_ms": str(oracle["priceSourceTimestampMs"]),
@@ -1922,7 +1945,7 @@ def commit_and_resolve(
     record["status"] = STATUS_COMMITTED
     oracle = tick_oracle(record, commit_spot, tick_ms)
     if oracle is None:
-        result: list[dict[str, Any]] | int = REASON_ADMISSION
+        result: list[dict[str, Any]] | int = REASON_NO_VOL
     elif record["kind"] == KIND_REDEEM_OPEN:
         result = fill_queued_sell(model, state, record, oracle, tick_ms, replacement_order_ref)
     else:

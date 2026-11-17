@@ -125,6 +125,8 @@ def write_env_localnet(
         "ACCOUNT_REGISTRY_ID": o["account_registry"],
         "ACCOUNT_ADMIN_CAP_ID": o["account_admin_cap"],
         "FIXED_MATH_PACKAGE_ID": p["fixed_math"],
+        # The pricing library that decodes the signed oracle data version 6 calls take.
+        "PREDICT_MATH_PACKAGE_ID": p["predict_math"],
         "BLOCK_SCHOLES_ORACLE_PACKAGE_ID": p["block_scholes_oracle"],
         "BS_SIGNER_REGISTRY_ID": o["bs_signer_registry"],
         "BS_ADMIN_CAP_ID": o["bs_admin_cap"],
