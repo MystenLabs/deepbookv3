@@ -53,6 +53,9 @@ export const ORDER_DESK_ID = requireEnv("ORDER_DESK_ID");
 export const QUEUE_REGISTRY_ID = requireEnv("QUEUE_REGISTRY_ID");
 // `predict_math` was renamed to `fixed_math` (package + named address).
 export const FIXED_MATH_PACKAGE_ID = requireEnv("FIXED_MATH_PACKAGE_ID");
+// `deepbook_predict_math`, the pricing library: its `lazer_price` and `block_scholes` modules
+// decode the signed Pyth Lazer and Block Scholes data Predict's version 6 calls take.
+export const PREDICT_MATH_PACKAGE_ID = requireEnv("PREDICT_MATH_PACKAGE_ID");
 // propbook owns the extracted Pyth + Block Scholes feeds; its `OracleRegistry` is
 // created and shared at propbook publish (package init).
 export const PROPBOOK_PACKAGE_ID = requireEnv("PROPBOOK_PACKAGE_ID");

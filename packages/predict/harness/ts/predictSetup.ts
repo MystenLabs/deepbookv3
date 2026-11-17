@@ -28,6 +28,8 @@ import {
   type OracleFeedIds,
   readIsFlushOperator,
   readOrderFlowEnabled,
+  setFlushWindowTx,
+  setOracleBindingTx,
   readPlpTotalSupply,
   readSupplyRequestsPending,
   registerUnderlyingAndCreateFeedsTx,
@@ -73,6 +75,10 @@ export async function setupFeedsAndConfig(
     const bsValueStoreId = found(feedsR, "block_scholes_store::BlockScholesValueStore");
     const bsSviStoreId = found(feedsR, "block_scholes_store::BlockScholesSVIStore");
     await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind-spot");
+    // Predict's own binding: every version 6 call that prices checks its signed data against
+    // it, and market creation requires it.
+    await executeAndWait(setOracleBindingTx(), "oracle-binding");
+    await executeAndWait(setFlushWindowTx(), "flush-window");
     feeds = { pythFeedId, bsValueStoreId, bsSviStoreId };
     // Publish the feed ids so the updater (a separate process) can stream onto them.
     atomicWriteFile(feedsPath, JSON.stringify(feeds));

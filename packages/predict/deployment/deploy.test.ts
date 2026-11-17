@@ -19,6 +19,13 @@ import { blake2b } from "@noble/hashes/blake2.js";
 import { bcs, TypeTagSerializer } from "@mysten/sui/bcs";
 import {
     CADENCES,
+    EXPECTED_ORACLE_BINDING,
+    ensureBsTiming,
+    ensureOracleBinding,
+    marketCreationTransaction,
+    oracleBindingMatches,
+    oracleBindingTransaction,
+    parseOracleBinding,
     configureDeployment,
     assertGasFunding,
     assertFunding,
@@ -888,10 +895,11 @@ test("the package plan is complete and topological", () => {
 });
 
 test("gas funding derives the complete fresh transaction plan", () => {
-    // 17 fixed steps, then two initial markets per enabled cadence, each with its queue.
-    assert.equal(plannedTransactionCount(), 25);
-    assert.equal(maximumTransactionCountPerRun(), 25);
-    assert.equal(irreversibleDeploymentSteps().length, 34);
+    // 18 fixed steps (the optional Block Scholes timing is unplanned while `BS_TIMING` is
+    // unset), then two initial markets per enabled cadence, each with its queue.
+    assert.equal(plannedTransactionCount(), 26);
+    assert.equal(maximumTransactionCountPerRun(), 26);
+    assert.equal(irreversibleDeploymentSteps().length, 35);
     const steps = plannedTransactionSteps();
     // Queued trading needs the companion allowlisted, and the bootstrap flush its operator.
     assert.ok(steps.includes("enable_order_flow"));
@@ -1539,6 +1547,8 @@ function orchestrationFixture(failAfter?: string) {
         },
         ensureOracleObjects: () => step("wire_empty_oracle_objects"),
         ensureUnderlyingRegistered: () => step("underlying"),
+        ensureOracleBinding: () => step("oracle_binding"),
+        ensureBsTiming: async () => {},
         ensureCadences: () => step("cadences"),
         ensureOrderFlow: () => step("order_flow"),
         ensureAccountWrapper: async () => {
@@ -1614,6 +1624,7 @@ test("the full orchestration re-enters after every stage without repeating compl
         "valuation_cap",
         "wire_empty_oracle_objects",
         "underlying",
+        "oracle_binding",
         "cadences",
         "order_flow",
         "account",
@@ -1646,6 +1657,131 @@ test("the full orchestration re-enters after every stage without repeating compl
     }
 });
 
+function oracleBindingBytes(binding: typeof EXPECTED_ORACLE_BINDING): number[] {
+    const text = (value: string) => [value.length, ...new TextEncoder().encode(value)];
+    const id = binding.lazerFeedId;
+    return [
+        1,
+        id & 0xff,
+        (id >> 8) & 0xff,
+        (id >> 16) & 0xff,
+        (id >> 24) & 0xff,
+        binding.lazerChannel,
+        ...text(binding.blockScholesBaseAsset),
+        ...text(binding.sviModel),
+        binding.sviDecimals,
+    ];
+}
+
+function bindingRuntime() {
+    const runtime = testRuntime();
+    runtime.result.packages.predict = id("4");
+    runtime.result.packages.predict_orders = id("9");
+    runtime.result.sharedObjects.predict = {
+        "registry::Registry": id("5"),
+        "plp::PoolVault": id("6"),
+        "protocol_config::ProtocolConfig": id("7"),
+    };
+    runtime.result.sharedObjects.predict_orders = { "desk::OrderDesk": id("a") };
+    runtime.result.ownedCaps.predict = { "admin::AdminCap": id("b") };
+    return runtime;
+}
+
+function moveCalls(tx: ReturnType<typeof oracleBindingTransaction>) {
+    return tx
+        .getData()
+        .commands.map((command) => command.MoveCall)
+        .filter((call) => call !== undefined && call !== null);
+}
+
+test("the oracle binding decodes from its Option BCS and an absent binding reads as none", () => {
+    assert.deepEqual(parseOracleBinding(oracleBindingBytes(EXPECTED_ORACLE_BINDING)), EXPECTED_ORACLE_BINDING);
+    assert.equal(parseOracleBinding([0]), null);
+    assert.throws(() => parseOracleBinding([...oracleBindingBytes(EXPECTED_ORACLE_BINDING), 0]));
+    assert.equal(oracleBindingMatches(null), false);
+    assert.equal(oracleBindingMatches({ ...EXPECTED_ORACLE_BINDING, sviDecimals: 18 }), false);
+    // The deployment binds the 200 ms channel its launch order policy places on.
+    assert.equal(EXPECTED_ORACLE_BINDING.lazerChannel, Number(EXPECTED_ORDER_DESK.policy.pythChannel));
+});
+
+test("the oracle binding step sets only a missing or different binding and reads it back", async () => {
+    const runtime = bindingRuntime();
+    const tx = oracleBindingTransaction(runtime.result);
+    const [call] = moveCalls(tx);
+    assert.equal(call!.function, "set_oracle_binding");
+    assert.equal(call!.module, "protocol_config");
+
+    for (const before of [null, { ...EXPECTED_ORACLE_BINDING, lazerChannel: 2 }]) {
+        let stored: typeof EXPECTED_ORACLE_BINDING | null = before;
+        const sent: string[] = [];
+        await ensureOracleBinding(runtime, {
+            readOracleBinding: async () => stored,
+            executeTransaction: async (_runtime, label) => {
+                sent.push(label);
+                stored = EXPECTED_ORACLE_BINDING;
+                return { digest: `tx-${label}` } as Receipt;
+            },
+        });
+        assert.deepEqual(sent, ["set_oracle_binding"]);
+    }
+
+    const sent: string[] = [];
+    await ensureOracleBinding(runtime, {
+        readOracleBinding: async () => EXPECTED_ORACLE_BINDING,
+        executeTransaction: async (_runtime, label) => {
+            sent.push(label);
+            return { digest: `tx-${label}` } as Receipt;
+        },
+    });
+    assert.deepEqual(sent, [], "a matching binding is not resent");
+
+    await assert.rejects(
+        ensureOracleBinding(runtime, {
+            readOracleBinding: async () => null,
+            executeTransaction: async (_runtime, label) => ({ digest: `tx-${label}` }) as Receipt,
+        }),
+        /did not read back/,
+    );
+});
+
+test("the Block Scholes timing step is skipped unless configured, and then set once and read back", async () => {
+    const runtime = bindingRuntime();
+    const fail = async () => {
+        throw new Error("unexpected chain access");
+    };
+    await ensureBsTiming(runtime, null, { readBsTiming: fail, executeTransaction: fail });
+
+    const timing = { valueLagMs: 600n, sviLagMs: 1_200n, gapWaitMs: 900n };
+    let stored = { valueLagMs: 500n, sviLagMs: 1_000n, gapWaitMs: 1_000n };
+    const sent: string[] = [];
+    const ops = {
+        readBsTiming: async () => stored,
+        executeTransaction: async (_runtime: unknown, label: string, tx: ReturnType<typeof oracleBindingTransaction>) => {
+            assert.equal(moveCalls(tx)[0]!.function, "set_bs_timing");
+            sent.push(label);
+            stored = timing;
+            return { digest: `tx-${label}` } as Receipt;
+        },
+    } as NonNullable<Parameters<typeof ensureBsTiming>[2]>;
+    await ensureBsTiming(runtime, timing, ops);
+    await ensureBsTiming(runtime, timing, ops);
+    assert.deepEqual(sent, ["set_bs_timing"]);
+});
+
+test("market creation calls the version 6 entry point with the template band and no Propbook object", () => {
+    const runtime = bindingRuntime();
+    runtime.result.sharedObjects.propbook = { "registry::OracleRegistry": id("8") };
+    const tx = marketCreationTransaction(runtime.result, id("c"), CADENCES[0]);
+    const [call] = moveCalls(tx);
+    assert.equal(call!.function, "create_and_share_expiry_market_v2");
+    const inputs = tx.getData().inputs;
+    const objectIds = inputs
+        .map((input) => input.UnresolvedObject?.objectId)
+        .filter((value): value is string => typeof value === "string");
+    assert.ok(!objectIds.includes(id("8")), "creation reads no Propbook registry");
+    assert.equal(call!.arguments.length, 10);
+});
+
 test("initial market creation needs no observations and does not recreate expired markets on resume", async () => {
     const runtime = testRuntime();
     runtime.result.packages.predict = id("4");
@@ -1667,7 +1803,7 @@ test("initial market creation needs no observations and does not recreate expire
                 .getData()
                 .commands.map((command) => command.MoveCall?.function)
                 .filter(Boolean);
-            assert.deepEqual(targets, ["create_and_share_expiry_market"]);
+            assert.deepEqual(targets, ["create_and_share_expiry_market_v2"]);
             if (!receipts.has(label)) {
                 submitted++;
                 const cadence = label.includes("_5m_") ? 300_000n : 60_000n;
@@ -2334,6 +2470,7 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
             "valuation_cap",
             "wire_empty_oracle_objects",
             "underlying",
+            "oracle_binding",
             "cadences",
             "order_flow",
             "capitalization",
@@ -2454,7 +2591,7 @@ test("Testnet USDC reuse requires explicit identities and binds the journal", ()
         assert.equal(state.wiring.currencies.usdc.mintedAmount, "0");
         assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
         assert.equal(state.wiring.bootstrap.supplyAmount, "250000000000");
-        assert.equal(irreversibleDeploymentSteps().length, 31);
+        assert.equal(irreversibleDeploymentSteps().length, 32);
         assert.ok(!irreversibleDeploymentSteps().includes("publish_usdc"));
         assert.ok(!plannedTransactionSteps().includes("mint_deployer_usdc"));
         assert.ok(!plannedTransactionSteps().includes("finalize_usdc_currency_registration"));
@@ -2505,6 +2642,7 @@ test("reused USDC orchestration resumes without minting or republication and rec
             "valuation_cap",
             "wire_empty_oracle_objects",
             "underlying",
+            "oracle_binding",
             "cadences",
             "order_flow",
             "account",

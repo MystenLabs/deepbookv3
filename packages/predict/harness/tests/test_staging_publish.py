@@ -742,6 +742,7 @@ class LifecycleTests(unittest.TestCase):
             for name in (
                 "predict",
                 "predict_orders",
+                "predict_math",
                 "account",
                 "fixed_math",
                 "block_scholes_oracle",
