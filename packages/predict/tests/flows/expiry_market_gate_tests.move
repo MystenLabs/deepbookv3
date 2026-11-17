@@ -27,35 +27,7 @@ use usdc::usdc::USDC;
 
 // A source id distinct from `test_constants::pyth_feed_id()` (= 1), for the
 // unrelated second Pyth feed the wrong-feed binding test passes.
-const SECOND_SOURCE_ID: u32 = 2;
 // An underlying the market is not for, whose store pair the wrong-store test passes.
-const FOREIGN_UNDERLYING_ID: u32 = 2;
-
-/// Mint after the market has expired (clock == expiry) must be rejected by the
-/// live-pricing boundary before any trade mutation.
-#[test, expected_failure(abort_code = pricing::ELivePricingExpired)]
-fun mint_after_expiry_aborts() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    // Advance to expiry: the market flips active -> not active.
-    fx.set_clock_for_testing(test_constants::default_expiry_ms());
-    fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-
-    helpers::return_account_bundle(account);
-
-    helpers::return_market_bundle(market);
-    fx.finish();
-    abort 999
-}
 
 /// A permissionless `redeem_settled` against a still-LIVE (unexpired) market must
 /// abort: the settled-redeem path requires the market to be terminally settled, and
@@ -84,91 +56,6 @@ fun redeem_settled_on_live_order_aborts() {
     helpers::return_account_bundle(account);
 
     helpers::return_market_bundle(market);
-    fx.finish();
-    abort 999
-}
-
-/// Redeeming with the WRONG Pyth feed must abort at the live-pricing binding
-/// check. `redeem` decodes the order before loading the pricer, so the test mints
-/// a valid order first and then passes a second, unrelated `PythFeed`.
-#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
-fun redeem_with_wrong_pyth_feed_aborts() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    sui::test_scenario::return_shared(oracle_registry);
-
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-    let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
-
-    let order_id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-    // Redeem on the real market but pass an unrelated Pyth feed: the live-pricing
-    // binding check rejects it after decoding the valid order id.
-    fx.redeem_live_bundle_with_pyth(
-        &mut market,
-        &mut account,
-        &wrong_pyth,
-        order_id,
-        test_constants::mint_quantity(),
-    );
-
-    helpers::return_account_bundle(account);
-
-    helpers::return_market_bundle(market);
-    sui::test_scenario::return_shared(wrong_pyth);
-    fx.finish();
-    abort 999
-}
-
-/// Minting with the CORRECT Pyth feed but Block Scholes stores belonging to ANOTHER underlying must
-/// abort: the pricing boundary checks the Pyth binding first, then the store binding, so a correct
-/// Pyth plus unrelated stores reaches the second assert.
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
-fun mint_with_another_underlyings_block_scholes_stores_aborts() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let foreign_pair = fx.create_foreign_block_scholes_stores(
-        FOREIGN_UNDERLYING_ID,
-    );
-    let foreign_values_id = foreign_pair.block_scholes_value_store_id();
-    let foreign_svi_id = foreign_pair.block_scholes_svi_store_id();
-
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-    let wrong_bs = helpers::block_scholes_feed_for_testing(
-        fx.scenario_mut().take_shared_by_id<BlockScholesValueStore>(foreign_values_id),
-        fx.scenario_mut().take_shared_by_id<BlockScholesSVIStore>(foreign_svi_id),
-    );
-
-    fx.mint_bundle_with_bs(
-        &mut market,
-        &mut account,
-        &wrong_bs,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-
-    helpers::return_account_bundle(account);
-
-    helpers::return_market_bundle(market);
-    helpers::return_bs(wrong_bs);
     fx.finish();
     abort 999
 }

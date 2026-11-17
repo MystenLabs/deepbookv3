@@ -1,54 +1,18 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Guard coverage for `pricing.move`'s live quote path.
+/// Guard coverage for `pricing.move`'s pricer construction and quote path.
 ///
-/// Two abort surfaces are exercised through the production-valid `oracle_fixture`
-/// bring-up:
-///   - `EInvalidRange`: a degenerate range (`lower == higher`) after freshness
-///     passes;
-///   - `EBlockScholesPriceStale`: a hard staleness abort when one of the split
-///     Block Scholes price feeds is past its configured freshness window.
-/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone, and so is the
-/// ratio short-circuit that replaced them: log-moneyness is now a difference of
-/// logarithms, so both tails are COMPUTED and their limits are reached through
-/// `d2`'s normal-CDF clamp rather than asserted by a branch. They stay pinned here
-/// as exact-value tests (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0) on an
-/// ordinary surface, alongside the high-variance case where the deep-ITM tail is 0
-/// instead — the pair that shows the tail follows the surface. A stale Pyth spot no
-/// longer aborts either — it falls back to the stored Block Scholes forward; that
-/// fallback is pinned with exact values in
-/// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
-/// so it is not duplicated here.
-///
-/// The `chk_inputs` envelope rejects (`EBlockScholesInputsInvalid`)
-/// is covered here too: one test per reachable branch seeds a surface that violates
-/// exactly that bound (`forward` ceiling, `basis`, `b`, `rho`, `m`, `sigma` below
-/// its 1e-7 floor, at zero, and above its ceiling), leaving every other input
-/// default so only the targeted branch fires. `a` has no envelope bound: it is
-/// pinned at the provider-width limit in both signs and past the former
-/// `|a| <= 100` cap on both sides of the minimum-variance boundary. The smile root
-/// is pinned at the envelope corners that give it its largest input.
-/// The `spot == 0` / `forward == 0` branch of that assert is unreachable through
-/// `load_live_pricer`: the split Block Scholes feed reads drop a zero spot or zero
-/// forward upstream, so the read arrives as `none` and pricing aborts on absence
-/// (-> `EBlockScholesPriceUnavailable`) before any staleness check runs. Those two
-/// conditions are defensive-only and not tested here. `EBlockScholesMinVarianceInvalid`
-/// covers surfaces whose analytical minimum total variance is non-positive,
-/// including negative `a` values that over-offset the SVI increment and the
-/// degenerate `a == 0, b == 0` surface. `EZeroForward` is reached via a pyth spot
-/// far below the BS spot (no LOWER basis bound), where the re-anchored
-/// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
-/// a boundary surface whose rounded analytical minimum is positive at load but
-/// whose concrete at-forward quote rounds total variance non-positive, and by a
-/// production-valid unchanged tuple whose remaining-time roll-down reaches zero
-/// one millisecond before expiry.
-/// `ECannotBeNegative` inside `compute_nd2` is a defensive backstop: the floored
-/// smile root is never below `|k - m|` and the floored `rho * (k - m)` never
-/// exceeds it, so no input reaches it.
-/// Active-book non-monotone UP prices are guarded by
-/// `strike_payout_tree::ENonMonotonePrice` and covered in
-/// `current_nav_flow_tests`.
+/// A `Pricer` is built the way a fill and a flush build one (`signed_data::pricer`:
+/// the feeds' rows decoded by `block_scholes`, then `pricing::snap_v2` and
+/// `pricing::pricer_at`). The surfaces below that the pricing-safe envelope, the
+/// minimum-variance check, a provider value wider than `u64`, or a zero re-anchored
+/// forward rule out build no pricer, which the builder reports as
+/// `signed_data::ENotPriced`. A degenerate range (`lower == higher`) aborts
+/// `EInvalidRange` at quote time. Both tails are computed through `d2`'s normal-CDF
+/// clamp rather than asserted by a branch, and stay pinned as exact-value tests
+/// (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0) on an ordinary surface,
+/// alongside the high-variance case where the deep-ITM tail is 0 instead.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -59,6 +23,7 @@ use deepbook_predict::{
     pricing_reference_data as ref_data,
     pricing_ssvi_reference_data as ssvi,
     range_codec::strike_for_testing as strike,
+    signed_data,
     test_constants,
     test_helpers
 };
@@ -67,8 +32,6 @@ use propbook::block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore
 use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
-const FOREIGN_UNDERLYING_ID: u32 = 2;
-const SVI_REGIME_MODEL: vector<u8> = b"SVI_REGIME";
 /// The largest provider-native magnitude that Predict can represent without narrowing loss.
 const MAX_REPRESENTABLE_U64: u128 = 18_446_744_073_709_551_615;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
@@ -141,7 +104,6 @@ const PER_STRIKE_NONPOSITIVE_M: u64 = 1_824_257;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_A: u64 = 1;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_B: u64 = 0;
 const ROLL_DOWN_CLOCK_ADVANCE_MS: u64 = 1;
-const TERMINAL_ROLL_DOWN_REMAINING_MS: u64 = 1;
 const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 /// The envelope corners that hand the smile root its largest inputs: `sigma` and
@@ -178,41 +140,8 @@ fun live_quote_with_equal_range_bounds_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
-fun live_quote_with_no_block_scholes_price_aborts() {
-    // A market that has never received a BS push: normalized_spot is none, so
-    // pricing aborts on absence (distinct from the staleness code below).
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let oracle = fx.take_oracle_bundle();
-    live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
-fun live_quote_with_prices_but_no_svi_aborts() {
-    // Spot and forward pushed, SVI never pushed: the SVI absence code fires,
-    // distinct from EBlockScholesSVIStale.
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    let now = test_constants::live_source_timestamp_ms();
-    fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
-    fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
-    live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
-fun switching_the_svi_model_stops_pricing_from_the_previous_surface() {
-    // A fresh surface lands under the default model, then the admin switches the store: Predict
-    // reads the new model's series, which nothing has signed yet.
-    let (mut fx, mut oracle) = setup_live();
-    fx.set_bs_svi_model_bundle(&mut oracle, SVI_REGIME_MODEL.to_string());
-    live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
-    abort EUnexpectedSuccess
-}
-
 /// The provider store accepts u128 values, but Predict names the width failure before narrowing.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_price_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_forward_for_testing_bundle(
@@ -236,7 +165,7 @@ fun block_scholes_price_above_u64_aborts_with_named_width_error() {
 }
 
 /// The inclusive u64 maximum crosses the width gate and reaches Predict's tighter semantic bounds.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_spot_for_testing_bundle(
@@ -259,7 +188,7 @@ fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_forward_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_spot_for_testing_bundle(
@@ -283,7 +212,7 @@ fun block_scholes_forward_above_u64_aborts_with_named_width_error() {
 }
 
 /// The same named representation boundary applies to the signed SVI `a` magnitude.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_svi_a_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_svi_raw_for_testing_bundle(
@@ -305,7 +234,7 @@ fun block_scholes_svi_a_above_u64_aborts_with_named_width_error() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_svi_b_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_svi_raw_for_testing_bundle(
@@ -327,7 +256,7 @@ fun block_scholes_svi_b_above_u64_aborts_with_named_width_error() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_svi_rho_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_svi_raw_for_testing_bundle(
@@ -349,7 +278,7 @@ fun block_scholes_svi_rho_above_u64_aborts_with_named_width_error() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_svi_m_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_svi_raw_for_testing_bundle(
@@ -371,7 +300,7 @@ fun block_scholes_svi_m_above_u64_aborts_with_named_width_error() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun block_scholes_svi_sigma_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_svi_raw_for_testing_bundle(
@@ -390,223 +319,6 @@ fun block_scholes_svi_sigma_above_u64_aborts_with_named_width_error() {
         test_constants::default_live_price(),
         constants::pos_inf!(),
     );
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
-fun live_quote_with_stale_block_scholes_surface_aborts() {
-    let (mut fx, oracle) = setup_live();
-    // One ms past the BS price freshness window, the spot and forward feeds are
-    // stale and the quote aborts before any pricing.
-    let stale_now =
-        test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
-        + 1;
-    fx.set_clock_for_testing(stale_now);
-    live_quote(
-        &mut fx,
-        &oracle,
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
-    );
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
-fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
-    let (mut fx, mut oracle) = setup_live();
-    let stale_now =
-        test_constants::live_source_timestamp_ms()
-        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
-        + 1;
-    fx.set_clock_for_testing(stale_now);
-    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
-
-    live_quote(
-        &mut fx,
-        &oracle,
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
-    );
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
-fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
-    let (mut fx, mut oracle) = setup_live();
-    let stale_now =
-        test_constants::now_ms()
-        + oracle_fixture::config(&oracle).pr_cfg().svi_age()
-        + 1;
-    fx.set_clock_for_testing(stale_now);
-    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        stale_now,
-        test_constants::default_live_price(),
-    );
-
-    live_quote(
-        &mut fx,
-        &oracle,
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
-    );
-    abort EUnexpectedSuccess
-}
-
-/// A newer batch timestamp does not refresh an unchanged spot update. Freshness remains keyed to
-/// the update's provider source timestamp, which is older than the configured price window here.
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
-fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
-    let (mut fx, mut oracle) = setup_live();
-    let source_ms = test_constants::live_source_timestamp_ms();
-    let retransmitted_now =
-        source_ms
-        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
-        + 1;
-    fx.set_clock_for_testing(retransmitted_now);
-    fx.retransmit_bs_spot_for_testing(
-        &mut oracle,
-        source_ms,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
-    live_quote(
-        &mut fx,
-        &oracle,
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
-    );
-    abort EUnexpectedSuccess
-}
-
-/// The same rule applies to forwards: transport in a current batch does not make an unchanged
-/// forward source timestamp current.
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
-fun live_quote_with_a_retransmitted_aged_forward_source_aborts() {
-    let (mut fx, mut oracle) = setup_live();
-    let source_ms = test_constants::live_source_timestamp_ms();
-    let retransmitted_now =
-        source_ms
-        + oracle_fixture::config(&oracle).pr_cfg().bs_age()
-        + 1;
-    fx.set_clock_for_testing(retransmitted_now);
-    fx.set_bs_spot_for_testing_bundle(
-        &mut oracle,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
-    fx.retransmit_bs_forward_for_testing(
-        &mut oracle,
-        source_ms,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
-    live_quote(
-        &mut fx,
-        &oracle,
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
-    );
-    abort EUnexpectedSuccess
-}
-
-/// SVI freshness also stays on the tuple's source timestamp. A newer batch timestamp neither
-/// refreshes the tuple nor changes the roll-down anchor.
-#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
-fun live_quote_with_a_retransmitted_aged_svi_source_aborts() {
-    let (mut fx, mut oracle) = setup_live();
-    let source_ms = test_constants::live_source_timestamp_ms();
-    let retransmitted_now =
-        source_ms
-        + oracle_fixture::config(&oracle).pr_cfg().svi_age()
-        + 1;
-    fx.set_clock_for_testing(retransmitted_now);
-    fx.set_bs_spot_for_testing_bundle(
-        &mut oracle,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
-    fx.retransmit_bs_svi_for_testing(
-        &mut oracle,
-        source_ms,
-        retransmitted_now,
-        test_constants::default_svi_a(),
-        false,
-        test_constants::default_svi_b(),
-        test_constants::default_svi_sigma(),
-        test_constants::default_svi_rho_magnitude(),
-        false,
-        test_constants::default_svi_m(),
-        false,
-    );
-    live_quote(
-        &mut fx,
-        &oracle,
-        test_constants::default_live_price(),
-        constants::pos_inf!(),
-    );
-    abort EUnexpectedSuccess
-}
-
-/// A store for another underlying is a real, registry-created store that simply is not the one
-/// bound to this market's underlying. Predict must reject it on the binding rather than on the
-/// store's own claim about itself.
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
-fun live_pricer_with_another_underlyings_value_store_aborts() {
-    let (mut fx, oracle) = setup_live();
-    oracle_fixture::return_oracle_bundle(oracle);
-    let foreign_pair = fx.create_foreign_block_scholes_stores(
-        FOREIGN_UNDERLYING_ID,
-    );
-    let foreign_values_id = foreign_pair.block_scholes_value_store_id();
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let oracle = fx.take_oracle_bundle();
-    let foreign_values = fx
-        .scenario_mut()
-        .take_shared_by_id<BlockScholesValueStore>(
-            foreign_values_id,
-        );
-    load_pricer_with_values(&mut fx, &oracle, &foreign_values);
-
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSVIStore)]
-fun live_pricer_with_another_underlyings_svi_store_aborts() {
-    let (mut fx, oracle) = setup_live();
-    oracle_fixture::return_oracle_bundle(oracle);
-    let foreign_pair = fx.create_foreign_block_scholes_stores(
-        FOREIGN_UNDERLYING_ID,
-    );
-    let foreign_svi_id = foreign_pair.block_scholes_svi_store_id();
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let oracle = fx.take_oracle_bundle();
-    let foreign_svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIStore>(foreign_svi_id);
-    load_pricer_with_svi(&mut fx, &oracle, &foreign_svi);
-
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EPythSpotInvalid)]
-fun fresh_pyth_spot_above_pricing_ceiling_aborts() {
-    let (mut fx, mut oracle) = setup_live();
-    fx.set_pyth_bundle(
-        &mut oracle,
-        MAX_PRICING_SPOT + 1,
-        test_constants::live_source_timestamp_ms() + 1,
-    );
-
-    let _pricer = fx.load_pricer_bundle(&oracle);
-
     abort EUnexpectedSuccess
 }
 
@@ -723,7 +435,7 @@ fun deep_otm_up_price_saturates_to_zero() {
 
 // === Surface pricing-safe envelope rejects (EBlockScholesInputsInvalid) ===
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_forward_above_spot_ceiling_aborts() {
     // forward just over the spot ceiling fires the `forward <= max_pricing_spot`
     // branch before the basis check. spot small so the basis arithmetic stays in u128.
@@ -731,7 +443,7 @@ fun surface_with_forward_above_spot_ceiling_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_basis_above_max_aborts() {
     // basis = forward * 1e9 / spot = 101e9 > 100e9, with forward still under the
     // spot ceiling so the basis branch (not the ceiling branch) is the one that fires.
@@ -746,7 +458,7 @@ fun surface_with_basis_above_max_aborts() {
 /// sliver above it; the `div_ceil` form deliberately tightens that away, so the
 /// very next unit must reject (companion admit case below pins the boundary
 /// from the other side).
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_basis_one_above_exact_factor_aborts() {
     let spot = 100 * test_constants::float();
     let forward = spot * 100 + 1;
@@ -851,7 +563,7 @@ fun assert_extreme_a_prices_to_zero(m_is_negative: bool) {
 
 /// The same magnitude negative: no SVI increment can offset it, so the load
 /// gate rejects it by name rather than by an arithmetic abort.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun negative_svi_a_at_the_provider_width_limit_aborts_at_load() {
     load_pricer_with_signed_a_and_price_forward(
         std::u64::max_value!(),
@@ -884,7 +596,7 @@ fun negative_svi_a_past_the_former_cap_cancels_to_one_unit_of_variance() {
 
 /// One raw unit further: `a` exactly offsets the SVI increment's minimum, so
 /// minimum total variance is zero and the load gate rejects it.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun negative_svi_a_past_the_former_cap_offsetting_the_minimum_increment_aborts() {
     load_pricer_with_signed_a_and_price_forward(
         PAST_A_CAP_MIN_INCREMENT,
@@ -936,7 +648,7 @@ fun negative_svi_a_with_positive_min_variance_prices() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
@@ -958,35 +670,7 @@ fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
     abort EUnexpectedSuccess
 }
 
-/// The one-minute negative-`a` slice with `a` one raw unit more negative, so it
-/// exactly offsets the rounded minimum increment: minimum total variance falls
-/// from one unit to zero and the load gate rejects it.
-/// `short_dated_slice_with_negative_a_prices_to_true_math` in `pricing_exact_tests`
-/// prices the unmodified slice on the other side.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
-fun short_dated_negative_a_offsetting_the_minimum_increment_aborts() {
-    let s = ssvi::negative_a_slice();
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        ssvi::spot(s),
-        ssvi::forward(s),
-        ssvi::svi_a_magnitude(s) + 1,
-        ssvi::svi_a_is_negative(s),
-        ssvi::svi_b(s),
-        ssvi::svi_sigma(s),
-        ssvi::svi_rho_magnitude(s),
-        ssvi::svi_rho_is_negative(s),
-        ssvi::svi_m_magnitude(s),
-        ssvi::svi_m_is_negative(s),
-    );
-
-    let _pricer = fx.load_pricer_bundle(&oracle);
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_svi_b_above_max_aborts() {
     load_pricer_with_invalid_svi(
         default_svi_a(),
@@ -996,7 +680,7 @@ fun surface_with_svi_b_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_svi_rho_above_one_aborts() {
     // rho magnitude just over 1.0 fails `|rho| <= 1e9`.
     load_pricer_with_full_svi(
@@ -1011,7 +695,7 @@ fun surface_with_svi_rho_above_one_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_svi_m_above_max_aborts() {
     load_pricer_with_full_svi(
         default_svi_a(),
@@ -1025,7 +709,7 @@ fun surface_with_svi_m_above_max_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_svi_sigma_below_min_aborts() {
     load_pricer_with_invalid_svi(
         default_svi_a(),
@@ -1035,13 +719,13 @@ fun surface_with_svi_sigma_below_min_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_zero_svi_sigma_aborts() {
     load_pricer_with_invalid_svi(default_svi_a(), default_svi_b(), ZERO_SVI_SHAPE_PARAM);
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun surface_with_svi_sigma_above_max_aborts() {
     load_pricer_with_invalid_svi(
         default_svi_a(),
@@ -1113,7 +797,7 @@ fun smile_root_at_the_itm_envelope_corner_prices_the_tail_to_one() {
 /// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
 /// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
 /// the first finite-strike quote.
-#[test, expected_failure(abort_code = pricing::EZeroForward)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun re_anchored_zero_forward_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
@@ -1258,57 +942,6 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
     fx.finish();
 }
 
-/// A raw-valid `a = 1e-9, b = 0` tuple sourced at `now_ms`, quoted one millisecond before a
-/// one-year expiry with no newer source update in between. Flooring the rolled variance to zero
-/// needs `anchor_tte_ms >= 1e9 * remaining_ms` — a source anchor years older than any admissible
-/// freshness window — so source freshness pre-empts RP-21's zero-variance response: the quote
-/// aborts stale long before the terminal region. A new source tuple near expiry instead re-anchors
-/// the roll-down and prices at ratio ~1, so the terminal region is unreachable from both sides.
-#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
-fun terminal_roll_down_to_zero_is_preempted_by_source_freshness() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        test_constants::default_live_price(),
-        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
-        false,
-        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
-        default_svi_sigma(),
-        ZERO_SVI_SHAPE_PARAM,
-        false,
-        ZERO_SVI_SHAPE_PARAM,
-        false,
-    );
-
-    let terminal_source_timestamp_ms =
-        test_constants::default_expiry_ms() - TERMINAL_ROLL_DOWN_REMAINING_MS;
-    fx.set_clock_for_testing(terminal_source_timestamp_ms);
-    fx.set_pyth_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        terminal_source_timestamp_ms,
-    );
-    fx.set_bs_spot_for_testing_bundle(
-        &mut oracle,
-        terminal_source_timestamp_ms,
-        test_constants::default_live_price(),
-    );
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        terminal_source_timestamp_ms,
-        test_constants::default_live_price(),
-    );
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    pricer.up_price(strike(test_constants::default_live_price()));
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-    abort EUnexpectedSuccess
-}
-
 /// Pins the rolled `b`'s precision through the SKEW CORRECTION, not just through
 /// the variance. `compute_nd2` forms `w' = b * slope / 1e18` with `b` at 1e18;
 /// narrowing `b` back to 1e9 first — the shape the variance path itself used to
@@ -1372,7 +1005,7 @@ fun w_prime_keeps_the_rolled_b_precision() {
 /// A degenerate surface (`a == 0, b == 0`) has zero analytical minimum total
 /// variance (`a + b*sigma*sqrt(1-rho^2) == 0`), so it is rejected while loading
 /// the live pricer rather than reaching the first finite-strike quote.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun zero_total_variance_aborts_at_load() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
@@ -1401,14 +1034,14 @@ fun zero_total_variance_aborts_at_load() {
 /// At `|rho| == 1` the SVI increment `b * (rho * x + sqrt(x^2 + sigma^2))` has
 /// infimum 0 over `x` for any `b` (it tends to 0 along one wing), so the minimum
 /// total variance is `a` alone: `a == 0` is rejected even with a live `b`.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun zero_svi_a_with_unit_rho_aborts_at_load() {
     load_pricer_with_unit_rho(0, false);
     abort EUnexpectedSuccess
 }
 
 /// The same with `a` one raw unit negative.
-#[test, expected_failure(abort_code = pricing::EBlockScholesMinVarianceInvalid)]
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun negative_svi_a_with_unit_rho_aborts_at_load() {
     load_pricer_with_unit_rho(1, true);
     abort EUnexpectedSuccess
@@ -1566,34 +1199,6 @@ fun load_pricer_with_signed_a_and_price_forward(
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
     up
-}
-
-fun load_pricer_with_values(
-    fx: &mut OracleFixture,
-    oracle: &OracleBundle,
-    values: &BlockScholesValueStore,
-) {
-    let _pricer = fx.load_pricer_with_stores(
-        oracle_fixture::config(oracle),
-        oracle_fixture::oracle_registry(oracle),
-        oracle_fixture::pyth(oracle),
-        values,
-        oracle_fixture::bs(oracle).svi(),
-    );
-}
-
-fun load_pricer_with_svi(
-    fx: &mut OracleFixture,
-    oracle: &OracleBundle,
-    svi: &BlockScholesSVIStore,
-) {
-    let _pricer = fx.load_pricer_with_stores(
-        oracle_fixture::config(oracle),
-        oracle_fixture::oracle_registry(oracle),
-        oracle_fixture::pyth(oracle),
-        oracle_fixture::bs(oracle).values(),
-        svi,
-    );
 }
 
 /// Bring up the default live oracle: fresh Pyth spot + split Block Scholes feeds,

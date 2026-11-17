@@ -16,9 +16,10 @@ module deepbook_predict::svi_decimals_tests;
 use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
-    pricing::{Self, EBlockScholesMinVarianceInvalid, PricingSVI, VolSnapshot},
+    pricing::{Self, PricingSVI, VolSnapshot},
     pricing_ssvi_reference_data as ssvi,
     range_codec::strike_for_testing as strike,
+    signed_data,
     test_constants,
     test_helpers
 };
@@ -103,31 +104,6 @@ fun an_exactly_scaled_slice_prices_bit_for_bit_at_eighteen_decimals() {
     fx.finish();
 }
 
-/// At 9 decimals the sub-unit slice arrives as `a = 0` with an increment that floors to zero, so
-/// the load gate refuses it: the final-seconds abort the 18-decimal store removes.
-#[test, expected_failure(abort_code = EBlockScholesMinVarianceInvalid, location = pricing)]
-fun a_sub_unit_slice_at_nine_decimals_aborts_the_load() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    let ts = seed_unit_forward(&mut fx, &mut oracle, test_constants::now_ms() + 1);
-    fx.set_bs_svi_for_testing_bundle(
-        &mut oracle,
-        ts,
-        0,
-        false,
-        SUB_UNIT_B_1E9,
-        SUB_UNIT_SIGMA_1E9,
-        0,
-        false,
-        0,
-        false,
-    );
-
-    let _pricer = fx.load_pricer_bundle(&oracle);
-
-    abort
-}
-
 /// The same slice at 18 decimals loads, and prices to true math at the forward and a total
 /// standard deviation either side.
 #[test]
@@ -162,12 +138,12 @@ fun a_sub_unit_slice_at_eighteen_decimals_loads_and_prices_to_true_math() {
     fx.finish();
 }
 
-/// At 18 decimals the gate checks the snapshot's own rounded values at 1e18, so every admitted
-/// snapshot can price without its cached tuple. `a = 0.4e-9` with `b = 0` has positive variance at
-/// 1e18 but rounds to an all-zero snapshot, so the load refuses it rather than admit an order a
-/// cache miss could not fill.
-#[test, expected_failure(abort_code = EBlockScholesMinVarianceInvalid, location = pricing)]
-fun a_slice_that_only_prices_at_1e18_is_refused_at_eighteen_decimals() {
+/// At 18 decimals a slice whose rounded snapshot is all zero still prices from its
+/// full-precision tuple: `a = 0.4e-9` with `b = 0` has positive variance at 1e18, and the
+/// pricer reads the tuple the commit kept for its source time. An at-the-money digital
+/// therefore prices strictly inside (0, 1).
+#[test]
+fun a_slice_that_only_prices_at_1e18_prices_from_its_full_precision_tuple() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.set_bs_svi_decimals_bundle(&mut oracle, HIGH_PRECISION_DECIMALS);
@@ -185,15 +161,18 @@ fun a_slice_that_only_prices_at_1e18_is_refused_at_eighteen_decimals() {
         false,
     );
 
-    let _pricer = fx.load_pricer_bundle(&oracle);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let at_the_money = up(&pricer, UNIT_FORWARD);
+    assert!(at_the_money > 0 && at_the_money < test_constants::float());
 
-    abort
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
-/// At 18 decimals the gate also checks the stored 1e18 tuple every live price uses. `a = -0.4e-9`
+/// At 18 decimals the pricer checks the full-precision tuple it prices with. `a = -0.4e-9`
 /// rounds to zero, so the snapshot's own values pass, but with `b * sigma = 1e-10` the true minimum
-/// variance is `-3e-10`, and the load refuses it.
-#[test, expected_failure(abort_code = EBlockScholesMinVarianceInvalid, location = pricing)]
+/// variance is `-3e-10`, and it builds no pricer.
+#[test, expected_failure(abort_code = signed_data::ENotPriced)]
 fun a_slice_whose_true_minimum_is_negative_is_refused_at_eighteen_decimals() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();

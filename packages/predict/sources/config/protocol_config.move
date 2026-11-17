@@ -1119,8 +1119,7 @@ public(package) fun chk_trading(config: &ProtocolConfig) {
 /// Abort when `expiry_ms` is inside the no-trade window. The blocked region is
 /// `remaining <= window`, so a `0` window blocks nothing and disables the check.
 /// `now < expiry_ms` guards the subtraction against underflow for any future
-/// caller; on today's paths it cannot be false, because a `&Pricer` only exists
-/// if `load_live_pricer` already asserted `now < expiry` in the same transaction.
+/// caller. A `Pricer` is never built at or past expiry (`pricing::pricer_at`).
 #[test_only]
 public(package) fun assert_trade_window_open(
     config: &ProtocolConfig,

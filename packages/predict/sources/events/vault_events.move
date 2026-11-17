@@ -704,6 +704,13 @@ public fun flush_executed_idle_figures(event: &FlushExecuted): (u64, u64) {
     (event.idle_balance_before, event.frozen_idle_balance)
 }
 
+/// The summed snapshot NAV the flush valued its active markets at, so a test
+/// can read a market's NAV through the flush that marks it.
+#[test_only]
+public fun flush_executed_active_market_nav(event: &FlushExecuted): u64 {
+    event.active_market_nav
+}
+
 /// The fill events' fields exist for off-chain consumers, which decode them rather
 /// than calling Move. These readers exist only so tests can assert the fee reported
 /// to those consumers is the fee actually charged: `fee_usdc` is where pool revenue

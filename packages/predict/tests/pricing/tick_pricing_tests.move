@@ -4,8 +4,7 @@
 /// Tick-time pricing for delayed execution: `pricing::pricer_at`, the non-aborting
 /// `try_up_price` / `try_range`, and the committed-spot bound `safe_spot`.
 ///
-/// `pricer_at` must rebuild exactly the Pricer the live load builds from the same
-/// inputs, re-anchor the snapshot basis on the committed spot, roll the SVI down to the
+/// `pricer_at` must re-anchor the snapshot basis on the committed spot, roll the SVI down to the
 /// tick (pinned against `tick_pricing_reference_data`, generated independently by
 /// `generate_pricing_reference.py --tick-only`), and return `none` rather than abort at
 /// or past expiry, on a zero forward, and on a rolled surface with no positive variance.
@@ -29,22 +28,15 @@ use deepbook_predict::{
     test_constants,
     test_helpers,
     tick_pricing_reference_data as tick_ref,
-    vol_snapshot_test_helpers::{Self as helpers, load_snapshot}
+    vol_snapshot_test_helpers::load_snapshot
 };
-use fixed_math::{i64, math::float_scaling as float};
+use fixed_math::i64;
 use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
 
 // === Live-equivalence fixture ===
 
-/// Block Scholes forward at basis 1.005 over the default 100e9 spot.
-const BASIS_BS_FORWARD: u64 = 100_500_000_000;
-/// Fresh Pyth prints diverged from the Block Scholes spot, so the forward is
-/// genuinely re-anchored. Sources are strictly newer than the 119_000 bootstrap.
-const FIRST_PYTH_SPOT: u64 = 102_000_000_000;
-const FIRST_PYTH_SOURCE_MS: u64 = 119_500;
-const SECOND_PYTH_SPOT: u64 = 103_000_000_000;
 /// One second after the snapshot: Block Scholes prices sourced at 119_000 are exactly
 /// 2_000 ms old (the inclusive window), and the SVI sourced at 120_000 is 1 s old.
 const LATER_MS: u64 = 121_000;
@@ -85,12 +77,6 @@ const ONE_UNIT_VARIANCE_ATM_UP: u64 = 500_000_000;
 
 // === try_* surfaces ===
 
-/// Mirrors `pricing_guard_tests::re_anchored_zero_forward_aborts`: no lower basis
-/// bound, so a Pyth spot far below the Block Scholes spot re-anchors to
-/// `1e9 * 1 / 1e17 = 0`.
-const ZERO_FORWARD_BS_SPOT: u64 = 100_000_000_000_000_000;
-const ZERO_FORWARD_BS_FORWARD: u64 = 1;
-const ZERO_FORWARD_PYTH_SPOT: u64 = 1_000_000_000;
 /// Mirrors `pricing_guard_tests`' per-strike non-positive surface: its rounded
 /// analytical minimum variance is one raw unit, so it loads, but at the forward strike
 /// the floored smile root takes that unit back and total variance rounds to zero.
@@ -110,42 +96,7 @@ const STRIKE_ABOVE: u64 = 104_000_000_000;
 /// `u64::MAX / 100`, Predict's pricing-safe spot ceiling.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516;
 
-// === pricer_at matches the live pricer ===
-
-/// The Pricer rebuilt from a snapshot is bit-identical to the live pricer loaded from
-/// the same oracle state: at the snapshot instant, and one second later after a new
-/// Pyth print (the snapshot's Block Scholes rows and SVI are unchanged, so only the
-/// committed spot and the roll-down time move).
-#[test]
-fun pricer_at_matches_the_live_pricer_at_the_same_inputs() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    prepare_default_surface(&mut fx, &mut oracle, BASIS_BS_FORWARD);
-    fx.set_pyth_bundle(&mut oracle, FIRST_PYTH_SPOT, FIRST_PYTH_SOURCE_MS);
-
-    let (snapshot, t0_pricer) = load_snapshot(
-        &mut fx,
-        &oracle,
-        helpers::default_svi_max_age_ms(),
-    );
-    let live = fx.load_pricer_bundle(&oracle);
-    assert_eq!(t0_pricer, live);
-    assert_eq!(
-        pricer_at_or_abort(&fx, &snapshot, FIRST_PYTH_SPOT, FIRST_PYTH_SOURCE_MS, TICK_MS),
-        live,
-    );
-
-    fx.set_clock_for_testing(LATER_MS);
-    fx.set_pyth_bundle(&mut oracle, SECOND_PYTH_SPOT, LATER_MS);
-    let later_live = fx.load_pricer_bundle(&oracle);
-    assert_eq!(
-        pricer_at_or_abort(&fx, &snapshot, SECOND_PYTH_SPOT, LATER_MS, LATER_MS),
-        later_live,
-    );
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-}
+// === pricer_at ===
 
 /// `forward = floor(spot * bs_forward / bs_spot)`. A basis-one snapshot prices exactly
 /// on the spot it is given, so the re-anchored Pricer must equal the basis-one Pricer
@@ -202,7 +153,7 @@ fun pricer_at_reanchors_the_snapshot_basis_on_the_committed_spot() {
 #[test]
 fun pricer_at_prices_the_surface_rolled_down_to_the_tick() {
     let (mut fx, oracle) = setup_tick_reference();
-    let (snapshot, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
+    let (snapshot, _) = load_snapshot(&mut fx, &oracle);
     assert_eq!(snapshot.svi_source_timestamp_ms(), tick_ref::svi_source_timestamp_ms());
 
     tick_ref::points().do!(|point| {
@@ -230,7 +181,7 @@ fun pricer_at_prices_the_surface_rolled_down_to_the_tick() {
 #[test]
 fun pricer_at_reports_the_generation_and_snapshot_timestamps() {
     let (mut fx, oracle) = setup_tick_reference();
-    let (snapshot, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
+    let (snapshot, _) = load_snapshot(&mut fx, &oracle);
 
     let pricer = pricer_at_or_abort(
         &fx,
@@ -255,7 +206,7 @@ fun pricer_at_reports_the_generation_and_snapshot_timestamps() {
 #[test]
 fun pricer_at_is_none_at_and_after_expiry() {
     let (mut fx, oracle) = setup_tick_reference();
-    let (snapshot, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
+    let (snapshot, _) = load_snapshot(&mut fx, &oracle);
     let expiry = fx.expiry();
 
     assert!(pricer_at_tick(&fx, &snapshot, tick_ref::committed_spot(), expiry - 1).is_some());
@@ -271,7 +222,7 @@ fun pricer_at_is_none_on_a_zero_forward() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     prepare_default_surface(&mut fx, &mut oracle, SUB_UNIT_BS_FORWARD);
-    let (snapshot, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
+    let (snapshot, _) = load_snapshot(&mut fx, &oracle);
 
     assert!(pricer_at_tick(&fx, &snapshot, ZERO_SPOT, TICK_MS).is_none());
     assert!(pricer_at_tick(&fx, &snapshot, ZERO_FORWARD_SPOT, TICK_MS).is_none());
@@ -301,7 +252,7 @@ fun pricer_at_is_none_once_the_rolled_variance_floors_to_zero() {
         ZERO_SHAPE_PARAM,
         false,
     );
-    let (snapshot, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
+    let (snapshot, _) = load_snapshot(&mut fx, &oracle);
     let expiry = fx.expiry();
     let spot = test_constants::default_live_price();
 
@@ -325,7 +276,7 @@ fun pricer_at_is_none_once_the_rolled_variance_floors_to_zero() {
 #[test]
 fun try_reads_match_the_aborting_reads_where_those_price() {
     let (mut fx, oracle) = setup_tick_reference();
-    let (snapshot, _) = load_snapshot(&mut fx, &oracle, helpers::default_svi_max_age_ms());
+    let (snapshot, _) = load_snapshot(&mut fx, &oracle);
     let pricer = pricer_at_or_abort(
         &fx,
         &snapshot,
@@ -351,29 +302,6 @@ fun try_reads_match_the_aborting_reads_where_those_price() {
     ranges.do_ref!(|r| {
         assert_eq!(pricer.try_range(r[0], r[1]), option::some(pricer.range_price(r[0], r[1])));
     });
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-}
-
-/// On a zero forward every finite strike is unpriceable: `none` where `up_price`
-/// aborts `EZeroForward`. The infinite sentinels never read the surface, so they still
-/// price, and so does the whole line.
-#[test]
-fun try_reads_are_none_on_a_zero_forward() {
-    let (mut fx, oracle) = setup_zero_forward();
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let finite = strike(test_constants::default_live_price());
-    let neg_inf = strike(constants::neg_inf!());
-    let pos_inf = strike(constants::pos_inf!());
-
-    assert!(pricer.try_up_price(finite).is_none());
-    assert_eq!(pricer.try_up_price(neg_inf), option::some(float!()));
-    assert_eq!(pricer.try_up_price(pos_inf), option::some(0));
-    assert!(pricer.try_range(finite, pos_inf).is_none());
-    assert!(pricer.try_range(neg_inf, finite).is_none());
-    let whole_line = pricer.try_range(neg_inf, pos_inf);
-    assert_eq!(whole_line.destroy_some().probability(), float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -410,15 +338,6 @@ fun try_range_price_is_none_on_an_empty_range() {
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
-}
-
-/// `range_price` raises the digital's own code from the lower boundary.
-#[test, expected_failure(abort_code = pricing::EZeroForward)]
-fun range_price_on_a_zero_forward_aborts_with_the_digital_code() {
-    let (mut fx, oracle) = setup_zero_forward();
-    let pricer = fx.load_pricer_bundle(&oracle);
-    pricer.range_price(strike(test_constants::default_live_price()), strike(constants::pos_inf!()));
-    abort EUnexpectedSuccess
 }
 
 /// `range_price` raises the digital's own code from the higher boundary.
@@ -536,27 +455,6 @@ fun setup_tick_reference(): (OracleFixture, OracleBundle) {
         tick_ref::svi_m_magnitude(),
         tick_ref::svi_m_is_negative(),
     );
-    (fx, oracle)
-}
-
-fun setup_zero_forward(): (OracleFixture, OracleBundle) {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        ZERO_FORWARD_BS_SPOT,
-        ZERO_FORWARD_BS_FORWARD,
-        test_constants::default_svi_a(),
-        false,
-        test_constants::default_svi_b(),
-        test_constants::default_svi_sigma(),
-        test_constants::default_svi_rho_magnitude(),
-        false,
-        test_constants::default_svi_m(),
-        false,
-    );
-    let pyth_source_ms = fx.clock().timestamp_ms();
-    fx.set_pyth_bundle(&mut oracle, ZERO_FORWARD_PYTH_SPOT, pyth_source_ms);
     (fx, oracle)
 }
 

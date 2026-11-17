@@ -14,8 +14,6 @@ const REQUIRED_PAYOUT_LIABILITY: u64 = 101;
 const FEE_AMOUNT: u64 = 40;
 const INVENTORY_IMPACT_CHARGE: u64 = 30;
 const INVENTORY_IMPACT_REBATE: u64 = 12;
-/// Cash left after paying out past the earmark (5 < escrow 30).
-const CASH_BELOW_ESCROW: u64 = 5;
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun assert_backing_underfunded_aborts() {
@@ -51,27 +49,7 @@ fun receive_and_pay_authorized_updates_balance() {
 }
 
 #[test]
-fun free_cash_nets_out_the_impact_escrow_and_floors_at_zero() {
-    let ctx = &mut tx_context::dummy();
-    let mut cash = expiry_cash::new();
-
-    // Cash 40 with 30 earmarked leaves 10 free.
-    cash.receive(coin::mint_for_testing<USDC>(FEE_AMOUNT, ctx).into_balance());
-    cash.add_impact(INVENTORY_IMPACT_CHARGE);
-    assert_eq!(cash.free_cash(), FEE_AMOUNT - INVENTORY_IMPACT_CHARGE);
-
-    // Pay out past the earmark — 5 cash against a 30 escrow. Free cash floors at
-    // zero instead of underflowing the subtraction.
-    let drained = cash.pay_out(FEE_AMOUNT - CASH_BELOW_ESCROW);
-    assert_eq!(cash.balance(), CASH_BELOW_ESCROW);
-    assert_eq!(cash.free_cash(), 0);
-
-    destroy(drained);
-    destroy(cash);
-}
-
-#[test]
-fun inventory_impact_reserve_isolated_from_free_cash() {
+fun inventory_impact_reserve_tracks_charges_and_rebates() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
 
@@ -81,13 +59,11 @@ fun inventory_impact_reserve_isolated_from_free_cash() {
 
     assert_eq!(cash.inventory_impact_reserve(), INVENTORY_IMPACT_CHARGE);
     assert_eq!(cash.required_cash(REQUIRED_PAYOUT_LIABILITY), 131);
-    assert_eq!(cash.free_cash(), CASH_AMOUNT - INVENTORY_IMPACT_CHARGE);
 
     let rebate = cash.pay_rebate(INVENTORY_IMPACT_REBATE);
     assert_eq!(rebate.value(), INVENTORY_IMPACT_REBATE);
     assert_eq!(cash.inventory_impact_reserve(), INVENTORY_IMPACT_CHARGE - INVENTORY_IMPACT_REBATE);
     assert_eq!(cash.balance(), CASH_AMOUNT - INVENTORY_IMPACT_REBATE);
-    assert_eq!(cash.free_cash(), CASH_AMOUNT - INVENTORY_IMPACT_CHARGE);
 
     destroy(rebate);
     let remaining = cash.pay_out(CASH_AMOUNT - INVENTORY_IMPACT_REBATE);
@@ -117,7 +93,7 @@ fun settlement_release_turns_residual_escrow_into_surplus() {
     cash.free_imp();
 
     assert_eq!(cash.inventory_impact_reserve(), 0);
-    assert_eq!(cash.free_cash(), INVENTORY_IMPACT_CHARGE);
+    assert_eq!(cash.balance(), INVENTORY_IMPACT_CHARGE);
     let released = cash.free_sur(INVENTORY_IMPACT_CHARGE, 0);
     assert_eq!(released.value(), INVENTORY_IMPACT_CHARGE);
     destroy(released);

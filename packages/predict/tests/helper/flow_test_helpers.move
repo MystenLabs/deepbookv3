@@ -34,12 +34,14 @@ use deepbook_predict::{
     expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
+    order,
     plp::{Self, PoolVault, SnapshotStage},
     pool_valuation_cap::PoolValuationCap,
     predict_account::{Self, PredictApp},
     pricing,
     pricing_reference_data as ref_data,
     protocol_config::ProtocolConfig,
+    range_codec,
     registry::{Self, Registry},
     signed_data,
     test_constants,
@@ -1659,17 +1661,14 @@ public fun quote_mint_bundle(
     higher_tick: u64,
     quantity: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer_for_testing(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = signed_data::pricer(
+        &market.market,
+        &market.config,
+        &market.pyth,
+        &market.bs,
+        self.clock.timestamp_ms(),
+        self.scenario.ctx(),
+    );
     market
         .market
         .quote_mint_for_testing(
@@ -1695,17 +1694,14 @@ public fun quote_mint_amount_bundle(
     max_premium: u64,
     min_quantity: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer_for_testing(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = signed_data::pricer(
+        &market.market,
+        &market.config,
+        &market.pyth,
+        &market.bs,
+        self.clock.timestamp_ms(),
+        self.scenario.ctx(),
+    );
     market
         .market
         .quote_mint_for_testing(
@@ -1730,17 +1726,14 @@ public fun quote_mint_for_account_bundle(
     higher_tick: u64,
     quantity: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer_for_testing(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = signed_data::pricer(
+        &market.market,
+        &market.config,
+        &market.pyth,
+        &market.bs,
+        self.clock.timestamp_ms(),
+        self.scenario.ctx(),
+    );
     market
         .market
         .quote_mint_for_account_for_testing(
@@ -1769,17 +1762,14 @@ public fun quote_mint_for_account_amount_bundle(
     max_premium: u64,
     min_quantity: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer_for_testing(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = signed_data::pricer(
+        &market.market,
+        &market.config,
+        &market.pyth,
+        &market.bs,
+        self.clock.timestamp_ms(),
+        self.scenario.ctx(),
+    );
     market
         .market
         .quote_mint_for_account_for_testing(
@@ -1809,17 +1799,14 @@ public fun quote_mint_exact_cost_for_account_bundle(
     max_cost: u64,
     min_quantity: u64,
 ): MintQuote {
-    let pricer = market
-        .market
-        .load_live_pricer_for_testing(
-            &market.config,
-            &market.oracle_registry,
-            &market.pyth,
-            market.bs.values(),
-            market.bs.svi(),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let pricer = signed_data::pricer(
+        &market.market,
+        &market.config,
+        &market.pyth,
+        &market.bs,
+        self.clock.timestamp_ms(),
+        self.scenario.ctx(),
+    );
     market
         .market
         .quote_mint_exact_cost_for_account_for_testing(
@@ -1836,127 +1823,11 @@ public fun quote_mint_exact_cost_for_account_bundle(
         )
 }
 
-/// The production `quote_mint_for_account` for an exact quantity: a queued
-/// fill's pricing at the clock, naming no builder.
-public fun production_quote_mint_for_account_bundle(
-    self: &mut Fixture,
-    market: &MarketBundle,
-    account: &AccountBundle,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-): MintQuote {
-    let pricer = self.load_pricer_bundle(market);
-    market
-        .market
-        .quote_mint_for_account_v5_for_testing(
-            &account.wrapper,
-            &market.config,
-            &pricer,
-            lower_tick,
-            higher_tick,
-            0,
-            quantity,
-            true,
-            &account.root,
-            &self.clock,
-            self.scenario.ctx(),
-        )
-}
-
-/// The production `quote_mint_exact_cost_for_account`: a queued exact-cost
-/// fill's budget search at the clock, naming no builder.
-public fun production_quote_mint_exact_cost_for_account_bundle(
-    self: &mut Fixture,
-    market: &MarketBundle,
-    account: &AccountBundle,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-): MintQuote {
-    let pricer = self.load_pricer_bundle(market);
-    market
-        .market
-        .quote_mint_exact_cost_for_account_v5_for_testing(
-            &account.wrapper,
-            &market.config,
-            &pricer,
-            lower_tick,
-            higher_tick,
-            max_cost,
-            min_quantity,
-            &account.root,
-            &self.clock,
-            self.scenario.ctx(),
-        )
-}
-
-/// The production `quote_mint_with_builder_fee` for an exact quantity: a queued
-/// fill's pricing at the clock, charging `builder_fee_per_contract`.
-public fun quote_mint_with_builder_fee_bundle(
-    self: &mut Fixture,
-    market: &MarketBundle,
-    account: &AccountBundle,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    builder_fee_per_contract: u64,
-): MintQuote {
-    let pricer = self.load_pricer_bundle(market);
-    market
-        .market
-        .quote_mint_with_builder_fee_v5_for_testing(
-            &account.wrapper,
-            &market.config,
-            &pricer,
-            lower_tick,
-            higher_tick,
-            0,
-            quantity,
-            true,
-            builder_fee_per_contract,
-            &account.root,
-            &self.clock,
-            self.scenario.ctx(),
-        )
-}
-
-/// The production `quote_mint_exact_cost_with_builder_fee`: a queued exact-cost
-/// fill's budget search at the clock, charging `builder_fee_per_contract`.
-public fun quote_mint_exact_cost_with_builder_fee_bundle(
-    self: &mut Fixture,
-    market: &MarketBundle,
-    account: &AccountBundle,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    builder_fee_per_contract: u64,
-): MintQuote {
-    let pricer = self.load_pricer_bundle(market);
-    market
-        .market
-        .quote_mint_exact_cost_with_builder_fee_v5_for_testing(
-            &account.wrapper,
-            &market.config,
-            &pricer,
-            lower_tick,
-            higher_tick,
-            max_cost,
-            min_quantity,
-            builder_fee_per_contract,
-            &account.root,
-            &self.clock,
-            self.scenario.ctx(),
-        )
-}
-
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
@@ -1969,13 +1840,12 @@ public fun mint_exact_quantity(
     max_probability: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer_for_testing(
+    let pricer = signed_data::pricer(
+        market,
         config,
-        oracle_registry,
         pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
+        bs,
+        self.clock.timestamp_ms(),
         self.scenario.ctx(),
     );
     market.mint_exact_quantity_for_testing(
@@ -2026,7 +1896,7 @@ public fun mint_exact_amount_bundle(
 public fun mint_exact_amount(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
@@ -2039,13 +1909,12 @@ public fun mint_exact_amount(
     max_cost: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer_for_testing(
+    let pricer = signed_data::pricer(
+        market,
         config,
-        oracle_registry,
         pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
+        bs,
+        self.clock.timestamp_ms(),
         self.scenario.ctx(),
     );
     market.mint_exact_amount_for_testing(
@@ -2094,7 +1963,7 @@ public fun mint_exact_cost_bundle(
 public fun mint_exact_cost(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
@@ -2106,13 +1975,12 @@ public fun mint_exact_cost(
     min_quantity: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer_for_testing(
+    let pricer = signed_data::pricer(
+        market,
         config,
-        oracle_registry,
         pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
+        bs,
+        self.clock.timestamp_ms(),
         self.scenario.ctx(),
     );
     market.mint_exact_cost_for_testing(
@@ -2138,16 +2006,13 @@ public fun load_pricer_bound_to_bundle(
     market: &MarketBundle,
     expiry_market_id: ID,
 ): pricing::Pricer {
-    pricing::load_live_pricer(
-        market.config.pr_cfg(),
-        &market.oracle_registry,
+    signed_data::pricer_bound_to(
+        &market.market,
+        &market.config,
         &market.pyth,
-        market.bs.values(),
-        market.bs.svi(),
+        &market.bs,
+        self.clock.timestamp_ms(),
         expiry_market_id,
-        test_constants::propbook_underlying_id(),
-        market.market.expiry(),
-        &self.clock,
         self.scenario.ctx(),
     )
 }
@@ -2215,7 +2080,7 @@ public fun quote_mint_exact_cost_for_account_with_pricer_bundle(
 public fun redeem_live(
     self: &mut Fixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     wrapper: &mut AccountWrapper,
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
@@ -2227,13 +2092,12 @@ public fun redeem_live(
     min_proceeds: u64,
 ): Option<u256> {
     let auth = account::generate_auth(self.scenario.ctx());
-    let pricer = market.load_live_pricer_for_testing(
+    let pricer = signed_data::pricer(
+        market,
         config,
-        oracle_registry,
         pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
+        bs,
+        self.clock.timestamp_ms(),
         self.scenario.ctx(),
     );
     market.redeem_live_for_testing(
@@ -2601,41 +2465,17 @@ public fun rebalance_expiry_cash_bundle(self: &Fixture, market: &mut MarketBundl
     );
 }
 
-public fun current_nav(
-    self: &mut Fixture,
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-): u64 {
-    let pricer = market.load_live_pricer_for_testing(
-        config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    market.current_nav_v5_for_testing(&pricer)
-}
-
-/// Read live NAV through a market bundle.
-public fun current_nav_bundle(self: &mut Fixture, market: &MarketBundle): u64 {
-    self.current_nav(
-        &market.market,
-        &market.config,
-        &market.oracle_registry,
-        &market.pyth,
-        &market.bs,
-    )
-}
-
-/// Read one order's gross-of-fees live holder value through a market bundle.
+/// One order's gross-of-fees holder value at the current pricer: its quantity
+/// times its range probability, the value a full close is priced at before fees.
 public fun live_order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.live_order_value_v5_for_testing(&pricer, order_id)
+    let order = order::from_id(order_id);
+    let tick_size = market.market.tick_size();
+    let price = pricer.range_price(
+        range_codec::strike_from_tick(order.lower_tick(), tick_size),
+        range_codec::strike_from_tick(order.higher_tick(), tick_size),
+    );
+    math::mul_down(price.probability(), order.quantity())
 }
 
 /// Read one settled order's terminal holder payout.
@@ -2647,17 +2487,16 @@ public fun load_pricer(
     self: &mut Fixture,
     market: &ExpiryMarket,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ): pricing::Pricer {
-    market.load_live_pricer_for_testing(
+    signed_data::pricer(
+        market,
         config,
-        oracle_registry,
         pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
+        bs,
+        self.clock.timestamp_ms(),
         self.scenario.ctx(),
     )
 }

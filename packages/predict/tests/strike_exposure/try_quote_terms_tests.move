@@ -179,29 +179,6 @@ fun a_tick_pair_no_order_can_encode_reports_admission() {
     fixture::finish(fx, oracle, exposure);
 }
 
-#[test]
-fun an_unpriceable_surface_returns_none_instead_of_aborting() {
-    // Every finite digital on this surface aborts `EZeroForward` (paired test below).
-    let (mut fx, oracle, exposure) = fixture::setup_zero_forward(default_config(), IMPACT_SCALE);
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    assert!(exposure.try_rng(&pricer, STRIKE, pos_inf(), true).is_none());
-    assert_admission_refund(&exposure, &pricer, STRIKE, pos_inf());
-    let order = order::from_ticks(STRIKE, pos_inf(), Q_A, 0);
-    assert!(exposure.try_close(&pricer, &order, Q_A).is_none());
-    fixture::finish(fx, oracle, exposure);
-}
-
-#[test, expected_failure(abort_code = pricing::EZeroForward)]
-fun the_aborting_quote_aborts_on_the_unpriceable_surface() {
-    let (mut fx, oracle, exposure) = fixture::setup_zero_forward(default_config(), IMPACT_SCALE);
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    exposure.quote_mint_terms(&pricer, STRIKE, pos_inf(), 0, Q_A, true);
-    fixture::finish(fx, oracle, exposure);
-    abort 999
-}
-
 // === try_quote_mint_range ===
 
 #[test]

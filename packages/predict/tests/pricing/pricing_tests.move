@@ -75,8 +75,6 @@ const DIVERGED_PYTH_SOURCE_MS: u64 = 119_500;
 const PYTH_SOURCE_MS: u64 = 119_001;
 const BLOCK_SCHOLES_SPOT_SOURCE_MS: u64 = 119_002;
 const BLOCK_SCHOLES_FORWARD_SOURCE_MS: u64 = BLOCK_SCHOLES_SPOT_SOURCE_MS;
-const SPOT_BUFFER_SIZE: u64 = 10;
-const EUnexpectedSuccess: u64 = 999;
 /// A strictly newer Pyth row whose zero price cannot produce a normalized spot.
 const UNUSABLE_PYTH_SOURCE_MS: u64 = 119_001;
 const UNUSABLE_PYTH_SPOT: u64 = 0;
@@ -332,24 +330,6 @@ fun forward_first_prices_when_its_matching_spot_arrives() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
-fun matching_spot_written_in_current_transaction_aborts() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    let price = test_constants::default_live_price();
-    fx.prepare_live_oracle_bundle(&mut oracle, price);
-    fx.set_bs_forward_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_FORWARD_SOURCE_MS, price);
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.scenario_mut().next_tx(test_constants::admin());
-
-    let _ = load_after_spot_write_in_current_transaction(
-        &mut fx,
-        BLOCK_SCHOLES_SPOT_SOURCE_MS,
-        price,
-    );
-    abort EUnexpectedSuccess
-}
-
 #[test]
 fun unpaired_spot_written_in_current_transaction_does_not_block_retained_pair() {
     let mut fx = oracle_fixture::setup_oracle_default();
@@ -402,36 +382,6 @@ fun load_after_spot_write_in_current_transaction(
     return_shared(pyth);
     return_shared(store);
     pricer
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
-fun latest_forward_without_matching_spot_aborts() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    let price = test_constants::default_live_price();
-    fx.prepare_live_oracle_bundle(&mut oracle, price);
-    fx.set_bs_forward_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_FORWARD_SOURCE_MS, price);
-    let _ = fx.load_pricer_bundle(&oracle);
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
-fun evicted_matching_spot_aborts_even_while_pair_is_fresh() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    let price = test_constants::default_live_price();
-    fx.prepare_live_oracle_bundle(&mut oracle, price);
-    let mut i = 1;
-    while (i <= SPOT_BUFFER_SIZE) {
-        fx.set_bs_spot_for_testing_bundle(
-            &mut oracle,
-            test_constants::live_source_timestamp_ms() + i,
-            price,
-        );
-        i = i + 1;
-    };
-    let _ = fx.load_pricer_bundle(&oracle);
-    abort EUnexpectedSuccess
 }
 
 #[test]
