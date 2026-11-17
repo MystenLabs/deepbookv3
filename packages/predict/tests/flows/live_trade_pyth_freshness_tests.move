@@ -4,8 +4,8 @@
 /// Flow coverage for the live-trade Pyth freshness requirement. While
 /// `use_pyth_spot_for_forward` is set, a pricer that fell back to the Block
 /// Scholes forward because the Pyth spot was stale or unavailable is refused by
-/// all three mint entrypoints, all three mint quotes, and `redeem_live`, while
-/// `current_nav` and the pool flush still price on that fallback. Pins the window
+/// all three mint entrypoints, all three mint quotes, and `redeem_live`, through
+/// their test-only copies (the entry points are retired). Pins the window
 /// boundary in both directions for mints and live redeems, both unavailable
 /// states (no observation, a print that does not normalize), that the guard fires
 /// before the trading pause, that it reads the configured window rather than the
@@ -43,9 +43,6 @@ const NON_POSITIVE_PYTH_SPOT: u64 = 0;
 const NO_MIN_QUANTITY: u64 = 0;
 /// The `Pricer`'s Pyth source timestamp when the feed holds no usable observation.
 const NO_PYTH_OBSERVATION_MS: u64 = 0;
-/// +10% on the seeded level: a Block Scholes move the stale Pyth spot does not
-/// follow, so the fallback forward and a Pyth-anchored one disagree.
-const MOVED_BLOCK_SCHOLES_PRICE: u64 = 110_000_000_000;
 /// Idle seed large enough to bootstrap PLP supply and fund one market.
 
 /// Leave the Pyth spot at its seed (`live_source_timestamp_ms`) and move the
@@ -492,41 +489,6 @@ fun a_widened_window_admits_a_spot_past_the_default() {
 }
 
 // === Valuation keeps the fallback ===
-
-/// With Pyth selected but stale, `current_nav` still prices, on the Block Scholes
-/// forward, so it equals the mark with Pyth deselected. The surface moves away
-/// from the stale Pyth spot first, so a mark re-anchored on Pyth could not match.
-#[test]
-fun current_nav_on_a_stale_pyth_spot_still_prices() {
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    // An open position gives the mark a liability that depends on the forward.
-    open_position(&mut fx, expiry_id, &trader);
-
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let stale_at_ms = test_constants::live_source_timestamp_ms() + PYTH_WINDOW_MS + 1;
-    fx.advance_block_scholes_bundle_to(&mut market, MOVED_BLOCK_SCHOLES_PRICE, stale_at_ms);
-    let nav_with_pyth_selected = fx.current_nav_bundle(&market);
-    fx.set_use_pyth_spot_for_forward_bundle(&mut market, false);
-    let nav_on_block_scholes = fx.current_nav_bundle(&market);
-    assert_eq!(nav_with_pyth_selected, nav_on_block_scholes);
-
-    // Guard against a vacuous match: a fresh Pyth spot at the seeded level
-    // re-anchors the forward away from the moved surface and marks differently.
-    fx.set_use_pyth_spot_for_forward_bundle(&mut market, true);
-    fx.set_pyth_price_for_testing_bundle(
-        &mut market,
-        test_constants::default_live_price(),
-        stale_at_ms,
-    );
-    assert!(fx.current_nav_bundle(&market) != nav_on_block_scholes);
-
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
 
 // === Recovery ===
 

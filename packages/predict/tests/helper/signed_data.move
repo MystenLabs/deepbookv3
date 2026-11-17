@@ -12,11 +12,26 @@
 module deepbook_predict::signed_data;
 
 use bs_oracle::verify;
-use deepbook_predict::{block_scholes_feed::BlockScholesFeed, test_constants, test_helpers};
+use deepbook_predict::{
+    block_scholes_feed::BlockScholesFeed,
+    expiry_market::ExpiryMarket,
+    pricing::{Self, Pricer},
+    protocol_config::ProtocolConfig,
+    test_constants,
+    test_helpers
+};
 use deepbook_predict_math::{block_scholes::{Self, BsSpot, BsVol}, lazer_price::{Self, LazerPrice}};
-use propbook::{block_scholes_store::BlockScholesValueStore, pyth_feed::PythFeed};
+use propbook::{
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
+    pyth_feed::PythFeed
+};
 
 const US_PER_MS: u64 = 1_000;
+
+/// The feeds' rows build no `Pricer`: a value does not decode, or `pricing::pricer_at`
+/// returns none (outside the pricing envelope, a zero forward, or no positive
+/// variance).
+const ENotPriced: u64 = 1;
 
 /// The binding's Lazer price at `spot`, with its envelope and generation time
 /// both at `envelope_ms`.
@@ -69,24 +84,26 @@ public fun latest_vol_at(
 ): Option<BsVol> {
     let latest = bs.values().spot();
     if (latest.is_none()) return option::none();
-    latest_vol_with(bs, expiry, value_ms, svi_ms, latest.destroy_some().read_source_timestamp_ms())
+    let spot_source_ms = latest.destroy_some().read_source_timestamp_ms();
+    latest_vol_with(bs.values(), bs.svi(), expiry, value_ms, svi_ms, spot_source_ms)
 }
 
 /// `latest_vol_at` with the spot the store recorded at `spot_source_ms`.
 fun latest_vol_with(
-    bs: &BlockScholesFeed,
+    values: &BlockScholesValueStore,
+    svi_store: &BlockScholesSVIStore,
     expiry: u64,
     value_ms: u64,
     svi_ms: u64,
     spot_source_ms: u64,
 ): Option<BsVol> {
-    let spot = bs.values().recent_spot_at(spot_source_ms);
-    let forward = bs.values().forward(expiry);
-    let svi = bs.svi().svi(expiry);
+    let spot = values.recent_spot_at(spot_source_ms);
+    let forward = values.forward(expiry);
+    let svi = svi_store.svi(expiry);
     if (spot.is_none() || forward.is_none() || svi.is_none()) return option::none();
     let base = test_constants::block_scholes_base_asset();
     let model = test_helpers::binding_svi_model();
-    let decimals = bs.svi().svi_decimals();
+    let decimals = svi_store.svi_decimals();
     let values = vector[
         verify::new_value_update_for_testing(
             block_scholes::spot_sid(&base),
@@ -121,11 +138,101 @@ fun latest_vol_with(
 /// source time, and the latest SVI, re-signed at their own source times: the inputs
 /// a version 5 admission snapshotted, as a `BsVol`. `none` when one is missing.
 public fun stored_vol(bs: &BlockScholesFeed, expiry: u64): Option<BsVol> {
-    let forward = bs.values().forward(expiry);
-    let svi = bs.svi().svi(expiry);
+    stored_vol_in(bs.values(), bs.svi(), expiry)
+}
+
+/// `stored_vol` over explicit stores.
+public fun stored_vol_in(
+    values: &BlockScholesValueStore,
+    svi_store: &BlockScholesSVIStore,
+    expiry: u64,
+): Option<BsVol> {
+    let forward = values.forward(expiry);
+    let svi = svi_store.svi(expiry);
     if (forward.is_none() || svi.is_none()) return option::none();
     let value_ms = forward.borrow().read_source_timestamp_ms();
-    if (bs.values().recent_spot_at(value_ms).is_none()) return option::none();
+    if (values.recent_spot_at(value_ms).is_none()) return option::none();
     let svi_ms = svi.borrow().read_source_timestamp_ms();
-    latest_vol_with(bs, expiry, value_ms, svi_ms, value_ms)
+    latest_vol_with(values, svi_store, expiry, value_ms, svi_ms, value_ms)
+}
+
+/// A `Pricer` for `market` at `now_ms`, built the way a fill and a flush build one
+/// (`pricing::snap_v2`, then `pricing::pricer_at`) from the feeds' rows re-signed:
+/// the stored forward with the spot recorded at its source time, and the SVI at its
+/// own. The basis re-anchors on the feed's Pyth spot while that spot is within the
+/// configured Pyth window and `use_pyth_spot_for_forward` is set, and otherwise on
+/// the Block Scholes spot, which keeps the Block Scholes forward. The pricer records
+/// the Pyth spot's source time, or `0` with none. Aborts when the inputs do not
+/// price at `now_ms`.
+public fun pricer(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    now_ms: u64,
+    ctx: &mut TxContext,
+): Pricer {
+    pricer_bound_to(market, config, pyth, bs, now_ms, market.id(), ctx)
+}
+
+/// `pricer` bound to `expiry_market_id` instead of `market`'s own ID, for
+/// pricer-binding tests.
+public fun pricer_bound_to(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    now_ms: u64,
+    expiry_market_id: ID,
+    ctx: &mut TxContext,
+): Pricer {
+    pricer_from(
+        config,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        expiry_market_id,
+        market.expiry(),
+        now_ms,
+        ctx,
+    )
+}
+
+/// `pricer` for a market named by its ID and expiry, from explicit stores.
+public fun pricer_from(
+    config: &ProtocolConfig,
+    pyth: &PythFeed,
+    values: &BlockScholesValueStore,
+    svi_store: &BlockScholesSVIStore,
+    expiry_market_id: ID,
+    expiry: u64,
+    now_ms: u64,
+    ctx: &mut TxContext,
+): Pricer {
+    let vol = stored_vol_in(values, svi_store, expiry);
+    assert!(vol.is_some(), ENotPriced);
+    let vol = vol.destroy_some();
+    let read = pyth.normalized_spot();
+    let (pyth_spot, pyth_source_ms) = if (read.is_some()) {
+        let read = read.destroy_some();
+        (read.read_value(), read.read_source_timestamp_ms())
+    } else (0, 0);
+    let cfg = config.pr_cfg();
+    let pyth_fresh =
+        pyth_spot > 0 && pyth_source_ms <= now_ms && now_ms - pyth_source_ms <= cfg.pyth_age();
+    let spot = if (cfg.pyth_fwd() && pyth_fresh) pyth_spot else vol.spot();
+    let mut uid = object::new(ctx);
+    let snapshot = pricing::snap_v2(&vol, test_constants::pyth_feed_id(), &mut uid);
+    let built = pricing::pricer_at(
+        &snapshot,
+        &uid,
+        spot,
+        pyth_source_ms,
+        now_ms,
+        expiry_market_id,
+        expiry,
+    );
+    uid.delete();
+    assert!(built.is_some(), ENotPriced);
+    built.destroy_some()
 }

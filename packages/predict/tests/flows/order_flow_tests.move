@@ -412,32 +412,6 @@ fun releasing_a_sell_with_reason_2_keeps_the_fee_and_reopens_it() {
     finish(fx, market, account);
 }
 
-/// The published previews price like a queued fill at the clock, with no
-/// congestion penalty.
-#[test]
-fun quote_mint_prices_like_a_queued_fill_at_the_clock() {
-    let (mut fx, market, account) = setup();
-    let pricer = fx.load_pricer_bundle(&market);
-    let (clock, ctx) = fx.clock_and_ctx();
-    let quote = helpers::market(&market).quote_mint_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
-        helpers::strike_tick(),
-        helpers::pos_inf_tick(),
-        0,
-        QUANTITY,
-        true,
-        clock,
-        ctx,
-    );
-    assert_eq!(quote.quantity(), QUANTITY);
-    assert_eq!(quote.premium(), PREMIUM);
-    assert_eq!(quote.trading_fee(), TRADING_FEE);
-    assert_eq!(quote.penalty_fee(), 0);
-    assert_eq!(quote.all_in_cost(), ALL_IN_COST);
-    finish(fx, market, account);
-}
-
 // === Sells ===
 
 /// Two partial closes and then a full close of the same position. Each partial
@@ -571,27 +545,6 @@ fun releasing_a_sell_after_a_partial_close_keeps_the_remainder() {
     let (_, _, _, order_id, _, _, _, _) = expiry_market::receipt_info(&receipt);
     assert_eq!(order_id, remainder_order_id);
     assert_waiting(&market, 0);
-    destroy(receipt);
-    finish(fx, market, account);
-}
-
-/// The sell fill pays redeem value less the fees; the quote at the clock prices
-/// the same close.
-#[test]
-fun quote_close_prices_the_close_a_sell_fills() {
-    let (mut fx, mut market, account, receipt) = filled_mint();
-    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
-    let pricer = fx.load_pricer_bundle(&market);
-    let quote = helpers::market(&market).quote_close_v5_for_testing(
-        &pricer,
-        &receipt,
-        HALF,
-        option::none(),
-        fx.clock(),
-    );
-    assert_eq!(quote.redeem_proceeds(), HALF_PROCEEDS);
-    assert_eq!(quote.redeem_trading_fee(), HALF_FEE);
-    assert_eq!(quote.redeem_proceeds() + quote.redeem_trading_fee(), HALF_REDEEM);
     destroy(receipt);
     finish(fx, market, account);
 }
@@ -1930,61 +1883,6 @@ fun a_sells_builder_fee_stops_at_the_proceeds() {
     finish(fx, market, account);
 }
 
-/// `quote_close_with_builder_fee` prices the sell a builder's fill charges,
-/// capped like admission, and plain `quote_close` charges no builder fee
-/// whatever code it is given.
-#[test]
-fun quote_close_with_builder_fee_prices_the_builders_sell() {
-    let (mut fx, mut market, account, receipt) = filled_mint();
-    fx.advance_live_oracle_bundle_to(&mut market, live_price(), TAU);
-    let pricer = fx.load_pricer_bundle(&market);
-    let quote = helpers::market(&market).quote_close_with_builder_fee_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
-        &receipt,
-        HALF,
-        BUILDER_FEE_PER_CONTRACT,
-        fx.clock(),
-    );
-    assert_eq!(quote.redeem_builder_fee(), HALF_BUILDER_FEE);
-    assert_eq!(quote.redeem_proceeds(), HALF_PROCEEDS_WITH_BUILDER);
-    // A `u64::MAX` fee is quoted at the shipped 5c cap, as admission caps it.
-    let at_cap = helpers::market(&market).quote_close_with_builder_fee_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
-        &receipt,
-        HALF,
-        MAX_U64_FEE,
-        fx.clock(),
-    );
-    assert_eq!(at_cap.redeem_builder_fee(), HALF_DEFAULT_CAP_BUILDER_FEE);
-    assert_eq!(at_cap.redeem_proceeds(), HALF_PROCEEDS_AT_DEFAULT_CAP);
-    // At a whole-payout cap and fee the quote clamps the fee at the redeem value
-    // left after the trading fee, as the fill does.
-    fx.set_builder_fee_cap_bundle(&mut market, WHOLE_PAYOUT_FEE);
-    let clamped = helpers::market(&market).quote_close_with_builder_fee_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
-        &receipt,
-        HALF,
-        WHOLE_PAYOUT_FEE,
-        fx.clock(),
-    );
-    assert_eq!(clamped.redeem_builder_fee(), HALF_REDEEM - HALF_FEE);
-    assert_eq!(clamped.redeem_proceeds(), 0);
-    let plain = helpers::market(&market).quote_close_v5_for_testing(
-        &pricer,
-        &receipt,
-        HALF,
-        option::some(helpers::market(&market).id()),
-        fx.clock(),
-    );
-    assert_eq!(plain.redeem_builder_fee(), 0);
-    assert_eq!(plain.redeem_proceeds(), HALF_PROCEEDS);
-    destroy(receipt);
-    finish(fx, market, account);
-}
-
 /// A denied referrer's share stays in market cash: the trader's cost is
 /// unchanged and the market keeps the whole trading fee.
 #[test]
@@ -2715,64 +2613,72 @@ fun a_banded_market_doubles_the_fee_on_mint_and_sell_fills() {
 }
 
 /// The band keys on the contract's price, not its legs': under a 2x band from
-/// 50c, the digital at about 0.49999 pays once, and its complement at about
-/// 0.500006 pays twice even though its only finite leg is priced at 0.49999.
+/// 50c, the digital just under 50c fills at the plain fee, and its complement
+/// just over 50c fills at twice it, even though its only finite leg is priced
+/// under 50c.
 #[test]
 fun a_fee_band_keys_on_the_contract_price() {
-    let (mut fx, market, account) = banded_setup(vector[FIFTY_CENTS, SIXTY_CENTS, TWO_X]);
-    let pricer = fx.load_pricer_bundle(&market);
-    let (clock, ctx) = fx.clock_and_ctx();
-    let up = helpers::market(&market).quote_mint_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
+    let (mut fx, mut market, mut account) = banded_setup(vector[FIFTY_CENTS, SIXTY_CENTS, TWO_X]);
+    let kind = constants::mint_kind_exact_quantity!();
+    let mut up = admit_kind_range(
+        &mut fx,
+        &mut market,
+        &mut account,
+        kind,
         helpers::strike_tick(),
         helpers::pos_inf_tick(),
-        0,
-        QUANTITY,
-        true,
-        clock,
-        ctx,
     );
-    assert!(up.entry_probability() < FIFTY_CENTS);
-    assert_eq!(up.trading_fee(), TRADING_FEE);
-    let down = helpers::market(&market).quote_mint_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
+    let mut down = admit_kind_range(
+        &mut fx,
+        &mut market,
+        &mut account,
+        kind,
         NEG_INF_TICK,
         helpers::strike_tick(),
-        0,
-        QUANTITY,
-        true,
-        clock,
-        ctx,
     );
-    assert!(down.entry_probability() >= FIFTY_CENTS);
-    assert_eq!(down.trading_fee(), BANDED_TRADING_FEE);
+    let up_subsidy = commit_at(&mut fx, &mut market, &mut up, TAU, live_price());
+    let down_subsidy = commit_at(&mut fx, &mut market, &mut down, TAU, live_price());
+    let (_, up_kept, up_change, _, _, up_fee, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        up,
+        escrow(BUDGET + ORDER_FEE, up_subsidy),
+    );
+    let (_, down_kept, down_change, _, _, down_fee, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        down,
+        escrow(BUDGET + ORDER_FEE, down_subsidy),
+    );
+    assert_eq!(up_fee, TRADING_FEE);
+    assert_eq!(down_fee, BANDED_TRADING_FEE);
+    destroy(up_kept);
+    destroy(down_kept);
+    destroy(up_change);
+    destroy(down_change);
     finish(fx, market, account);
 }
 
 /// The multiplied fee rounds down.
 #[test]
 fun a_banded_fee_rounds_down() {
-    let (mut fx, market, account) = banded_setup(vector[
+    let (mut fx, mut market, mut account) = banded_setup(vector[
         FORTY_CENTS,
         SIXTY_CENTS,
         JUST_UNDER_ONE_AND_A_HALF_X,
     ]);
-    let pricer = fx.load_pricer_bundle(&market);
-    let (clock, ctx) = fx.clock_and_ctx();
-    let quote = helpers::market(&market).quote_mint_v5_for_testing(
-        helpers::config(&market),
-        &pricer,
-        helpers::strike_tick(),
-        helpers::pos_inf_tick(),
-        0,
-        QUANTITY,
-        true,
-        clock,
-        ctx,
+    let mut receipt = admit(&mut fx, &mut market, &mut account, QUANTITY, NO_PROBABILITY_CAP);
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let (reason, kept, change, _, _, fee, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BUDGET + ORDER_FEE, subsidy),
     );
-    assert_eq!(quote.trading_fee(), ROUNDED_DOWN_FEE);
+    assert_eq!(reason, 0);
+    assert_eq!(fee, ROUNDED_DOWN_FEE);
+    destroy(kept);
+    destroy(change);
     finish(fx, market, account);
 }
 
@@ -2780,18 +2686,46 @@ fun a_banded_fee_rounds_down() {
 /// picks fits the budget at the multiplied fee.
 #[test]
 fun an_exact_cost_mint_sizes_against_the_banded_fee() {
-    let (mut fx, market, account) = banded_setup(vector[FORTY_CENTS, SIXTY_CENTS, TWO_X]);
-    let quote = fx.production_quote_mint_exact_cost_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        helpers::pos_inf_tick(),
-        BANDED_ALL_IN_COST,
-        QUANTITY,
+    let (mut fx, mut market, mut account) = banded_setup(vector[FORTY_CENTS, SIXTY_CENTS, TWO_X]);
+    let mut receipt = {
+        let (em, config, _, _, _) = market.market_parts_mut();
+        let (wrapper, _) = account.account_parts_mut();
+        let (clock, ctx) = fx.clock_and_ctx();
+        let holder = wrapper.load_account_mut(account::generate_auth(ctx));
+        expiry_market::admit_mint_v2(
+            TestFlow(),
+            em,
+            config,
+            holder,
+            option::none(),
+            constants::mint_kind_exact_cost!(),
+            helpers::strike_tick(),
+            helpers::pos_inf_tick(),
+            0,
+            0,
+            QUANTITY,
+            NO_PROBABILITY_CAP,
+            BANDED_ALL_IN_COST,
+            ORDER_FEE,
+            CHANNEL_200MS,
+            TAU,
+            TAU + DEADLINE_AFTER_TAU_MS,
+            clock,
+        )
+    };
+    let subsidy = commit_at(&mut fx, &mut market, &mut receipt, TAU, live_price());
+    let (reason, kept, change, quantity, amount, fee, _, _, _, _) = fill(
+        &mut fx,
+        &mut market,
+        receipt,
+        escrow(BANDED_ALL_IN_COST + ORDER_FEE, subsidy),
     );
-    assert_eq!(quote.quantity(), BANDED_BUDGET_QUANTITY);
-    assert_eq!(quote.trading_fee(), BANDED_TRADING_FEE);
-    assert_eq!(quote.all_in_cost(), BANDED_ALL_IN_COST);
+    assert_eq!(reason, 0);
+    assert_eq!(quantity, BANDED_BUDGET_QUANTITY);
+    assert_eq!(fee, BANDED_TRADING_FEE);
+    assert_eq!(amount, BANDED_ALL_IN_COST);
+    destroy(kept);
+    destroy(change);
     finish(fx, market, account);
 }
 

@@ -4,9 +4,9 @@
 /// Unit coverage for the payout tree's valuation snapshot: lazy per-node capture,
 /// husk retention and release, generation supersession, and the view each walk
 /// prices. Frozen-walk references are rebuilt trees holding the snapshot-instant
-/// state, walked live — the frozen walk must equal them bit-for-bit because it is
-/// the same walk over the same terms (unit-tests rule 1: the reference never
-/// touches the snapshot machinery under test).
+/// state, walked at their current terms (`tree_walk::liability`) — the frozen walk
+/// must equal them bit-for-bit because it is the same walk over the same terms. A
+/// tree's current terms are read the same way, through the next generation.
 #[test_only]
 module deepbook_predict::payout_tree_snapshot_tests;
 
@@ -15,7 +15,8 @@ use deepbook_predict::{
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::Pricer,
     strike_payout_tree::{Self, StrikePayoutTree},
-    test_constants
+    test_constants,
+    tree_walk
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::vec_map;
@@ -62,13 +63,14 @@ fun frozen_walk_returns_the_snapshot_instant_through_mutations() {
     live_reference.insert_range(RANGE_B_LOWER, RANGE_B_HIGHER, 2 * Q_B);
 
     let frozen = tree.walk_frozen(&pricer, tick_size(), 1);
-    assert_eq!(frozen, snapshot_reference.walk_linear(&pricer, tick_size()));
-    assert_eq!(
-        tree.walk_linear(&pricer, tick_size()),
-        live_reference.walk_linear(&pricer, tick_size()),
-    );
+    assert_eq!(frozen, tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()));
     // The frozen read is repeatable until released.
     assert_eq!(tree.walk_frozen(&pricer, tick_size(), 1), frozen);
+    // The next generation sees the mutations.
+    assert_eq!(
+        tree_walk::liability(&mut tree, &pricer, tick_size()),
+        tree_walk::liability(&mut live_reference, &pricer, tick_size()),
+    );
 
     destroy(tree);
     destroy(snapshot_reference);
@@ -94,15 +96,15 @@ fun an_emptied_boundary_is_retained_for_the_frozen_walk_then_released() {
     assert_eq!(tree.node_count_for_testing(), 2);
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 1),
-        snapshot_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()),
     );
-    assert_eq!(tree.walk_linear(&pricer, tick_size()), 0);
+    assert_eq!(tree_walk::liability(&mut tree, &pricer, tick_size()), 0);
 
     // Consumption removes exactly the husks and restores the plain-removal shape.
     tree.snap_done(&vec_map::empty());
     assert_eq!(tree.node_count_for_testing(), 0);
     tree.assert_tree_invariant_for_testing();
-    assert_eq!(tree.walk_linear(&pricer, tick_size()), 0);
+    assert_eq!(tree_walk::liability(&mut tree, &pricer, tick_size()), 0);
 
     destroy(tree);
     destroy(snapshot_reference);
@@ -123,8 +125,8 @@ fun a_boundary_created_after_the_snapshot_is_excluded_from_the_frozen_walk() {
     // The book was empty at the instant; the post-snapshot mint is live-only.
     assert_eq!(tree.walk_frozen(&pricer, tick_size(), 1), 0);
     assert_eq!(
-        tree.walk_linear(&pricer, tick_size()),
-        live_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut tree, &pricer, tick_size()),
+        tree_walk::liability(&mut live_reference, &pricer, tick_size()),
     );
 
     destroy(tree);
@@ -150,7 +152,7 @@ fun a_revived_husk_keeps_its_shadow_through_the_generation() {
     tree.remove_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_B, &vec_map::empty());
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 1),
-        snapshot_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()),
     );
 
     destroy(tree);
@@ -180,7 +182,7 @@ fun a_new_generation_supersedes_a_stale_snapshot_and_release_purges_its_husks() 
     // their live zeros, and untouched nodes read live.
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 2),
-        second_instant_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut second_instant_reference, &pricer, tick_size()),
     );
 
     // Consuming generation 2 also removes generation 1's never-consumed husks.
@@ -253,8 +255,8 @@ fun releasing_a_root_husk_with_two_children_rejoins_the_survivors() {
     assert_eq!(tree.node_count_for_testing(), 2);
     tree.assert_tree_invariant_for_testing();
     assert_eq!(
-        tree.walk_linear(&pricer, tick_size()),
-        survivor_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut tree, &pricer, tick_size()),
+        tree_walk::liability(&mut survivor_reference, &pricer, tick_size()),
     );
 
     destroy(tree);
@@ -279,7 +281,7 @@ fun an_inversion_on_a_husk_is_invisible_to_the_live_walk() {
         &vec_map::empty(),
     );
 
-    assert_eq!(tree.walk_linear(&pricer, tick_size()), 0);
+    assert_eq!(tree_walk::liability(&mut tree, &pricer, tick_size()), 0);
 
     destroy(tree);
     cleanup(fixture, oracle);

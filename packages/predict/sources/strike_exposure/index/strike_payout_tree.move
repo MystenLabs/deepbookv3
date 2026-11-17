@@ -184,37 +184,13 @@ public(package) fun has_nodes(tree: &StrikePayoutTree, lower_tick: u64, higher_t
         && (higher_tick == constants::pos_inf_tick!() || tree.nodes.contains(higher_tick))
 }
 
-/// Value the quantity-weighted linear liability by pricing each distinct boundary
-/// once.
-///
-/// The start and end sides accumulate as two non-negative totals: a node's net
-/// `local_start - local_end` quantity is signed, so a single running `u64` would
-/// underflow mid-walk. They combine once at the top:
-/// `base + start_total - end_total`. `tree.base` is the `P(-inf) = 1`
-/// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
-/// are never stored (`P = 0`).
-#[test_only]
-public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
-    let mut price_envelope = option::none();
-    let (start_total, end_total) = walk_tree(
-        &tree.nodes,
-        tree.root,
-        pricer,
-        tick_size,
-        0,
-        &mut price_envelope,
-    );
-    // Boundary products are rounded per node and the signed aggregate is floored
-    // once. This can differ from pricing and flooring each order independently, as
-    // can the rounded-up charge on a tolerated rise (RP-15).
-    (tree.base + start_total).saturating_sub(end_total)
-}
-
-/// Value the liability at generation `snapshot_seq`'s snapshot instant: the
-/// same walk as `walk_linear` over each node's shadow where the generation
-/// captured one, and its live terms where untouched (live IS the snapshot). A
-/// post-snapshot boundary carries zero shadows and is outside the frozen
-/// surface; the live walk observes it instead.
+/// Value the liability at generation `snapshot_seq`'s snapshot instant through
+/// the boundary-linear walk (`walk_tree`): each node's shadow where the
+/// generation captured one, and its live terms where untouched (live IS the
+/// snapshot). Boundary products are rounded per node and the signed aggregate
+/// is floored once: `snapshot_base + start_total - end_total`, saturating at
+/// zero. A post-snapshot boundary carries zero shadows and is outside the
+/// frozen surface.
 public(package) fun walk_frozen(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
@@ -925,6 +901,13 @@ public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node
 /// release against exact counts.
 public(package) fun node_count_for_testing(tree: &StrikePayoutTree): u64 {
     tree.node_count
+}
+
+#[test_only]
+/// Read the latest snapshot generation the tree has held, so a test can open the
+/// next one to walk the tree's current terms through `walk_frozen`.
+public(package) fun snapshot_seq_for_testing(tree: &StrikePayoutTree): u64 {
+    tree.snapshot_seq
 }
 
 #[test_only]

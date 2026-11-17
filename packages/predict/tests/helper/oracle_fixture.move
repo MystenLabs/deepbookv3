@@ -27,6 +27,7 @@ use deepbook_predict::{
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
+    signed_data,
     test_constants,
     test_helpers
 };
@@ -297,26 +298,25 @@ public fun load_pricer_with_stores(
     )
 }
 
-/// Load a live pricer bound to an explicit `expiry_market_id` (wrong-pricer tests).
+/// Build a pricer from the feeds, bound to an explicit `expiry_market_id`
+/// (wrong-pricer tests), the way a fill or a flush builds one (`signed_data::pricer`).
 public fun load_pricer_bound_to(
     self: &mut OracleFixture,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
     expiry_market_id: ID,
 ): Pricer {
-    pricing::load_live_pricer(
-        config.pr_cfg(),
-        oracle_registry,
+    signed_data::pricer_from(
+        config,
         pyth,
         bs_values,
         bs_svi,
         expiry_market_id,
-        test_constants::propbook_underlying_id(),
         self.expiry,
-        &self.clock,
+        self.clock.timestamp_ms(),
         self.scenario.ctx(),
     )
 }

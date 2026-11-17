@@ -1004,13 +1004,14 @@ fun begin_live_tx(fixture: &mut SessionFlowFixture, sender: address): LiveInputs
     let pyth = scenario.take_shared_by_id<PythFeed>(fixture.pyth_id);
     let bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(fixture.bs_values_id);
     let bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(fixture.bs_svi_id);
-    let pricer = market.load_live_pricer_for_testing(
+    let pricer = signed_data::pricer_from(
         &config,
-        &oracle_registry,
         &pyth,
         &bs_values,
         &bs_svi,
-        clock,
+        market.id(),
+        market.expiry(),
+        clock.timestamp_ms(),
         scenario.ctx(),
     );
     return_shared(oracle_registry);

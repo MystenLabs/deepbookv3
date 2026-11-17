@@ -185,24 +185,9 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     }
 }
 
-/// Return the live marked liability: every open contract's range-probability
-/// value, priced once per boundary by the payout tree's in-order walk. Every order
-/// is worth `quantity * P(range)` live, so no per-order correction is needed. The
-/// aggregate is netted per boundary rather than per order, so it can differ from
-/// the per-order sum by boundary rounding. A price rise within
-/// `pricing::price_monotonicity_tolerance` is charged on the quantity ending at
-/// that boundary, rounded up, so the walk never falls below the per-order sum
-/// beyond that rounding and can exceed it by at most the rise times that quantity
-/// plus one raw unit: liability reads high and NAV low, never the reverse beyond
-/// boundary rounding (RP-15). It is clamped at zero once, in the walk.
-#[test_only]
-public(package) fun marked_liab(exposure: &StrikeExposure, pricer: &Pricer): u64 {
-    exposure.payout.walk_linear(pricer, exposure.tick_size)
-}
-
 /// Return the marked liability the book held at generation `snapshot_seq`'s
-/// valuation snapshot: the same walk as `marked_liab` over the terms
-/// the payout tree captured at that instant. Same per-boundary rounding,
+/// valuation snapshot: the payout tree's boundary-linear walk over the terms
+/// it captured at that instant. Same per-boundary rounding,
 /// clamping, and monotonicity contract over the snapshot-instant book.
 public(package) fun frozen_liab(
     exposure: &StrikeExposure,
@@ -226,16 +211,6 @@ public(package) fun stop_snap(exposure: &mut StrikeExposure) {
 /// that no waiting order pins.
 public(package) fun drop_snap(exposure: &mut StrikeExposure, pins: &VecMap<u64, u64>) {
     exposure.payout.snap_done(pins);
-}
-
-/// Return one live order's full-close range value without consulting book state.
-#[test_only]
-public(package) fun live_order_value(
-    exposure: &StrikeExposure,
-    pricer: &Pricer,
-    order: &Order,
-): u64 {
-    math::mul_down(exposure.order_px(pricer, order).probability(), order.quantity())
 }
 
 /// Return one settled order's full terminal payout.
@@ -761,7 +736,10 @@ public(package) fun quote_live_close(
     order::chk_quantity(close_quantity);
     assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
 
-    let price = exposure.order_px(pricer, order);
+    let price = pricer.range_price(
+        range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
+        range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
+    );
     let range_probability = price.probability();
     LiveCloseTerms {
         expiry_market_id: exposure.expiry_market_id,
@@ -940,12 +918,4 @@ fun valid_range(lower_tick: u64, higher_tick: u64): bool {
 fun valid_qty(quantity: u64): bool {
     let lot_size = constants::position_lot_size!();
     quantity > 0 && quantity % lot_size == 0 && quantity / lot_size <= order::max_quantity_lots!()
-}
-
-#[test_only]
-fun order_px(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): RangePrice {
-    pricer.range_price(
-        range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
-        range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
-    )
 }

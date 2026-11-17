@@ -1708,8 +1708,8 @@ public(package) fun clear_stamp(market: &mut ExpiryMarket) {
     market.strike_exposure.drop_snap(pins);
 }
 
-/// NAV at the flush's snapshot instant: `current_nav`'s exact shape over values
-/// captured AT that instant — the stamp's cash copy predates every
+/// NAV at the flush's snapshot instant: free cash less the marked liability,
+/// floored at zero, over values captured AT that instant — the stamp's cash copy predates every
 /// post-snapshot mutation and the tree captures each node before its first, so
 /// the zero floors are exact (backing keeps the pre-floor value above zero up
 /// to P-13's rounding dust).
@@ -1809,33 +1809,6 @@ public(package) fun create_and_share(
 }
 
 #[test_only]
-/// The live `Pricer` earlier versions loaded from Propbook's objects, kept as a
-/// test fixture so quote, NAV, and valuation tests can price from seeded feeds.
-public fun load_live_pricer_for_testing(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    clock: &Clock,
-    ctx: &TxContext,
-): Pricer {
-    pricing::load_live_pricer(
-        config.pr_cfg(),
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        market.id(),
-        market.propbook_underlying_id,
-        market.expiry,
-        clock,
-        ctx,
-    )
-}
-
-#[test_only]
 /// Non-production fixture: take USDC out of market cash with no liability
 /// change. The only way to reach the payout walk's skip branch, which
 /// production never reaches because backing keeps cash at or above the settled
@@ -1924,11 +1897,7 @@ fun assert_live_flow_allowed(
     // fallback would price the trade on the lower-frequency Block Scholes forward
     // and let it land on either side of the source switch. A gap in Pyth updates
     // therefore delays a live close as well as a mint; the position still exits
-    // through settlement. Valuation reads (`current_nav`,
-    // `live_order_value`, the flush snapshot) do not pass through here and keep the
-    // fallback, so the flush does not stall on a stale or unavailable Pyth spot,
-    // and a client previewing a close through `live_order_value` gets a value
-    // while the close itself aborts.
+    // through settlement.
     pricer.assert_pyth_spot_fresh(config.pr_cfg(), clock);
 }
 
@@ -2524,74 +2493,6 @@ fun admit_gates(
         EInvalidOrderTiming,
     );
     pricing::feed_snap(config.binding(market.propbook_underlying_id).lazer_feed_id())
-}
-
-/// The quote core behind the published mint previews, at tick `now` with the
-/// configured subsidy rate capped by the market's incentive balance.
-#[test_only]
-fun quote_now(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    kind: u8,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    cost_cap: u64,
-    bfee: u64,
-    clock: &Clock,
-): MintQuote {
-    market.chk_pricer(pricer);
-    let now = clock.timestamp_ms();
-    assert!(now < market.expiry, EInvalidOrderTiming);
-    let (_, quote, _, reason) = market.price_mint(
-        pricer,
-        kind,
-        lower_tick,
-        higher_tick,
-        min_quantity,
-        max_premium,
-        min_quantity,
-        cost_cap,
-        std::u64::max_value!(),
-        bfee,
-        config.fee_incentive_subsidy_rate(),
-        market.fee_incentive_balance.value(),
-        now,
-        true,
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    quote
-}
-
-/// The close a sell fill prices at the clock for an open receipt, charging the
-/// capped `bfee`, without the trader's floors. Both sell quotes share it.
-#[test_only]
-fun quote_sell(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    receipt: &OrderReceipt,
-    close_quantity: u64,
-    bfee: u64,
-    clock: &Clock,
-): RedeemQuote {
-    market.chk_pricer(pricer);
-    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
-    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
-    let now = clock.timestamp_ms();
-    assert!(now < market.expiry, EInvalidOrderTiming);
-    let (_, quote, reason) = market.price_close(
-        pricer,
-        &order::from_id(receipt.order_id),
-        close_quantity,
-        0,
-        0,
-        bfee,
-        now,
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    quote
 }
 
 /// Fill a committed mint at its tick `pricer` and return `0`, its quote, and
@@ -3347,207 +3248,6 @@ fun chk_backed(market: &ExpiryMarket) {
 // === Test-Only: the Pricer reads version 5 published ===
 // Retired with live pricing in version 6 (they abort `EUseV2`), and kept so tests
 // can still read quotes and NAV from a test `Pricer`.
-
-#[test_only]
-public fun current_nav_v5_for_testing(market: &ExpiryMarket, pricer: &Pricer): u64 {
-    market.chk_pricer(pricer);
-    let liability = market.strike_exposure.marked_liab(pricer);
-    // Marked liability and free cash are computed through different rounded
-    // aggregates. Negative marked NAV is represented as zero.
-    market.cash.free_cash().saturating_sub(liability)
-}
-
-#[test_only]
-public fun live_order_value_v5_for_testing(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    order_id: u256,
-): u64 {
-    market.chk_pricer(pricer);
-    let order = order::from_id(order_id);
-    market.strike_exposure.live_order_value(pricer, &order)
-}
-
-#[test_only]
-public fun quote_mint_v5_for_testing(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    clock: &Clock,
-    _ctx: &mut TxContext,
-): MintQuote {
-    market.quote_now(
-        config,
-        pricer,
-        if (exact_quantity) constants::mint_kind_exact_quantity!()
-        else constants::mint_kind_exact_amount!(),
-        lower_tick,
-        higher_tick,
-        max_premium,
-        min_quantity,
-        std::u64::max_value!(),
-        0,
-        clock,
-    )
-}
-
-#[test_only]
-public fun quote_mint_for_account_v5_for_testing(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): MintQuote {
-    market.quote_mint_with_builder_fee_v5_for_testing(
-        wrapper,
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        max_premium,
-        min_quantity,
-        exact_quantity,
-        0,
-        root,
-        clock,
-        ctx,
-    )
-}
-
-#[test_only]
-public fun quote_mint_with_builder_fee_v5_for_testing(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    builder_fee_per_contract: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    _ctx: &mut TxContext,
-): MintQuote {
-    let account = wrapper.load_account();
-    market.quote_now(
-        config,
-        pricer,
-        if (exact_quantity) constants::mint_kind_exact_quantity!()
-        else constants::mint_kind_exact_amount!(),
-        lower_tick,
-        higher_tick,
-        max_premium.min(account.balance<USDC>(root, clock)),
-        min_quantity,
-        std::u64::max_value!(),
-        capped_fee(config, builder_fee_per_contract),
-        clock,
-    )
-}
-
-#[test_only]
-public fun quote_mint_exact_cost_for_account_v5_for_testing(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): MintQuote {
-    market.quote_mint_exact_cost_with_builder_fee_v5_for_testing(
-        wrapper,
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        max_cost,
-        min_quantity,
-        0,
-        root,
-        clock,
-        ctx,
-    )
-}
-
-#[test_only]
-public fun quote_mint_exact_cost_with_builder_fee_v5_for_testing(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    builder_fee_per_contract: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    _ctx: &mut TxContext,
-): MintQuote {
-    let account = wrapper.load_account();
-    market.quote_now(
-        config,
-        pricer,
-        constants::mint_kind_exact_cost!(),
-        lower_tick,
-        higher_tick,
-        0,
-        min_quantity,
-        max_cost.min(account.balance<USDC>(root, clock)),
-        capped_fee(config, builder_fee_per_contract),
-        clock,
-    )
-}
-
-#[test_only]
-public fun quote_close_v5_for_testing(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    receipt: &OrderReceipt,
-    close_quantity: u64,
-    _builder_code_id: Option<ID>,
-    clock: &Clock,
-): RedeemQuote {
-    market.quote_sell(pricer, receipt, close_quantity, 0, clock)
-}
-
-#[test_only]
-public fun quote_close_with_builder_fee_v5_for_testing(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    receipt: &OrderReceipt,
-    close_quantity: u64,
-    builder_fee_per_contract: u64,
-    clock: &Clock,
-): RedeemQuote {
-    market.quote_sell(
-        pricer,
-        receipt,
-        close_quantity,
-        capped_fee(config, builder_fee_per_contract),
-        clock,
-    )
-}
 
 // === Test-Only: retired instant-trading paths ===
 // The bodies the retired public functions had, kept so tests can still seed

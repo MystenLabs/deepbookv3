@@ -15,6 +15,7 @@ use deepbook_predict::{
     strike_exposure_config::{Self, StrikeExposureConfig},
     test_constants
 };
+use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 use usdc::usdc::USDC;
 
@@ -390,10 +391,7 @@ fun range_quote_mint_and_partial_close_conserve_cash_with_two_fees() {
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
     helpers::assert_market_backed_bundle(&market);
     range_test_helpers::prepare_range(&mut fx, &mut market);
-    let gross = helpers::market(&market).live_order_value_v5_for_testing(
-        &fx.load_pricer_bundle(&market),
-        order,
-    );
+    let gross = fx.live_order_value_bundle(&market, order);
     let before_close = fx.account_balance_bundle<USDC>(&account);
     let cash_before = helpers::market(&market).cash_balance();
     let survivor = fx
@@ -509,7 +507,7 @@ fun existing_range_closes_after_a_finite_leg_moves_outside_entry_bounds() {
         strike(HIGHER_TICK * test_constants::default_tick_size()),
     );
     assert_eq!(price.higher_up(), option::some(0));
-    let gross = helpers::market(&market).live_order_value_v5_for_testing(&pricer, order);
+    let gross = math::mul_down(price.probability(), test_constants::mint_quantity());
     let before = fx.account_balance_bundle<USDC>(&account);
     assert_eq!(
         fx.redeem_live_bundle(&mut market, &mut account, order, test_constants::mint_quantity()),

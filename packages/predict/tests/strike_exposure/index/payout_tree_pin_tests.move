@@ -20,7 +20,8 @@ use deepbook_predict::{
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::Pricer,
     strike_payout_tree::{Self, StrikePayoutTree},
-    test_constants
+    test_constants,
+    tree_walk
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::vec_map::{Self, VecMap};
@@ -372,13 +373,13 @@ fun a_pinned_husk_survives_release_while_unpinned_husks_go() {
     assert_eq!(tree.node_count(), 2);
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 1),
-        snapshot_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()),
     );
 
     tree.snap_done(&pinned);
     assert_eq!(tree.node_count(), 1);
     assert!(tree.has_nodes(RANGE_A_LOWER, constants::pos_inf_tick!()));
-    assert_eq!(tree.walk_linear(&pricer, tick_size()), 0);
+    assert_eq!(tree_walk::liability(&mut tree, &pricer, tick_size()), 0);
     tree.assert_tree_invariant_for_testing();
 
     destroy(tree);
@@ -524,7 +525,7 @@ fun a_husk_the_snapshot_retains_is_never_pruned() {
     assert_eq!(tree.node_count(), 2);
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 1),
-        snapshot_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()),
     );
 
     // Consuming the snapshot is what removes them.
@@ -563,11 +564,11 @@ fun insert_range_existing_under_a_snapshot_captures_before_mutating() {
     assert_eq!(tree.node_count(), 4);
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 1),
-        snapshot_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()),
     );
     assert_eq!(
-        tree.walk_linear(&pricer, tick_size()),
-        live_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut tree, &pricer, tick_size()),
+        tree_walk::liability(&mut live_reference, &pricer, tick_size()),
     );
     tree.assert_tree_invariant_for_testing();
 
@@ -596,11 +597,11 @@ fun a_zero_leaf_created_under_the_snapshot_stays_out_of_the_frozen_walk() {
 
     assert_eq!(
         tree.walk_frozen(&pricer, tick_size(), 1),
-        snapshot_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut snapshot_reference, &pricer, tick_size()),
     );
     assert_eq!(
-        tree.walk_linear(&pricer, tick_size()),
-        live_reference.walk_linear(&pricer, tick_size()),
+        tree_walk::liability(&mut tree, &pricer, tick_size()),
+        tree_walk::liability(&mut live_reference, &pricer, tick_size()),
     );
 
     destroy(tree);
