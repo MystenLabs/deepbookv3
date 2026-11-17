@@ -71,8 +71,9 @@ An active session may call these wrappers, which place delayed-execution orders 
 - `enqueue_exact_cost`
 - `enqueue_redeem_open`
 - the `_with_builder` version of each, for an order that names a Predict builder code and a fee per contract
+- the `_v2` version of each of the eight, which takes no oracle object
 
-Each calls the companion's `queue` function of the same name and returns the new record ID. Besides the market, the Account, and `ProtocolConfig`, each takes the market's `MarketQueue`, the companion's `OrderDesk`, Propbook's oracle registry, and the canonical Pyth and Block Scholes objects that Predict validates when it snapshots the order's pricing inputs. `enqueue_redeem_open` sells an Open record, a filled order that stays in its market's queue, by its record ID. Once placed, an order is committed, filled or refunded, and paid at settlement by calls that need no session or Account authority. See [delayed execution](../predict/docs/concepts/delayed-execution.md).
+Each `_v2` wrapper calls the companion's `queue` function of the same name and returns the new record ID. Besides the market, the Account, and `ProtocolConfig`, it takes the market's `MarketQueue` and the companion's `OrderDesk`, and no oracle object, because placement reads no oracle. The wrappers without `_v2` keep the signatures earlier versions published, which also take Propbook's oracle registry and the Pyth and Block Scholes objects. Since Sessions version 5 they ignore those arguments and forward to the matching `_v2` wrapper. `enqueue_redeem_open` sells an Open record, a filled order that stays in its market's queue, by its record ID. Once placed, an order is committed, filled or refunded, and paid at settlement by calls that need no session or Account authority. See [delayed execution](../predict/docs/concepts/delayed-execution.md).
 
 An active session may also call these wrappers:
 
@@ -86,7 +87,7 @@ The immediate `mint_exact_*` and `redeem_live` wrappers always abort through Pre
 
 Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict or companion function. All market parameters remain caller-selected and are validated by the companion and Predict.
 
-The queued wrappers were added by the Sessions upgrade that sets `current_version!()` to 3. That upgrade links Predict package version 4 and the companion, so it publishes after both. Sessions runs the Predict and companion versions it linked when it was published, so before Predict's version watermark retires the version it links, Sessions must be relinked to the new Predict. An unrelinked Sessions package's queued wrappers abort once Predict's watermark advances, while placing orders directly through the companion keeps working. `current_version!()` is now 4, the version the next Mainnet upgrade publishes, relinked to Predict 5 and Propbook 2.
+The queued wrappers were added by the Sessions upgrade that sets `current_version!()` to 3. That upgrade links Predict package version 4 and the companion, so it publishes after both. Sessions runs the Predict and companion versions it linked when it was published, so before Predict's version watermark retires the version it links, Sessions must be relinked to the new Predict. An unrelinked Sessions package's queued wrappers abort once Predict's watermark advances, while placing orders directly through the companion keeps working. `current_version!()` is now 5, the version the next Mainnet upgrade publishes, relinked to Predict 6 and companion version 3.
 
 ## Builder approvals
 

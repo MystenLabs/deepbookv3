@@ -89,8 +89,10 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
   exactly τ on its stored channel, or, with the backup tick switched on and once
   `gap_wait_ms` has passed, the single update one tick of that channel later.
   Predict stores only a `LazerPrice` built from a Pyth-verified update for the
-  receipt's feed and channel, generated at or after τ. A cohort commits whole
+  receipt's feed and channel, generated at or after τ, and the receipt's feed
+  must still be the oracle binding's. A cohort commits whole
   or not at all, and never at or past its deadline.
+- **Block Scholes inputs fixed by τ's slots.** A cohort takes the spot and forward stamped at its value slot and the SVI at its SVI slot (`BsTiming`), or, once the timing's gap wait has passed, the next slot of either. Predict stores only a `BsVol` built from `bs_oracle`-verified updates under the market's oracle binding and expiry, with both source times at or before τ and at most 120 seconds before it (`EWrongVol`).
 - **τ and the deadline never decrease along record IDs.** A committed cohort
   never grows, and a cohort never mixes Pyth channels.
 - **The deadline is final.** At or past its deadline an unfinished order can
@@ -102,7 +104,7 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
   a market's ledger pays its storage. A pinned node is never pruned, and a
   snapshot release keeps it. A market's queue is created once, by a separate
   call.
-- **Settlement never waits on the queue.** `try_settle` reads nothing from the
+- **Settlement never waits on the queue.** `try_settle_v2` reads nothing from the
   queue. `settle_step` refunds waiting orders and pays Open records in bounded
   batches, one phase per call, and never aborts because of a queued order. A
   record the market cannot pay stays Open (`OpenRecordPayoutSkipped`). Each
@@ -130,27 +132,23 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
 
 ## NAV and valuation
 
-- **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  free_cash − live_marked_liability`, floored at zero, where `free_cash =
+- **The per-expiry NAV is the exact mark.** A market's NAV is
+  `free_cash − live_marked_liability`, floored at zero, where `free_cash =
   cash − inventory_impact_reserve` and the liability is the
-  payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
-  `Σ quantity × P(range)`) with no per-order correction.
+  payout tree's boundary-linear walk (`strike_payout_tree::walk_frozen`,
+  `Σ quantity × P(range)`) with no per-order correction. The flush evaluates it from its snapshot (`snapshot_nav`), and `expiry_market::current_nav`, which returned it for a live `Pricer` through package version 5, aborts `EUseV2` since version 6.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
   reserve and proven on every trade); the `saturating_sub` cash floor marks a
   degenerate (underwater) market at 0, the correct per-market limited-recourse
   value, never negative.
-- **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP supply *and* withdraw at the single `pool_nav = idle + Σ snapshot-instant market NAV` (net of the protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`), computed once in `finish_flush`. Because each market's snapshot NAV is exact — `current_nav`'s shape over the reconstructed snapshot-instant book — that one mark equals true recoverable value in both directions, up to fixed-point dust: a supplier prices `=` fair shares and a withdrawer draws `=` fair cash. The dust leans toward a higher liability (R2), so a withdrawal is never over-paid beyond the one raw unit of boundary rounding P-13 records; on supply, RP-15's charge on a tolerated price rise is a recorded exception that can over-mint by at most 2e-9 of the affected quantity. There is **no conservative band** — the bucket/band decomposition belonged to the deleted approximate-NAV world. Any liveness clamp inside the NAV shape (the degenerate-underwater cash floor) only ever *maximizes* NAV when it fires, preserving the supply-mark direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
+- **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP supply *and* withdraw at the single `pool_nav = idle + Σ snapshot-instant market NAV` (net of the protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`), computed once in `finish_flush`. Because each market's snapshot NAV is exact — the per-expiry NAV shape over the reconstructed snapshot-instant book — that one mark equals true recoverable value in both directions, up to fixed-point dust: a supplier prices `=` fair shares and a withdrawer draws `=` fair cash. The dust leans toward a higher liability (R2), so a withdrawal is never over-paid beyond the one raw unit of boundary rounding P-13 records; on supply, RP-15's charge on a tolerated price rise is a recorded exception that can over-mint by at most 2e-9 of the affected quantity. There is **no conservative band** — the bucket/band decomposition belonged to the deleted approximate-NAV world. Any liveness clamp inside the NAV shape (the degenerate-underwater cash floor) only ever *maximizes* NAV when it fires, preserving the supply-mark direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
 - **Exactly-once full-pool valuation, on vault-held state.** The in-flight valuation (`PoolValuation`) lives on the vault across transactions, with the `ProtocolConfig` flag (`valuation_in_progress`) engaged for its whole span. `start_pool_valuation` records the active-expiry set and commits the per-queue drain budgets; each `value_expiry` proves its market is in the snapshot and skips it if already valued (idempotent, so a permissionless caller racing the keeper cannot wedge or double-count it); `finish_flush` proves the valued set equals the snapshot. A missed or double-counted market would mis-price the pool, so the completeness proof is mandatory. Only the snapshot is privileged; `value_expiry` and `finish_flush` are permissionless once it seals. The state is released on exactly two paths: `finish_flush` (after the completeness proof and the queue drain, refused past `max_valuation_window_ms` for everyone including the operator), or a fresh `start_pool_valuation`, which discards the in-flight valuation and re-snapshots (folding stop into start). Both discard the partial NAV — frozen marks are sound only as a simultaneous set — while cash already moved by valuation settled sweeps stays (an invariant-preserving per-market move); the discard bumps the flush ordinal, so stale market stamps are lazily dropped by the next trade or settle attempt without visiting them.
-- **One instant per flush.** Every live market's `Pricer` is frozen inside the single snapshot transaction — the ability-less `SnapshotStage` hot potato cannot leave it — and no later stage reads an oracle: the frozen map alone decides each market's sweep-vs-value branch and its mark. The pool NAV a flush prices, and every LP fill against it, is therefore the pool's value at one instant.
-- **Post-snapshot trades cannot reach the snapshot figure.** A stamped (snapshotted-not-yet-valued) market's snapshot state is captured, not reconstructed: the stamp copies the two cash rows NAV reads at the snapshot instant, and each payout-tree node copies its boundary quantities into a shadow before its first mutation under the flush's generation (a node emptied mid-window is retained as a live-zero husk until the valuation consumes it). `snapshot_nav` is then the SAME linear walk as the live read over the captured terms — identical rounding and monotonicity contract by construction — against the captured cash, so the folded figure equals the market's NAV at the snapshot instant with no per-trade record and no trade budget. Trades after the market's valuation are invisible to the already-folded figure (as-of-snapshot either way).
+- **One snapshot per flush.** Every live market's `Pricer` is built and frozen inside the single snapshot transaction — the ability-less `SnapshotStage` hot potato cannot leave it — and no later stage reads an oracle: the frozen map alone decides each market's sweep-vs-value branch and its mark. Each market is marked at its signed Lazer price's instant, at or before the flush start and at most `block_scholes_price_freshness_ms` before it, with its Block Scholes spot, forward, and SVI all stamped at that same instant. The pool NAV a flush prices, and every LP fill against it, is therefore the pool's value at that snapshot, with every market's price taken inside one window before the start.
+- **Post-snapshot trades cannot reach the snapshot figure.** A stamped (snapshotted-not-yet-valued) market's snapshot state is captured, not reconstructed: the stamp copies the two cash rows NAV reads at the snapshot instant, and each payout-tree node copies its boundary quantities into a shadow before its first mutation under the flush's generation (a node emptied mid-window is retained as a live-zero husk until the valuation consumes it). `snapshot_nav` is then the SAME linear walk that defines a market's NAV, over the captured terms — identical rounding and monotonicity contract by construction — against the captured cash, so the folded figure equals the market's NAV at the snapshot instant with no per-trade record and no trade budget. Trades after the market's valuation are invisible to the already-folded figure (as-of-snapshot either way).
 
 ## Settlement
 
-- **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
-  settlement-price writer. It records exact Pyth at the market expiry when available, or exact
-  Block Scholes after the 30-second Pyth-exclusive window, and exact terminal payout liability
-  atomically; otherwise it returns false without changing the market. Settled consumers read no
-  oracle.
+- **Single explicit settlement transition.** `expiry_market::try_settle_v2` is the sole settlement-price writer. It records the signed Pyth Lazer price on the oracle binding's feed and channel, enveloped exactly at the market expiry and generated at most 2 seconds before it, when one is passed, or, after the 30-second Pyth-exclusive window, a signed Block Scholes spot of the binding's base asset stamped exactly at expiry, together with exact terminal payout liability. Otherwise it returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays its full `quantity` if the settlement price is in
   `(lower, higher]`, else 0 (`strike_exposure::settle_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
@@ -212,14 +210,14 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
   registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
-- A queued fill prices at the committed Pyth price for its τ and never reads the stored on-chain spot, and admission does not require that spot to be fresh. Valuation (`current_nav`, `live_order_value`, the flush snapshot) and the mint quotes accept a pricer that fell back to the Block Scholes forward, and settlement and settled redemption read no live price, so a gap in stored Pyth updates blocks neither trading, the flush, nor settlement. A gap in signed Pyth Lazer updates refunds the affected cohorts at their deadlines.
+- Every price is signed data stamped at the instant its flow names: a fill at its committed tick, with Block Scholes inputs from τ's slots, settlement and the reference tick at their exact timestamps, and a flush mark at its price's instant inside the window. Admission reads no oracle, and no path reads a stored oracle row. A gap in signed Pyth Lazer or Block Scholes data refunds the affected cohorts at their deadlines, and a flush with no data inside its window aborts its snapshot and is retried.
 - Trading pause blocks new risk creation: queued mints abort, while early sells, commit, resolve, refunds, and settlement run. Trade flows (queued admission and fills) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
   there is no expiry-only path that can strand capital. (The standalone compaction
   step was deleted with the dense NAV matrix; the payout tree is full-lifecycle, so
   the sweep alone suffices.)
-- **Past-expiry exact-data liveness.** A market past its expiry cannot be live-valued (`pricing::load_live_pricer` refuses it), so the flush's snapshot stage refuses to stamp an expired-but-unsettled market: it must be settled (`try_settle`) before a flush can start. This preserves the single exact mark for PLP supply and withdraw; no approximate substitute mark is allowed. A market that expires *after* the snapshot is valued as-is at its frozen pre-expiry mark, and its settlement is not blocked by the flush at all — it settles the instant it expires, because the frozen mark is settlement-invariant. Because the snapshot must cover every active market, an expiry whose exact settlement data is unobtainable at both sources blocks starting the *whole* pool flush — trading continues, but every queued LP fill waits — so a permanently unobtainable settlement spot is a cross-market LP-liveness brick, not a benign wait. Guaranteeing the exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, plus the bounded Block Scholes settlement fallback) remains tracked in the open-issues tracker.
+- **Past-expiry exact-data liveness.** A market past its expiry has no mark (no `Pricer` prices at or after expiry), so the flush's snapshot stage refuses to stamp an expired-but-unsettled market: it must be settled (`try_settle_v2`) before a flush can start. This preserves the single exact mark for PLP supply and withdraw; no approximate substitute mark is allowed. A market that expires *after* the snapshot is valued as-is at its frozen pre-expiry mark, and its settlement is not blocked by the flush at all — it settles the instant it expires, because the frozen mark is settlement-invariant. Because the snapshot must cover every active market, an expiry whose exact settlement data is unobtainable at both sources blocks starting the *whole* pool flush — trading continues, but every queued LP fill waits — so a permanently unobtainable settlement spot is a cross-market LP-liveness brick, not a benign wait. Guaranteeing the exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, plus the bounded Block Scholes settlement fallback) remains tracked in the open-issues tracker.
 
 ## Configuration
 
@@ -232,24 +230,18 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
 
 ## Cross-object binding
 
-- `ExpiryMarket` stores the Propbook underlying ID; `pricing::load_live_pricer`
-  validates that the two propbook feeds passed to a priced flow match Propbook's
-  current canonical binding for that underlying and that the market is still
-  pre-expiry for live pricing. The registry records one admin-approved config row
-  per Propbook underlying. Predict does not version-gate the external feeds.
+- `ExpiryMarket` stores the Propbook underlying ID, and every flow that takes signed data checks it against that underlying's oracle binding on `ProtocolConfig` (the Lazer feed and channel, and the Block Scholes base asset, SVI model, and decimals) and the market's expiry. Market creation requires a binding. The registry records one admin-approved config row per Propbook underlying. No Predict path reads a Propbook object.
 
 ## Producer facts and single clamp
 
 - **Cross-module returns carry owned facts, not a consumer's policy.** A module
   returns quantities it is the source of truth for (an exposure book returns its raw
   live liability; the pool returns its profit basis), never a value pre-shaped for a
-  caller's mark, haircut, or stance. `strike_exposure::marked_liab` returns
-  the liability fact; `expiry_market::current_nav` owns the NAV cash floor.
+  caller's mark, haircut, or stance. `strike_exposure::frozen_liab` returns the liability fact, and `expiry_market::snapshot_nav` owns the NAV cash floor.
 - **Each economic quantity is clamped exactly once, at the policy owner.** A lossy
   transform (clamp at zero, `min`/`max`, saturating subtraction, rounding) is applied
   once, as the last step before use, in the module that owns the policy — never on a
-  value a downstream consumer applies further arithmetic to. The single `current_nav`
-  cash floor is the canonical example: the liability producer does not pre-floor it.
+  value a downstream consumer applies further arithmetic to. The single NAV cash floor in `snapshot_nav` is the canonical example: the liability producer does not pre-floor it.
 
 ## Rounding
 

@@ -16,11 +16,11 @@ Delayed execution spans three packages, because Sui caps a package at 102,400 by
 | --- | --- |
 | `deepbook_predict` (Predict) | Upgraded in place. Keeps the market, pricing, fills, fees, cash backing, settlement, and the LP pool. Adds the order-flow primitives the queue drives, one `OrderReceipt` per queued order, and a per-market `OrderFlowLedger` |
 | [`deepbook_predict_orders`](../../../predict_orders/README.md) | Published fresh. Holds the shared `OrderDesk` with the policy, one `MarketQueue` per market, each record's escrow, every order entry point, the queue reads, and the queue events |
-| [`deepbook_predict_math`](../../../predict_math/README.md) | Published fresh. A pure library: the pricing math Predict calls, the order-ID decode, and `LazerPrice`, a price built only from a Pyth-verified Lazer update |
+| [`deepbook_predict_math`](../../../predict_math/README.md) | Published fresh. A pure library: the pricing math Predict calls, the order-ID decode, `LazerPrice`, a price built only from a Pyth-verified Lazer update, and from package version 6 `BsVol` and `BsSpot`, Block Scholes values decoded only from `bs_oracle`-verified updates |
 
 The dependency direction is one way: `deepbook_predict_orders` depends on Predict, and Predict depends on `deepbook_predict_math`. The companion also depends on the library directly. Predict never names a companion type, so there is no cycle and Predict's own surface does not change when the companion does.
 
-Predict makes every pricing, fill, and solvency decision itself. Each order-flow primitive is one complete Predict operation: it checks its own gates and the receipt when it runs, makes the accounting decision, and moves the cash in the same call. The companion owns what Predict leaves to it: τ and the deadline, the stuck gate, capacities and per-account caps, cohort order, the exact-or-backup tick choice, escrow custody, refund routing, and the events. See [The order-flow boundary](#the-order-flow-boundary).
+Predict makes every pricing, fill, and solvency decision itself. Each order-flow primitive is one complete Predict operation: it checks its own gates and the receipt when it runs, makes the accounting decision, and moves the cash in the same call. The companion owns what Predict leaves to it: τ and the deadline, the stuck gate, capacities and per-account caps, cohort order, the exact-or-backup tick choice, the Block Scholes slot choice, escrow custody, refund routing, and the events. See [The order-flow boundary](#the-order-flow-boundary).
 
 ## The cutover and what retired
 
@@ -34,11 +34,13 @@ Predict version 4 compiles `current_version!() == 4`. `ProtocolConfig.version_wa
 - `redeem_settled` and `redeem_settled_permissionless` are unchanged in package version 4. They pay only positions that immediate mints left in accounts, because a queued fill never enters an account and settlement pays its Open record. Mainnet held no such position at the cutover. Package version 5 retires both: they keep their signatures and abort `EDelayedExecutionRequired` at any watermark.
 - `finish_flush` accepts only flush operators in package version 4, so the flush keeper's address goes on the [flush-operator allowlist](#the-flush-operator-allowlist) before the keeper moves to it.
 
+Package version 6 removes every Propbook read from the queue's paths, as decided 2026-11-16 in the design doc. Placement reads no oracle, and the commit carries the order's Block Scholes inputs as well as its price (see [pricing and oracles](./pricing-and-oracles.md#signed-oracle-data)). Predict's `admit_mint`, `admit_mint_with_builder`, `admit_sell`, `admit_sell_with_builder`, and `commit`, and the companion's `queue::commit`, keep their signatures and abort `EUseV2`. The companion's version 2 `enqueue_*` and the Sessions version 4 wrappers keep their signatures, ignore their Propbook arguments, and place through the `_v2` entry points. The cutover is pause-and-drain: an SDK and keeper release that builds the `_v2` calls ships first, trading is paused and the queues drain, the three packages upgrade, an admin sets each underlying's oracle binding, the watermarks move, and the keepers switch to the `_v2` calls before trading reopens, so no order admitted under the old rules is committed under the new ones.
+
 The watermark only moves up, so the cutover cannot be undone.
 
 ## Who calls what
 
-A trader, or a session acting for the trader, places orders through the companion's `queue` module. Everything after placement is open to anyone: the companion's `commit`, `resolve`, `refund`, `settle_step`, and `cleanup`, and Predict's `rebalance_expiry_cash` and `try_settle` (DX-5). Creating a market's queue is open to anyone too, and so are `pay_open` and `claim_parked`, which pay funds a denied recipient could not take once it can (see [Denied recipients](#denied-recipients)). The protocol's keepers normally make these calls, with no special rights: the market keeper creates each market's queue, and the fill keeper runs the rest. Only an admin holding Predict's `AdminCap` can allowlist the companion, change the policy, refund orders by ID, bump the companion's version floor, or edit the flush-operator allowlist, and only a flush operator can finish an LP flush.
+A trader, or a session acting for the trader, places orders through the companion's `queue` module. Everything after placement is open to anyone: the companion's `commit_v2`, `resolve`, `refund`, `settle_step`, and `cleanup`, and Predict's `rebalance_expiry_cash` and `try_settle_v2` (DX-5). Creating a market's queue is open to anyone too, and so are `pay_open` and `claim_parked`, which pay funds a denied recipient could not take once it can (see [Denied recipients](#denied-recipients)). The protocol's keepers normally make these calls, with no special rights: the market keeper creates each market's queue, and the fill keeper runs the rest. Only an admin holding Predict's `AdminCap` can allowlist the companion, change the policy, refund orders by ID, bump the companion's version floor, or edit the flush-operator allowlist, and only a flush operator can finish an LP flush.
 
 ## The order-flow boundary
 
@@ -46,10 +48,9 @@ Predict's primitives are the only way the queue moves money or positions. Each t
 
 | Primitive | Authority | What it does |
 | --- | --- | --- |
-| `admit_mint` | witness | Admits one queued mint: gates, timing, the volatility snapshot, the dry run, the cash-need check, and node pins. Returns a new receipt |
-| `admit_sell` | witness | Admits an early sell of an open receipt's position, in place on that receipt |
-| `admit_mint_with_builder`, `admit_sell_with_builder` | witness | The same admissions with an optional `BuilderFee`: for an order that names a builder, cap the named fee per contract at `builder_fee_cap` and record the code and the capped fee in the receipt. Naming none admits exactly as `admit_mint` and `admit_sell`. The companion calls these for every order |
-| `commit` | witness | Stores the `LazerPrice` the order fills at and reserves a mint's fee subsidy |
+| `admit_mint_v2` | witness | Admits one queued mint: gates, timing, the mint kind and range, a nonzero budget, an optional `BuilderFee`, the cash-need check, and node pins. Records the binding's Lazer feed and reads no oracle. Returns a new receipt |
+| `admit_sell_v2` | witness | Admits an early sell of an open receipt's position, in place on that receipt, with an optional `BuilderFee` |
+| `commit_v2` | witness | Stores the `LazerPrice` the order fills at and the `BsVol` it prices with, and for a mint prices the subsidy bound at the tick and reserves the fee subsidy |
 | `try_fill` | witness | Fills the order at its committed price, or returns the refund reason before anything moves. Reads Sui's `DenyList` |
 | `release` | receipt only | Takes an admitted order out without filling it, for deadline, admin, and settlement refunds, keeping the order fee for reasons 1 and 2 as a fill's refund does |
 | `try_pay_settled` | receipt only | Pays an open receipt its settled payout after settlement, or returns the receipt when the payout cannot be made. Reads Sui's `DenyList` |
@@ -69,12 +70,12 @@ Whatever the companion does, Predict enforces:
 - **No send aborts.** A fill, a fee, or a settled payout is never sent where Sui would abort the transaction for the regulated coin, so one denied address cannot stop a market's walks.
 - **Pricing and solvency.** A fill prices from the receipt's own volatility snapshot and committed price, charges the fees, checks cash backing and the inventory-impact reserve, and applies admission and the trader's limits as recorded.
 - **Time.** τ is on a supported channel's grid and at most one of its ticks before the clock, τ is before the deadline and before the no-trade window, and the deadline is at least 5 seconds before expiry.
-- **Price provenance.** The committed price comes from a Pyth-verified update for the receipt's feed and channel, stamped at τ or one channel tick later, generated no earlier than τ (see [Commit](#commit)).
+- **Price provenance.** The committed price comes from a Pyth-verified update for the receipt's feed and channel, stamped at τ or one channel tick later, generated no earlier than τ, and the Block Scholes inputs from verified updates under the market's binding, stamped at or before τ (see [Commit](#commit)).
 - **Incentives.** One subsidy reservation per mint, at most the receipt's subsidy bound times the rate, from that market's balance. Unused subsidy returns at the fill or refund.
 - **Builder fees.** A fill charges exactly the capped fee its receipt records, only to the code the receipt records, and the trader's `max_cost` or `min_proceeds` bounds it like any other charge. A sell's builder fee stops at the redeem value left after the trading fee.
 - **Replay.** A payout or a full close consumes the receipt, so a position is paid or closed once.
 
-The companion is still trusted with the exact-or-backup tick choice (one channel tick of price drift at most), the timing policy within Predict's bounds, escrow custody and refund routing, the order of fills and refunds, queue limits, the events and reads, and the exits of positions it holds: only companion code can sell an Open record or start its payout. If the companion breaks, those positions wait for a companion upgrade, and their value stays backed in market cash.
+The companion is still trusted with the exact-or-backup tick choice (one channel tick of price drift at most), the Block Scholes slot choice once the gap wait has passed (one slot of each series at most), the timing policy within Predict's bounds, escrow custody and refund routing, the order of fills and refunds, queue limits, the events and reads, and the exits of positions it holds: only companion code can sell an Open record or start its payout. If the companion breaks, those positions wait for a companion upgrade, and their value stays backed in market cash.
 
 ## Records and statuses
 
@@ -113,14 +114,14 @@ The kind codes are `0` exact quantity, `1` exact amount, `2` exact cost, and `4`
 
 ## Placing an order
 
-Four companion entrypoints place orders. Each takes the market's queue, the market, the account wrapper and its `Auth`, the desk, `ProtocolConfig`, the Propbook registry, and the canonical Pyth and Block Scholes objects, and returns the new record ID.
+Four companion entrypoints place orders, each with a `_with_builder` form. Each takes the market's queue, the market, the account wrapper and its `Auth`, the desk, and `ProtocolConfig`, and returns the new record ID. Placement reads no oracle. The version 2 entrypoints of the same names without `_v2` also take Propbook's registry and the Pyth and Block Scholes objects, ignore them, and place through these.
 
 | Entrypoint | Sizing at τ | Trader limits |
 | --- | --- | --- |
-| `enqueue_exact_quantity` | Exactly `quantity` | `max_cost` caps the all-in cost, `max_probability` caps the entry probability |
-| `enqueue_exact_amount` | The largest lot-rounded quantity whose premium fits `max_premium` | `min_quantity`, and `max_cost` caps the all-in cost |
-| `enqueue_exact_cost` | The largest lot-rounded quantity whose all-in cost fits `max_cost` | `min_quantity` |
-| `enqueue_redeem_open` | `close_quantity` of an Open record | `min_probability` and `min_proceeds` |
+| `enqueue_exact_quantity_v2` | Exactly `quantity` | `max_cost` caps the all-in cost, `max_probability` caps the entry probability |
+| `enqueue_exact_amount_v2` | The largest lot-rounded quantity whose premium fits `max_premium` | `min_quantity`, and `max_cost` caps the all-in cost |
+| `enqueue_exact_cost_v2` | The largest lot-rounded quantity whose all-in cost fits `max_cost` | `min_quantity` |
+| `enqueue_redeem_open_v2` | `close_quantity` of an Open record | `min_probability` and `min_proceeds` |
 
 Every queued mint requires a finite `max_cost`: zero and `u64::MAX` abort `EMintCostCapRequired`. The immediate `mint_exact_quantity` accepted `u64::MAX` as no cap.
 
@@ -131,12 +132,11 @@ Placement runs these steps in order, and an abort charges nothing:
 3. **Source record (sells only, companion).** The source record must be Open (`ERecordNotOpen`, also for a missing ID) and belong to the placing account (`ENotRecordOwner`). `close_quantity` must be at least `min_sell_quantity`, and a partial sell must leave at least that much (`EBelowMinSell`).
 4. **Budget and fee (companion).** A mint needs a finite `max_cost` (`EMintCostCapRequired`) and an available balance above the order fee (`EFeeNotCovered`). Its budget is `min(max_cost, available − order_fee)`, and an exact-quantity mint also caps it at `quantity`, because a fill never costs more than its quantity. A sell needs a balance of at least the order fee and escrows nothing else.
 5. **Gates (Predict).** The witness allowlist, the version gate (so the emergency freeze blocks placement), and the cutover. For mints, the trading pause and the market's mint pause. Then the atomic flush snapshot stage. An early sell is open during both pauses.
-6. **Timing bounds (Predict).** `EInvalidOrderTiming` unless the channel is a supported fixed-rate channel, τ is on its grid and at most one tick before the clock, τ is before the deadline and before `expiry − no_trade_window_ms`, and the deadline is at least 5 seconds before expiry. The policy's SVI age limit must be within Predict's 120-second ceiling (`EInvalidOrderTerms`).
-7. **Volatility snapshot (Predict).** Placement validates the oracle inputs as a live pricer does and copies the Block Scholes spot, forward, and SVI into the receipt. It requires `use_pyth_spot_for_forward` (`pricing::EPythForwardRequired`) and an SVI no older than `svi_max_age_ms`. It does not require a fresh on-chain Pyth spot (DX-4). See [pricing and oracles](./pricing-and-oracles.md#queued-orders).
-8. **The t₀ dry run (Predict).** Placement prices the order at the placement clock with the same predicate a fill uses, without subsidy. An order that would already be refunded for its limits or for admission aborts `EOrderFailsLimits`. A sell above the held quantity fails here too.
-9. **Spare cash (mints only, Predict).** The mint's [cash need](#pool-cash-for-queued-orders) must fit the market's spare cash (`EInsufficientMarketCash`). Other waiting orders are not counted (DX-6). Sells skip this check.
-10. **Pins (mints only, Predict).** Admission creates both finite boundary nodes of the range in the payout tree if they are missing, and pins them in the ledger. A fill therefore never creates a node. The payout tree's node cap still applies here.
-11. **Append (companion).** The budget and the order fee move from the account into the record's escrow, the record is stored with its receipt, and `OrderEnqueued` reports it with the market's cash, required cash, and waiting cash need after the call.
+6. **Timing bounds (Predict).** `EInvalidOrderTiming` unless the channel is a supported fixed-rate channel, τ is on its grid and at most one tick before the clock, τ is before the deadline and before `expiry − no_trade_window_ms`, and the deadline is at least 5 seconds before expiry.
+7. **Binding and terms (Predict).** The market's underlying must have an oracle binding (`protocol_config::EOracleBindingMissing`), and the receipt records its Lazer feed. A mint's kind must be a mint kind (`EInvalidOrderTerms`), its range valid and on the market's admission grid, and its budget nonzero (`EOrderFailsLimits`). A sell's `close_quantity` must be positive, a whole lot, and at most the position (`EOrderFailsLimits`). Placement reads no price: the order's own limits, the entry band, and the minimum premium are checked at τ, where an order that misses them is refunded with its fee kept (reasons 1 and 2).
+8. **Spare cash (mints only, Predict).** The mint's [cash need](#pool-cash-for-queued-orders) must fit the market's spare cash (`EInsufficientMarketCash`). Other waiting orders are not counted (DX-6). Sells skip this check.
+9. **Pins (mints only, Predict).** Admission creates both finite boundary nodes of the range in the payout tree if they are missing, and pins them in the ledger. A fill therefore never creates a node. The payout tree's node cap still applies here.
+10. **Append (companion).** The budget and the order fee move from the account into the record's escrow, the record is stored with its receipt, and `OrderEnqueued` reports it with the market's cash, required cash, and waiting cash need after the call.
 
 An early sell moves the whole position, with its receipt, out of its source record into the new record and marks the source Closed (DX-14). `OrderEnqueued.source_record_id` names the source. There is no cancel: once placed, an order fills or is refunded.
 
@@ -157,17 +157,23 @@ Launch runs at the 800 ms delay and a 10-second no-trade window, which an admin 
 
 ## Commit
 
-`queue::commit(queue, market, desk, config, updates, clock, ctx)` attaches verified Pyth Lazer prices to waiting cohorts. Each update in `updates` must come from the Pyth Lazer verifier earlier in the same PTB. Their order does not matter, and an update that matches no waiting cohort is skipped. A repeated commit changes nothing. A settled market matches nothing.
+`queue::commit_v2(queue, market, desk, config, updates, vols, clock, ctx)` attaches verified Pyth Lazer prices and Block Scholes inputs to waiting cohorts. Each update in `updates` must come from the Pyth Lazer verifier earlier in the same PTB, and each `BsVol` in `vols` from `deepbook_predict_math::block_scholes::vols` over updates `bs_oracle` verified there. Their order does not matter, and an update or input that matches no waiting cohort is skipped. A repeated commit changes nothing. A settled market matches nothing. The version 2 `queue::commit`, which took only prices, aborts `EUseV2`.
 
 A cohort accepts one update: the one stamped exactly τ on the cohort's own channel (DX-1). An envelope that is not a whole millisecond matches no cohort. `pyth_price_buffer_ms` switches a backup tick on or off. While it is above zero and the clock is at least `gap_wait_ms` past τ, a cohort also accepts the update stamped one tick of its own channel after τ. The buffer is not a window, and the setter keeps it at zero or exactly one tick. The default is zero, so only the exact τ update counts. The backup always follows the cohort's stored channel, so a later change of the policy channel cannot widen the choice of price. A cohort at or past its deadline is never committed.
 
-For each matched cohort, the companion decodes one `LazerPrice` per feed through `deepbook_predict_math::lazer_price::from_update`, then checks every Pending order against it before any is written. A cohort commits whole or not at all. An empty price or update time, a price that does not normalize to a pricing-safe spot, a price generated before τ, or an envelope after the clock leaves the whole cohort waiting for a later commit or its deadline refund (DX-10). A cohort without a price never holds back another cohort (DX-24).
+### Block Scholes inputs
 
-Predict's `commit` then checks each order's price against its receipt and stores it. The price must carry the receipt's Pyth feed and channel, an envelope at exactly τ or one tick of that channel later, a generation time between τ and the envelope, an envelope at or before the clock, and a pricing-safe spot (`EWrongPrice`). Holding a `LazerPrice` proves Pyth signed it, because only the library builds one and only from a verified update. The companion's pre-check makes a cohort commit stay all or nothing, and Predict's check makes a wrong price impossible to store whatever the companion does.
+A cohort also takes one `BsVol` for the market's expiry, picked by the desk's `BsTiming`: the spot and forward stamped at the 500 ms boundary at or before `τ − value_lag_ms`, and the SVI stamped at the 1,000 ms boundary at or before `τ − svi_lag_ms`. At the launch lags of 500 ms and 1,000 ms these are `floor((τ − 500) / 500) × 500` and `floor((τ − 1,000) / 1,000) × 1,000`, so both were published before τ. Once the clock is at least the timing's `gap_wait_ms` past τ, the cohort also accepts the next slot of either series, in this order: the next SVI slot, the next value slot, then both. Every accepted slot is at or before τ. A cohort with no matching inputs waits for a later commit or its deadline refund (reason 5). `desk::set_bs_timing` sets the lags and the gap wait (see [The delayed-execution policy](#the-delayed-execution-policy)), and commit reads them when it runs, so a change also reaches cohorts already waiting.
 
-Commit aborts when the caller passes an update the decode cannot read: the order's feed is missing (`lazer_price::EFeedMissing`), the price, exponent, or update-time property was not requested (`lazer_price::EPropertyNotRequested`), or the feed claims an update time after the envelope that carries it (`lazer_price::EGenerationAfterEnvelope`).
+### Committing a cohort
 
-Committing a mint reserves its fee subsidy: `min(subsidy_bound × fee_incentive_subsidy_rate, the market's incentive balance)` moves from the market's incentive balance into the record's escrow. `subsidy_bound` is the t₀ dry run's trading fee, capped at the order's budget, so one order cannot soak up a market's incentives (DX-18). The subsidy rate is read at commit.
+For each matched cohort, the companion decodes one `LazerPrice` per feed through `deepbook_predict_math::lazer_price::from_update`, then checks every Pending order against it before any is written. A cohort holding an order admitted under a Lazer feed the market's oracle binding no longer names is not decoded and waits for its deadline refund. A cohort commits whole or not at all. An empty price or update time, a price that does not normalize to a pricing-safe spot, a price generated before τ, or an envelope after the clock leaves the whole cohort waiting for a later commit or its deadline refund (DX-10). A cohort without a price never holds back another cohort (DX-24).
+
+Predict's `commit_v2` then checks each order's price against its receipt and stores it. The price must carry the receipt's Pyth feed, which must still be the binding's, and channel, an envelope at exactly τ or one tick of that channel later, a generation time between τ and the envelope, an envelope at or before the clock, and a pricing-safe spot (`EWrongPrice`). The `BsVol` must match the binding's base asset, SVI model, and decimals and the market's expiry, with both source times at or before τ and at most 120 seconds before it (`EWrongVol`), and Predict copies it into the receipt's snapshot. Holding a `LazerPrice` proves Pyth signed it, because only the library builds one and only from a verified update. The companion's pre-check makes a cohort commit stay all or nothing, and Predict's check makes a wrong price impossible to store whatever the companion does.
+
+Commit aborts when the caller passes inputs off the market's binding, or an update the decode cannot read: the order's feed is missing (`lazer_price::EFeedMissing`), the price, exponent, or update-time property was not requested (`lazer_price::EPropertyNotRequested`), or the feed claims an update time after the envelope that carries it (`lazer_price::EGenerationAfterEnvelope`).
+
+Committing a mint reserves its fee subsidy: `min(subsidy_bound × fee_incentive_subsidy_rate, the market's incentive balance)` moves from the market's incentive balance into the record's escrow. `subsidy_bound` is the order's trading fee priced at its tick without subsidy, capped at the order's budget, so one order cannot soak up a market's incentives (DX-18). The bound is priced without reading the payout tree, so a whole cohort commits in one transaction, and it is never below the fee the fill charges. The subsidy rate is read at commit.
 
 Commit emits `CohortCommitted` with the committed spot of the cohort's first order, normalized to 1e9, its tick and generation time, the feed, the channel, and the sender. It uses Pyth Lazer's v1 `Update` type, which Pyth has deprecated on Mainnet but still serves. A new format arrives as a new library constructor and a companion upgrade, with no Predict upgrade.
 
@@ -198,11 +204,9 @@ An Open record leaves the Open status in one of two ways:
 - **Sold early.** `enqueue_redeem_open` sells some or all of it before the cutoff. The whole position moves into the sell's own record, and the source record becomes Closed. The sell's record holds the rest after a partial fill, and it becomes Open again if the sell is refunded. After any sell, the trader's position therefore lives under the sell's record ID.
 - **Paid at settlement.** The `settle_step` payout phase pays it in cash, or `pay_open` pays it later when the walk had to skip it (see [Settlement and cleanup](#settlement-and-cleanup)).
 
-`queue::quote_redeem_open(queue, market, wrapper, pricer, record_id, close_quantity, clock)` returns a `RedeemQuote` for a prospective early sell. It goes through Predict's `quote_close`, which prices the close at a live `Pricer` from `load_live_pricer` with no builder fee, the way a sell fill that names no builder prices, but with the trading fee at the clock instead of at a committed tick. `proceeds` is before the order fee and carries no congestion surcharge. It changes nothing. It aborts `EWrongMarket` when the queue belongs to another market, `ERecordNotOpen` for a missing or non-Open record, and otherwise as `quote_close` does: the pricer binding (`EWrongPricer`), a receipt that is not open (`EWrongStage`), the clock at or past expiry (`EInvalidOrderTiming`), or a close that cannot be priced (`EOrderFailsLimits`). It does not check that the account owns the record.
+`queue::quote_redeem_open` and `quote_redeem_open_with_builder_fee` keep their signatures. They check the queue's market (`EWrongMarket`) and that the record is Open (`ERecordNotOpen`), then abort `EUseV2` through Predict's `quote_close`, because no transaction can build the live `Pricer` they take since package version 6.
 
-`queue::quote_redeem_open_with_builder_fee(queue, market, config, pricer, record_id, close_quantity, builder_fee_per_contract, clock)` quotes a sell that names a builder through Predict's `quote_close_with_builder_fee`, with the fee capped at `builder_fee_cap` and then at the redeem value left after the trading fee, as the fill charges it.
-
-Position reads such as `live_order_value` and `settled_order_payout` take the packed order ID, which `queue::order(record_id)` returns in the record's `OrderView`.
+Position reads such as `settled_order_payout` take the packed order ID, which `queue::order(record_id)` returns in the record's `OrderView`.
 
 ## Refunds
 
@@ -219,10 +223,11 @@ Every refund returns the record's own escrow to the trader's receive address, le
 | Admin | 7 | `admin_refund` | Returned |
 | No cash | 8 | Market cash could not cover the fill | Returned |
 | Recipient denied | 9 | The receive address is on USDC's deny list, or USDC is globally paused. The fill is refused before anything moves | Returned, and parked in the record with the rest of the escrow |
+| No volatility | 10 | The committed Block Scholes inputs build no pricer at the tick: outside the pricing envelope, or a non-positive rolled variance | Returned |
 
 A mint misses its limits when its size is zero or below `min_quantity`, when an exact-quantity order's probability is above `max_probability`, or when its all-in cost is above `min(max_cost, budget)`. A sell misses its limits when its probability is below `min_probability` or its proceeds are below `min_proceeds`. A mint fails admission when its range cannot be priced, leaves the entry-probability band, misses the minimum premium, or costs more than its maximum payout (DX-17).
 
-Reasons 1, 2, 4, 8, and 9 come from `try_fill`. Reasons 5 and 7, a RefundDue record's stored reason, and the settlement drain go through Predict's `release`, which needs no witness and checks only the version floor, so it works while frozen and after the witness is removed. Both take the record's whole escrow and apply one refund rule: keep the order fee in market cash for reasons 1 and 2, return the reserved subsidy to the incentive balance, take the order's cash need out of the ledger, unpin a mint's boundary ticks, and hand the rest of the escrow back for the companion to send to the trader, or park in the record when the receive address cannot take it. A mint's emptied, unpinned node is removed only when the caller asks and the market is unsettled. Keeping a fee moves market cash, so a refund that keeps one aborts inside the flush's atomic snapshot stage, as a fill does. Besides the settlement drain, three companion calls refund waiting orders:
+Reasons 1, 2, 4, 8, 9, and 10 come from `try_fill`. Reasons 5 and 7, a RefundDue record's stored reason, and the settlement drain go through Predict's `release`, which needs no witness and checks only the version floor, so it works while frozen and after the witness is removed. Both take the record's whole escrow and apply one refund rule: keep the order fee in market cash for reasons 1 and 2, return the reserved subsidy to the incentive balance, take the order's cash need out of the ledger, unpin a mint's boundary ticks, and hand the rest of the escrow back for the companion to send to the trader, or park in the record when the receive address cannot take it. A mint's emptied, unpinned node is removed only when the caller asks and the market is unsettled. Keeping a fee moves market cash, so a refund that keeps one aborts inside the flush's atomic snapshot stage, as a fill does. Besides the settlement drain, three companion calls refund waiting orders:
 
 - `resolve` refunds as described above.
 - `refund(queue, market, desk, config, max_orders, deny_list, clock, ctx)` refunds waiting orders at or past their deadline with reason 5. It walks cohorts in τ order and stops at the first one not yet due, since deadlines never decrease. Every visited record counts against `max_orders`, and like `resolve` it visits at most 450 records per call. That cap bounds events only, so callers size `max_orders` from measured costs. It returns how many it refunded, and 0 without aborting when none is due.
@@ -271,7 +276,7 @@ Escrow sits in the companion's records, outside market cash, NAV, and backing. A
 
 Settlement is two separate jobs in two packages, and neither waits on the other (DX-19).
 
-**Predict settles from the oracle.** `try_settle` records the settlement price as before: exact Pyth, or exact Block Scholes after the grace period. It reads nothing from the queue, refunds nothing, and pays nothing. Repeated calls return true with no effect. It stays freeze-gated. Settling while orders still wait is safe: every deadline is at least 5 seconds before expiry, so at expiry a waiting order can only be refunded. `try_fill` refuses past the deadline, escrow is not market cash, and the settled liability already includes every queue-held position, because those positions live in the payout tree.
+**Predict settles from the oracle.** `try_settle_v2` records the settlement price from the signed data its caller passes: the Pyth Lazer price at exactly expiry, or the Block Scholes spot at exactly expiry after the grace period (see [pricing and oracles](./pricing-and-oracles.md#settlement)). It reads nothing from the queue, refunds nothing, and pays nothing. Repeated calls return true with no effect. It stays freeze-gated. Settling while orders still wait is safe: every deadline is at least 5 seconds before expiry, so at expiry a waiting order can only be refunded. `try_fill` refuses past the deadline, escrow is not market cash, and the settled liability already includes every queue-held position, because those positions live in the payout tree.
 
 **The companion drains and pays its queue.** `queue::settle_step(queue, market, desk, config, deny_list, clock, ctx)` runs one bounded phase per call and returns the phase the next call runs. Anyone can call it, and it aborts `EMarketNotExpired` before expiry.
 
@@ -285,7 +290,7 @@ Before Predict settles, DRAIN still runs and a PAY call changes nothing. DRAIN a
 
 The batch bounds come from Sui's limit of 1,000 dynamic-field loads per transaction. A drain refund or a payout visit loads one record, and the bounds leave room for the queue, the market, and Predict's ledger. The USDC deny-list check reads one setting per recipient, and Sui keeps those reads in a separate cache that does not count toward the limit. Calls on one queue serialize on the shared queue object, and several calls in one PTB share one transaction's limit, so the keeper sends one `settle_step` per transaction. A larger batch could exceed the limit on every call and leave the queue unable to drain, which would leave its positions unpaid.
 
-The fill keeper owns settlement, in this order: `try_settle` until the market is settled, then `settle_step` until it returns `phase_done()` or `MarketPayoutsCompleted` fires, then `cleanup`, then `rebalance_expiry_cash`. A record the walk skipped stays payable through `pay_open`, and parked funds through `claim_parked`, once the cause clears. A drain after the first settled sweep returns reserved subsidies to the market's incentive balance, and every settled sweep returns whatever incentive balance the market holds, so the rebalance after cleanup collects them. Incentives are outside NAV, so the order does not move the mark.
+The fill keeper owns settlement, in this order: `try_settle_v2` until the market is settled, then `settle_step` until it returns `phase_done()` or `MarketPayoutsCompleted` fires, then `cleanup`, then `rebalance_expiry_cash`. A record the walk skipped stays payable through `pay_open`, and parked funds through `claim_parked`, once the cause clears. A drain after the first settled sweep returns reserved subsidies to the market's incentive balance, and every settled sweep returns whatever incentive balance the market holds, so the rebalance after cleanup collects them. Incentives are outside NAV, so the order does not move the mark.
 
 `queue::cleanup(queue, market, desk, record_ids, clock)` deletes Refunded and Closed records of a settled market (`EMarketNotSettled` before settlement). Anyone can call it, and the caller keeps the storage rebate. It skips missing IDs, other statuses, and records that still hold a receipt or funds, parked funds included until `claim_parked` sends them, and emits `QueuedOrdersCleaned` only when it deleted a record. Open records are never deleted.
 
@@ -293,7 +298,7 @@ The fill keeper owns settlement, in this order: `try_settle` until the market is
 
 - **Trading pause and market mint pause.** They block queued mints only. Early sells, commit, resolve, refunds, and settlement keep running.
 - **Witness disabled.** `set_order_flow<OrderFlow>(false)` stops every admission, commit, and fill. Committed orders pass their deadlines and refund, and until then a `resolve` that reaches one aborts. Open records keep their positions, and the settlement drain and payout continue. Re-enabling is version-gated.
-- **Emergency freeze.** It halts admission, commit, fills, `try_settle`, and the desk's policy setters, so nothing fills. `refund`, `admin_refund`, `settle_step`, `pay_open`, `claim_parked`, and `cleanup` reach at most Predict's `release` and `try_pay_settled`, which check the version floor and not the freeze, so a waiting order is still refunded at its deadline (DX-20). A `resolve` that reaches a fill aborts while frozen. An Open record is paid only if its market settled before the freeze.
+- **Emergency freeze.** It halts admission, commit, fills, `try_settle_v2`, and the desk's policy setters, so nothing fills. `refund`, `admin_refund`, `settle_step`, `pay_open`, `claim_parked`, and `cleanup` reach at most Predict's `release` and `try_pay_settled`, which check the version floor and not the freeze, so a waiting order is still refunded at its deadline (DX-20). A `resolve` that reaches a fill aborts while frozen. An Open record is paid only if its market settled before the freeze.
 - **Flush snapshot stage.** Admission, fills, and refunds that keep an order fee abort inside the atomic snapshot transaction, as other trades do. Deadline and admin refunds still run there.
 - **USDC global pause.** Every address counts as denied, so fills refuse with reason 9, refunds park in their records, and payouts skip. `claim_parked` and `pay_open` complete them once the pause lifts (see [Denied recipients](#denied-recipients)).
 
@@ -309,7 +314,7 @@ The fill keeper owns settlement, in this order: `try_settle` until the market is
 | `stuck_threshold_ms` | 1,500 | 50 to 10,000, and at least one tick | When the stuck gate refuses new orders |
 | `gap_wait_ms` | 2,000 | 50 to 10,000 | How long past τ before a backup tick is allowed |
 | `pyth_price_buffer_ms` | 0 | 0 or exactly one tick of the policy channel | Switches the backup tick on or off |
-| `svi_max_age_ms` | 60,000 | 1 to 120,000 | The oldest SVI an admission accepts |
+| `svi_max_age_ms` | 60,000 | 1 to 120,000 | Unused since package version 6, when placement stopped reading Block Scholes. The setter still bounds it |
 | `mint_capacity` | 100 | 1 to 300 | Unfinished mints per market |
 | `sell_capacity` | 100 | 1 to 300 | Unfinished sells per market |
 | `per_account_cap` | 5 | 1 to 300, and at most the smaller capacity | Unfinished orders per account per market |
@@ -324,7 +329,15 @@ Times are milliseconds and USDC amounts are base units. Launch runs `no_trade_wi
 - `desk::set_limits` sets both capacities, the per-account cap, the minimum sell, and both settle batches. The per-account cap may not exceed the smaller capacity (`EInvalidLimits`).
 - `desk::set_order_fee` sets the order fee.
 
-Each field also has its own bound error in `delayed_execution_config`. The 300 capacity ceiling keeps a full commit of 300 mints and 300 sells inside Sui's per-transaction object limit. Predict bounds what admission accepts whatever the policy says: the 5-second deadline margin and the 120-second SVI-age ceiling.
+`BsTiming` picks a cohort's [Block Scholes inputs](#block-scholes-inputs). It lives in a dynamic field on the desk, read by `desk::bs_timing`, which returns the launch values until an admin sets it. `desk::set_bs_timing` takes Predict's `AdminCap`, checks the desk's version floor, refuses while Predict is frozen, checks each bound (`EInvalidBsTiming`), and emits `BsTimingUpdated`.
+
+| Field | Launch value | Bound | What it does |
+| --- | --- | --- | --- |
+| `value_lag_ms` | 500 | 500 to 10,000 | How far before τ the spot and forward slot ends |
+| `svi_lag_ms` | 1,000 | 1,000 to 10,000 | How far before τ the SVI slot ends |
+| `gap_wait_ms` | 1,000 | 50 to 10,000 | How long past τ before the next slot of either series is accepted |
+
+Each field also has its own bound error in `delayed_execution_config`. The 300 capacity ceiling keeps a full commit of 300 mints and 300 sells inside Sui's per-transaction object limit. Predict bounds what admission and commit accept whatever the policy says: the 5-second deadline margin, and the 120-second ceiling on a committed Block Scholes input's age.
 
 Waiting orders keep the τ, deadline, channel, and order fee from their placement. Commit reads the buffer and the gap wait when it runs, so a change to those also reaches cohorts already waiting. `desk::policy(desk)` returns the policy.
 
@@ -360,39 +373,43 @@ In package version 4, only an address on the flush-operator allowlist may call `
 | `queue::waiting_orders(queue, account_id)` | The account's unfinished orders in this market. Stale after expiry |
 | `queue::oldest_unfinished_tau_ms(queue)` | τ of the oldest cohort with an unfinished order |
 | `desk::policy(desk)`, `desk::version_watermark(desk)` | The policy, and the companion's version floor |
+| `desk::bs_timing(desk)` | The Block Scholes slot lags and gap wait commit uses |
+| `protocol_config::oracle_binding(config, propbook_underlying_id)` | The underlying's oracle binding, or `none`. Decode its BCS for the fields. `lazer_feed_id` reads the feed |
 | `expiry_market::order_flow_state(market)` | `(waiting_cash_need, payout_tree_node_count, min_entry_probability)` |
 | `expiry_market::receipt_info(receipt)` | A receipt's market, stage, account, order ID, Pyth feed, cash need, subsidy bound, and volatility snapshot |
 | `protocol_config::is_order_flow<W>`, `is_flush_operator`, `version_watermark` | Witness allowlisting, flush-operator membership, and the watermark that marks the cutover |
 
 A record holds a receipt and a balance, so it cannot be copied. `OrderView` carries the record's status, kind, request, account and receive address, timing, escrow terms, position, committed price, result, the receipt's stage (0 when the record holds none), and the funds it holds: escrow while unfinished, parked funds after. Owner, referrer, and builder fields live in the receipt and the events instead. `order_queue` exposes getters for every view field and for every status, kind, and reason code, so the SDK and indexer never hard-code numbers. The `VolSnapshot` getters are package-only in Predict, so SDK reads decode the snapshot's BCS.
 
-The mint quotes are priced like a queued fill at the clock: `quote_mint`, `quote_mint_for_account`, and `quote_mint_exact_cost_for_account` keep their signatures, use the configured subsidy rate capped by the market's incentive balance, and always report `penalty_fee` 0. They check only the pricer binding and `now < expiry` (`EInvalidOrderTiming`), and abort `EOrderFailsLimits` when the mint would be refused at the clock. They have no trade-window or Pyth-freshness gate. The exact-quantity form quotes `min_quantity` exactly, and the account forms cap at the account's balance and charge its builder fee.
-
-`quote_mint_with_builder_fee` and `quote_mint_exact_cost_with_builder_fee` quote an order that names a builder fee per contract, capped at `builder_fee_cap` as admission caps it. The plain account quotes charge no builder fee: a code attached to the account no longer affects fees.
+The mint quotes (`quote_mint`, `quote_mint_for_account`, `quote_mint_exact_cost_for_account`, `quote_mint_with_builder_fee`, `quote_mint_exact_cost_with_builder_fee`), `quote_close`, `current_nav`, and `live_order_value` take a live `Pricer`, which no transaction can build since package version 6. They keep their signatures and abort `EUseV2`. A client prices a prospective order off chain from the same signed data a commit would carry.
 
 ## Errors
 
 | Package and module | Error | Raised by |
 | --- | --- | --- |
 | Predict `expiry_market` | `EDelayedExecutionRequired` | The retired immediate mints and `redeem_live`, always |
-| Predict `expiry_market` | `EOrderFailsLimits` | An order the t₀ dry run would refund, a quote the clock would refuse |
+| Predict `expiry_market` | `EOrderFailsLimits` | A mint range that is invalid or off the admission grid, a zero budget, or a sell of zero, of a partial lot, or of more than the position |
+| Predict `expiry_market` | `EUseV2` | The version 5 admissions and `commit`, `try_settle`, `set_reference_tick`, `load_live_pricer`, and the quote and NAV reads that take a `Pricer` |
+| Predict `expiry_market` | `EWrongVol` | A `BsVol` off the market's binding or expiry, stamped after τ, or older than 120 seconds before it |
 | Predict `expiry_market` | `EInsufficientMarketCash` | A mint whose cash need exceeds spare cash |
-| Predict `expiry_market` | `EInvalidOrderTiming`, `EInvalidOrderTerms` | An admission outside Predict's timing bounds or SVI-age ceiling, a commit at or past the deadline, a quote at or past expiry |
+| Predict `expiry_market` | `EInvalidOrderTiming`, `EInvalidOrderTerms` | An admission outside Predict's timing bounds, a commit at or past the deadline, an unknown mint kind |
 | Predict `expiry_market` | `EWrongMarket`, `EWrongStage`, `ENotRecordOwner`, `EEscrowMismatch` | A receipt from another market, at the wrong stage, sold by another account, or presented with the wrong escrow or subsidy |
-| Predict `expiry_market` | `EWrongPrice` | A `LazerPrice` that does not match the receipt |
+| Predict `expiry_market` | `EWrongPrice` | A `LazerPrice` that does not match the receipt, or a receipt whose feed is no longer the binding's |
 | Predict `expiry_market` | `EMintCostCapRequired` (existing) | A mint admission with a zero budget |
 | Predict `protocol_config` | `ECutoverNotReached`, `EOrderFlowNotAllowed` | Admission before the cutover, an order-flow call from a witness not allowlisted |
 | Predict `protocol_config` | `EEwmaRetired` | The retired EWMA setters |
 | Predict `protocol_config` | `EFlushOperatorAlreadyAdded`, `EFlushOperatorNotFound`, `ENotFlushOperator` | The flush-operator allowlist |
-| Predict `pricing` | `EPythForwardRequired` | Admission while `use_pyth_spot_for_forward` is off |
+| Predict `protocol_config` | `EOracleBindingMissing` | An admission, commit, settlement, tick, flush, or market creation for an underlying with no oracle binding |
 | `deepbook_predict_orders` `queue` | `EWrongDesk`, `EWrongMarket` | A queue used with another desk or market, or queue creation with another desk's registry |
 | `deepbook_predict_orders` `queue` | `EQueueStuck`, `EQueueFull`, `EAccountOrderCap`, `EPastCutoff` | Placement refused by the [queue limits](#queue-limits) or the cutoff |
 | `deepbook_predict_orders` `queue` | `EMintCostCapRequired`, `EFeeNotCovered`, `EBelowMinSell` | A zero or unlimited `max_cost`, a balance that cannot pay the order fee (mints need more than the fee), a sell or remainder below `min_sell_quantity` |
 | `deepbook_predict_orders` `queue` | `ERecordNotOpen`, `ENotRecordOwner` | Selling or quoting a record that is not Open, or selling another account's record |
 | `deepbook_predict_orders` `queue` | `EMarketNotSettled`, `EMarketNotExpired` | `cleanup` before settlement, `settle_step` before expiry |
+| `deepbook_predict_orders` `queue` | `EUseV2` | The version 2 `commit` |
 | `deepbook_predict_orders` `desk` | `EPackageVersionDisabled`, `EVersionWatermarkNotAdvanced`, `EProtocolFrozen` | The desk floor, a bump that does not advance it, a policy change while Predict is frozen |
 | `deepbook_predict_orders` `delayed_execution_config` | `EUnsupportedPythChannel`, `EInvalidTiming`, `EInvalidLimits`, and one bound error per field | The policy setters |
-| `deepbook_predict_math` `lazer_price` | `EFeedMissing`, `EPropertyNotRequested`, `EGenerationAfterEnvelope` | `commit` given an update the decode cannot read |
+| `deepbook_predict_orders` `delayed_execution_config` | `EInvalidBsTiming` | `set_bs_timing` outside its bounds |
+| `deepbook_predict_math` `lazer_price` | `EFeedMissing`, `EPropertyNotRequested`, `EGenerationAfterEnvelope` | `commit_v2` given an update the decode cannot read |
 
 The queue's own checks run before Predict's gates, so when several apply, the companion's error fires first. A settled market is not an error for commit or resolve: they return without change.
 
@@ -404,8 +421,8 @@ The queue's own checks run before Predict's gates, so when several apply, the co
 | `LiveOrderRedeemed` | Predict `order_events` | A sell fill, unchanged, with `penalty_fee` 0 |
 | `OrderFlowUpdated` | Predict `config_events` | `set_order_flow`, with the witness type name and the new state |
 | `FlushOperatorUpdated` | Predict `config_events` | `add_flush_operator` and `remove_flush_operator` |
-| `OrderEnqueued` | `deepbook_predict_orders` `queue_events` | Each `enqueue_*`, with the request, timing, volatility snapshot, escrow terms, the source record of a sell, and the market's cash, required cash, and waiting cash need after the call |
-| `CohortCommitted` | `deepbook_predict_orders` `queue_events` | `commit`, once per cohort, with the normalized spot, the tick, the generation time, the feed, the channel, and the sender |
+| `OrderEnqueued` | `deepbook_predict_orders` `queue_events` | Each `enqueue_*`, with the request, timing, volatility snapshot (from package version 6, only its Lazer feed, and a mint's subsidy bound is 0 until commit), escrow terms, the source record of a sell, and the market's cash, required cash, and waiting cash need after the call |
+| `CohortCommitted` | `deepbook_predict_orders` `queue_events` | `commit_v2`, once per cohort, with the normalized spot, the tick, the generation time, the feed, the channel, and the sender |
 | `QueuedOrderFilled` | `deepbook_predict_orders` `queue_events` | `resolve`, next to Predict's `OrderMinted` or `LiveOrderRedeemed` |
 | `QueuedOrderRefunded` | `deepbook_predict_orders` `queue_events` | Every refund, with the reason, what was returned, and whether a position went back to Open |
 | `QueuedOrdersCleaned` | `deepbook_predict_orders` `queue_events` | `cleanup`, when it deleted at least one record |
@@ -415,5 +432,7 @@ The queue's own checks run before Predict's gates, so when several apply, the co
 | `RecordFundsClaimed` | `deepbook_predict_orders` `queue_events` | `claim_parked`, when it sends a record's parked funds, with the same fields |
 | `MarketPayoutsCompleted` | `deepbook_predict_orders` `queue_events` | The `settle_step` call that finishes the payout walk, once per queue |
 | `DelayedExecutionPolicyUpdated` | `deepbook_predict_orders` `queue_events` | Every policy setter, with the complete policy. The publish that creates the desk emits none |
+| `BsTimingUpdated` | `deepbook_predict_orders` `queue_events` | `set_bs_timing`, with the desk and the complete timing |
+| `OracleBindingUpdated` | Predict `config_events` | `set_oracle_binding`, with the underlying and the complete binding |
 
 Every queue event comes from the companion package, so an indexer subscribes to both packages. `OrderMinted` and `LiveOrderRedeemed` keep their Predict type and layout, but a fill transaction calls the companion, so filters keyed on the called package must match on the event type instead. `OrderEnqueued`, `QueuedOrderFilled`, and `QueuedOrderRefunded` carry the market's cash, required cash, and waiting cash need after the call, so a keeper can track spare cash from events alone (DX-23). `CohortCommitted`, `QueuedOrderFilled`, and `QueuedOrderRefunded` carry the transaction sender, so monitoring sees fills by third parties.
