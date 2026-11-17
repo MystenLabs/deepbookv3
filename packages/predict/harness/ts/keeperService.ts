@@ -175,12 +175,14 @@ function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
       const expiries = await Promise.all(marketIds.map(expiryOf));
       const snapshot = readLandedSnapshot(INSTANCE_DIR, expiries);
       if (!snapshot || snapshot.spot1e9 === 0n) throw new Error("no landed oracle snapshot to mark the flush");
+      const instantMs = await flushInstantMs();
+      const at = Number(instantMs);
       const markets: FlushMarket[] = marketIds.map((id, i) => ({
         id,
         expiryMs: BigInt(expiries[i]),
-        oracle: signedOracleFor(snapshot, expiries[i]),
+        oracle: signedOracleFor(snapshot, expiries[i], at, at),
       }));
-      const mark = { instantMs: await flushInstantMs(), spot1e9: snapshot.spot1e9 };
+      const mark = { instantMs, spot1e9: snapshot.spot1e9 };
       return execute(
         keeperFlushTxs({ markets, mark, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
         "flush",

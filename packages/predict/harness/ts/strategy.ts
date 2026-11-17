@@ -27,6 +27,8 @@ import {
   type OracleFeedIds,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  bsSviSlotMs,
+  bsValueSlotMs,
   cleanoutAccountTx,
   commitAndResolveTx,
   enqueueMintTx,
@@ -216,7 +218,14 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     const waitMs = Number(order.tauMs) + FILL_DELAY_MS - Date.now();
     if (waitMs > 0) await sleep(waitMs);
     const landed = readLandedSnapshot(deps.instanceDir, [market.expiryMs]);
-    const oracle = landed ? signedOracleFor(landed, market.expiryMs) : null;
+    const oracle = landed
+      ? signedOracleFor(
+          landed,
+          market.expiryMs,
+          Number(bsValueSlotMs(order.tauMs)),
+          Number(bsSviSlotMs(order.tauMs)),
+        )
+      : null;
     if (!landed || !oracle || landed.spot1e9 === 0n) {
       throw new Error(`no updater values to commit for record ${order.recordId}`);
     }
