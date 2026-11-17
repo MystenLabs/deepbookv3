@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
+import { readLandedSnapshot, signedOracleFor } from "./signedOracle.js";
 import { pricingEnvFromSnapshot, type Snap } from "./strategyPricing.js";
 import { type QueueOutcome, enqueuedOrder, heldAfterSell, recordOutcome } from "./queueEvents.js";
 import { abortInfo, appendTrace, gasBreakdownOf, gasOf } from "./trace.js";
@@ -26,6 +27,8 @@ import {
   type OracleFeedIds,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  bsSviSlotMs,
+  bsValueSlotMs,
   cleanoutAccountTx,
   commitAndResolveTx,
   enqueueMintTx,
@@ -206,21 +209,32 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
   };
 
   // Enqueue, wait for the order's τ, then commit the updater's latest spot as the signed price
-  // for τ and resolve, in one PTB. An enqueue refusal throws. A failed fill PTB also throws; the
-  // order then waits for another trader's commit or is refunded at its deadline by a later
-  // resolve.
+  // for τ, with the updater's latest Block Scholes values for the market signed at τ's slots, and
+  // resolve, in one PTB. An enqueue refusal throws. A failed fill PTB also throws; the order then
+  // waits for another trader's commit or is refunded at its deadline by a later resolve.
   const placeAndFill = async (market: Mkt, enqueueTx: any, label: string): Promise<QueuedFill> => {
     const enqueue = await deps.submit(enqueueTx, label);
     const order = enqueuedOrder(enqueue.events);
     const waitMs = Number(order.tauMs) + FILL_DELAY_MS - Date.now();
     if (waitMs > 0) await sleep(waitMs);
-    const spot = snapshot()?.spot1e9;
-    if (!spot) throw new Error(`no updater spot to commit for record ${order.recordId}`);
+    const landed = readLandedSnapshot(deps.instanceDir, [market.expiryMs]);
+    const oracle = landed
+      ? signedOracleFor(
+          landed,
+          market.expiryMs,
+          Number(bsValueSlotMs(order.tauMs)),
+          Number(bsSviSlotMs(order.tauMs)),
+        )
+      : null;
+    if (!landed || !oracle || landed.spot1e9 === 0n) {
+      throw new Error(`no updater values to commit for record ${order.recordId}`);
+    }
     const fill = await deps.submit(
       commitAndResolveTx({
         expiryMarketId: market.id,
+        expiryMs: BigInt(market.expiryMs),
         protocolConfigId: PROTOCOL_CONFIG_ID,
-        prices: [{ tauMs: order.tauMs, channel: order.channel, spot1e9: BigInt(spot) }],
+        prices: [{ tauMs: order.tauMs, channel: order.channel, spot1e9: landed.spot1e9, oracle }],
         maxOrders: RESOLVE_BATCH,
       }),
       `${label}-fill`,

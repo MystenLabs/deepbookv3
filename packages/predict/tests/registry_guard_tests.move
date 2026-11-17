@@ -25,7 +25,7 @@ use deepbook_predict::{
     market_manager,
     oracle_fixture,
     plp::{Self, PoolVault},
-    protocol_config::ProtocolConfig,
+    protocol_config::{Self, ProtocolConfig},
     registry::{Self, Registry},
     strike_exposure_config,
     test_constants,
@@ -321,13 +321,15 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
         test_constants::default_cadence_window_size(),
     );
 
-    let expiry_id = reg.create_and_share_expiry_market(
+    let expiry_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_five_minute!(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );
@@ -425,13 +427,15 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
         test_constants::default_cadence_window_size(),
     );
     daily_clock.set_for_testing(constants::one_week_ms!() - constants::one_day_ms!());
-    let daily_id = reg.create_and_share_expiry_market(
+    let daily_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_day!(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &daily_clock,
         scenario.ctx(),
     );
@@ -449,13 +453,15 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
     );
     let mut weekly_clock = clock::create_for_testing(scenario.ctx());
     weekly_clock.set_for_testing(START_OF_TIME_MS);
-    let weekly_id = reg.create_and_share_expiry_market(
+    let weekly_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_week!(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &weekly_clock,
         scenario.ctx(),
     );
@@ -650,14 +656,15 @@ fun create_expiry_market_at_expected_expiry_creates() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // At 0:00 the next 1m slot is 1:00.
-    let market_id = reg.create_and_share_expiry_market_at(
+    let market_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
-        ONE_MINUTE_MS,
+        option::some(ONE_MINUTE_MS),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );
@@ -680,7 +687,7 @@ fun create_expiry_market_at_other_expiry_aborts() {
         mut scenario,
         mut reg,
         mut vault,
-        oracle_registry,
+        _oracle_registry,
         config,
         lifecycle_cap,
         _admin_cap,
@@ -688,14 +695,15 @@ fun create_expiry_market_at_other_expiry_aborts() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // The contract's next 1m slot is 1:00, not the 2:00 the caller expects.
-    reg.create_and_share_expiry_market_at(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
-        TWO_MINUTES_MS,
+        option::some(TWO_MINUTES_MS),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );
@@ -716,10 +724,9 @@ fun create_expiry_market_with_band_narrows_only_the_new_market() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // At 0:00 the next 1m slots are 1:00 and 2:00: the first banded, the second not.
-    let banded_id = reg.create_and_share_expiry_market_with_band(
+    let banded_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -729,14 +736,15 @@ fun create_expiry_market_with_band_narrows_only_the_new_market() {
         &clock,
         scenario.ctx(),
     );
-    let plain_id = reg.create_and_share_expiry_market_at(
+    let plain_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
-        TWO_MINUTES_MS,
+        option::some(TWO_MINUTES_MS),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );
@@ -788,10 +796,9 @@ fun create_expiry_market_with_band_never_loosens_the_template() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // A floor below the template's 1c: the market keeps 1c and the 40c cap.
-    reg.create_and_share_expiry_market_with_band(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -802,10 +809,9 @@ fun create_expiry_market_with_band_never_loosens_the_template() {
         scenario.ctx(),
     );
     // A cap above the template's 99c: the market keeps the 25c floor and 99c.
-    reg.create_and_share_expiry_market_with_band(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -841,7 +847,7 @@ fun create_expiry_market_with_band_outside_the_template_aborts() {
         mut scenario,
         mut reg,
         mut vault,
-        oracle_registry,
+        _oracle_registry,
         config,
         lifecycle_cap,
         _admin_cap,
@@ -849,10 +855,9 @@ fun create_expiry_market_with_band_outside_the_template_aborts() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // [99.5c, 100c] does not overlap the template's [1c, 99c].
-    reg.create_and_share_expiry_market_with_band(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -871,7 +876,7 @@ fun create_expiry_market_with_band_other_expiry_aborts() {
         mut scenario,
         mut reg,
         mut vault,
-        oracle_registry,
+        _oracle_registry,
         config,
         lifecycle_cap,
         _admin_cap,
@@ -879,10 +884,9 @@ fun create_expiry_market_with_band_other_expiry_aborts() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // The contract's next 1m slot is 1:00, not the 2:00 the caller expects.
-    reg.create_and_share_expiry_market_with_band(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -901,7 +905,7 @@ fun create_expiry_market_with_band_revoked_cap_aborts() {
         mut scenario,
         mut reg,
         mut vault,
-        oracle_registry,
+        _oracle_registry,
         config,
         lifecycle_cap,
         admin_cap,
@@ -909,10 +913,9 @@ fun create_expiry_market_with_band_revoked_cap_aborts() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     reg.revoke_lifecycle_cap(&admin_cap, lifecycle_cap.id());
-    reg.create_and_share_expiry_market_with_band(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -931,7 +934,7 @@ fun create_expiry_market_at_zero_expiry_aborts() {
         mut scenario,
         mut reg,
         mut vault,
-        oracle_registry,
+        _oracle_registry,
         config,
         lifecycle_cap,
         _admin_cap,
@@ -939,14 +942,15 @@ fun create_expiry_market_at_zero_expiry_aborts() {
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // No slot expires at 0, so a zero expected expiry is a stale plan, not "any expiry".
-    reg.create_and_share_expiry_market_at(
+    reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
-        START_OF_TIME_MS,
+        option::some(START_OF_TIME_MS),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );
@@ -967,10 +971,9 @@ fun create_expiry_market_with_band_without_expected_expiry_creates_the_next_slot
     ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
 
     // Unset, like `create_and_share_expiry_market`: at 0:00 the next 1m slot is 1:00.
-    let market_id = reg.create_and_share_expiry_market_with_band(
+    let market_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
@@ -1047,86 +1050,136 @@ fun create_expiry_market_with_unregistered_underlying_aborts() {
     clock.set_for_testing(test_constants::now_ms());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
     let mut vault = scenario.take_shared<PoolVault>();
-    let oracle_registry = scenario.take_shared<OracleRegistry>();
+    let _oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
-    let _expiry_id = reg.create_and_share_expiry_market(
+    let _expiry_id = reg.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         &lifecycle_cap,
         UNREGISTERED_UNDERLYING_ID,
         test_constants::default_cadence_id(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_manager::EPythFeedNotBoundToUnderlying)]
-fun create_expiry_market_with_unbound_pyth_feed_aborts() {
-    // Pyth source approved + feeds created, but nothing is bound to the underlying,
-    // so the Pyth canonical-binding check (after the approval gate) fails first.
-    let (
-        mut scenario,
-        registry_id,
-        admin_cap,
-        _propbook_admin_cap,
-        _pyth_id,
-    ) = setup_registered_feeds();
-
-    scenario.next_tx(test_constants::admin());
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(test_constants::now_ms());
-    let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
-    let mut vault = scenario.take_shared<PoolVault>();
-    let oracle_registry = scenario.take_shared<OracleRegistry>();
-    let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
-    let _expiry_id = reg.create_and_share_expiry_market(
-        &mut vault,
-        &config,
-        &oracle_registry,
-        &lifecycle_cap,
-        test_constants::propbook_underlying_id(),
-        test_constants::default_cadence_id(),
-        &clock,
-        scenario.ctx(),
-    );
-    abort 999
-}
-
-/// An underlying with a bound Pyth feed but no Block Scholes store pair has nowhere to price from,
-/// so market creation must refuse it. There is no "registered but unbound" store state to test
-/// separately: a pair is created and bound in one step.
-#[test, expected_failure(abort_code = market_manager::EBlockScholesStoresNotBoundToUnderlying)]
-fun create_expiry_market_without_block_scholes_stores_aborts() {
+/// Predict owns the oracle binding: an underlying registered here with no binding on
+/// `ProtocolConfig` has nothing to price or settle from, so creation refuses it, whatever
+/// Propbook holds for it.
+#[test, expected_failure(abort_code = protocol_config::EOracleBindingMissing)]
+fun create_expiry_market_without_oracle_binding_aborts() {
     let (
         mut scenario,
         registry_id,
         admin_cap,
         propbook_admin_cap,
         pyth_id,
-    ) = setup_registered_feeds();
+    ) = setup_registered_feeds_with(false);
 
+    // Propbook's feeds are bound, but Predict's binding is never set.
     scenario.next_tx(test_constants::admin());
-    bind_only_pyth(&scenario, &propbook_admin_cap, pyth_id);
+    bind_pyth_spot_and_surface(&mut scenario, &propbook_admin_cap, pyth_id);
 
     scenario.next_tx(test_constants::admin());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
     let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
     let mut vault = scenario.take_shared<PoolVault>();
-    let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
-    let _expiry_id = reg.create_and_share_expiry_market(
+    let _expiry_id = reg.create_and_share_expiry_market_v2(
+        &mut vault,
+        &config,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EUseV2)]
+fun create_and_share_expiry_market_is_retired() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+    reg.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        test_constants::default_cadence_id(),
+        market_manager::cadence_one_minute!(),
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EUseV2)]
+fun create_and_share_expiry_market_at_is_retired() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+    reg.create_and_share_expiry_market_at(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        ONE_MINUTE_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = registry::EUseV2)]
+fun create_and_share_expiry_market_with_band_is_retired() {
+    let (
+        mut scenario,
+        mut reg,
+        mut vault,
+        oracle_registry,
+        config,
+        lifecycle_cap,
+        _admin_cap,
+        clock,
+    ) = setup_bound_creation_context(WINDOW_SIZE_THREE);
+    reg.create_and_share_expiry_market_with_band(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        option::none(),
+        BAND_MIN_PROBABILITY,
+        BAND_MAX_PROBABILITY,
         &clock,
         scenario.ctx(),
     );
@@ -1137,7 +1190,14 @@ fun create_expiry_market_without_block_scholes_stores_aborts() {
 /// the base real propbook feeds (catalog-only, NOT yet bound to an underlying).
 /// Returns positioned for the caller to bind (or not) then create the market.
 fun setup_registered_feeds(): (Scenario, ID, AdminCap, RegistryAdminCap, ID) {
-    let (mut scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    setup_registered_feeds_with(true)
+}
+
+/// `setup_registered_feeds`, setting Predict's oracle binding for the underlying only
+/// when `bind` is set.
+fun setup_registered_feeds_with(bind: bool): (Scenario, ID, AdminCap, RegistryAdminCap, ID) {
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    if (bind) test_helpers::set_oracle_binding(&mut config, &admin_cap, 9, scenario.ctx());
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
     reg.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
@@ -1224,18 +1284,20 @@ fun create_one_minute_market(
     reg: &mut Registry,
     vault: &mut PoolVault,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     lifecycle_cap: &MarketLifecycleCap,
     clock: &Clock,
     scenario: &mut Scenario,
 ): ID {
-    reg.create_and_share_expiry_market(
+    reg.create_and_share_expiry_market_v2(
         vault,
         config,
-        oracle_registry,
         lifecycle_cap,
         test_constants::propbook_underlying_id(),
         market_manager::cadence_one_minute!(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         clock,
         scenario.ctx(),
     )
@@ -1245,19 +1307,21 @@ fun create_market(
     reg: &mut Registry,
     vault: &mut PoolVault,
     config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
+    _oracle_registry: &OracleRegistry,
     lifecycle_cap: &MarketLifecycleCap,
     cadence_id: u8,
     clock: &Clock,
     scenario: &mut Scenario,
 ): ID {
-    reg.create_and_share_expiry_market(
+    reg.create_and_share_expiry_market_v2(
         vault,
         config,
-        oracle_registry,
         lifecycle_cap,
         test_constants::propbook_underlying_id(),
         cadence_id,
+        option::none(),
+        0,
+        std::u64::max_value!(),
         clock,
         scenario.ctx(),
     )
@@ -1302,19 +1366,6 @@ fun assert_market_id(reg: &Registry, expiry: u64, expected_id: ID) {
 
 /// Bind only the Pyth feed to the canonical underlying, leaving the BS feeds
 /// unbound. Operates within the current (admin) transaction.
-fun bind_only_pyth(scenario: &Scenario, admin_cap: &RegistryAdminCap, pyth_id: ID) {
-    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    propbook_registry::bind_pyth_to_underlying(
-        &mut oracle_registry,
-        admin_cap,
-        &mut pyth,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(pyth);
-    return_shared(oracle_registry);
-}
-
 /// Bind all permanent feeds to the canonical underlying.
 fun bind_pyth_spot_and_surface(scenario: &mut Scenario, admin_cap: &RegistryAdminCap, pyth_id: ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();

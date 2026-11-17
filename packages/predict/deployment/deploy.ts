@@ -227,7 +227,38 @@ const ASSET = {
     pythLazerFeedId: 1,
     blockScholesSourceId: 1,
     blockScholesBaseAsset: "BTC",
+    // The signed data Predict's oracle binding names for the underlying: the Lazer feed above on
+    // the 200 ms channel the companion's launch policy places orders on, and the Block Scholes
+    // SVI model and decimals a fresh Propbook SVI store starts at.
+    lazerChannel: 3,
+    blockScholesSviModel: "SVI",
+    blockScholesSviDecimals: 9,
 } as const;
+
+// The companion's Block Scholes slot timing (`desk::set_bs_timing`). `null` keeps the contract
+// defaults (value lag 500 ms, SVI lag 1,000 ms, gap wait 1,000 ms) and plans no transaction.
+export interface BsTimingSpec {
+    valueLagMs: bigint;
+    sviLagMs: bigint;
+    gapWaitMs: bigint;
+}
+export const BS_TIMING: BsTimingSpec | null = null;
+
+// The version 6 oracle binding the deployment sets for the underlying, in read-back form.
+export interface OracleBindingRecord {
+    lazerFeedId: number;
+    lazerChannel: number;
+    blockScholesBaseAsset: string;
+    sviModel: string;
+    sviDecimals: number;
+}
+export const EXPECTED_ORACLE_BINDING: OracleBindingRecord = {
+    lazerFeedId: ASSET.pythLazerFeedId,
+    lazerChannel: ASSET.lazerChannel,
+    blockScholesBaseAsset: ASSET.blockScholesBaseAsset,
+    sviModel: ASSET.blockScholesSviModel,
+    sviDecimals: ASSET.blockScholesSviDecimals,
+};
 
 interface CadenceSpec {
     id: number;
@@ -311,13 +342,13 @@ export const CADENCES: readonly CadenceSpec[] = [
 ] as const;
 
 // A fresh Sessions publish starts its watermark at `session_config::current_version!()`.
-export const EXPECTED_SESSIONS_VERSION_WATERMARK = "4";
+export const EXPECTED_SESSIONS_VERSION_WATERMARK = "5";
 
 // The OrderDesk as `desk`'s `init` creates it: the launch policy
 // (`delayed_execution_config::new`) and the floor at the companion's `current_version!()`.
 // The deployment sets no policy, so the audit requires exactly these values.
 export const EXPECTED_ORDER_DESK: OrderDeskRecord = {
-    versionWatermark: "2",
+    versionWatermark: "3",
     policy: {
         delayMs: "800",
         stallTimeoutMs: "5000",
@@ -363,7 +394,7 @@ export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     expiryFeeMaxMultiplier: "1000000000",
     // A fresh publish starts the watermark at `constants::current_version!()`,
     // which is past the delayed-execution cutover: only queued trading is open.
-    versionWatermark: "5",
+    versionWatermark: "6",
     tradingPaused: false,
     frozen: false,
     valuationInProgress: false,
@@ -691,6 +722,8 @@ const FIXED_TRANSACTION_STEPS = [
     "create_block_scholes_stores",
     "bind_pyth_to_underlying",
     "register_predict_underlying",
+    "set_oracle_binding",
+    "set_bs_timing",
     "set_cadence_configs",
     "enable_order_flow",
     "add_deployer_flush_operator",
@@ -706,6 +739,7 @@ export function plannedTransactionSteps(): string[] {
                 ["finalize_usdc_currency_registration", "mint_deployer_usdc"].includes(step)
             )
                 return false;
+            if (step === "set_bs_timing" && !BS_TIMING) return false;
             // Mainnet's lock-only bootstrap runs no flush, so neither the deployer
             // account nor its flush-operator grant exists there.
             return (
@@ -3979,6 +4013,139 @@ async function ensureUnderlyingRegistered(runtime: Runtime): Promise<void> {
     writeState(result);
 }
 
+// BCS of `Option<OracleBinding>`: a vector of at most one `{ u32, u8, String, String, u8 }`.
+export function parseOracleBinding(bytes: number[]): OracleBindingRecord | null {
+    if (bytes.length === 1 && bytes[0] === 0) return null;
+    if (bytes[0] !== 1) throw new Error("invalid Option<OracleBinding> return");
+    let at = 1;
+    const lazerFeedId = parseU32(bytes.slice(at, at + 4));
+    at += 4;
+    const lazerChannel = bytes[at++];
+    const text = (): string => {
+        const length = readUleb(bytes, at);
+        const end = length.next + length.value;
+        if (end > bytes.length) throw new Error("invalid OracleBinding string");
+        const value = new TextDecoder("utf-8", { fatal: true }).decode(
+            Uint8Array.from(bytes.slice(length.next, end)),
+        );
+        at = end;
+        return value;
+    };
+    const blockScholesBaseAsset = text();
+    const sviModel = text();
+    const sviDecimals = bytes[at++];
+    if (sviDecimals === undefined || at !== bytes.length) {
+        throw new Error("invalid OracleBinding return");
+    }
+    return { lazerFeedId, lazerChannel, blockScholesBaseAsset, sviModel, sviDecimals };
+}
+
+export function oracleBindingMatches(
+    actual: OracleBindingRecord | null,
+    expected: OracleBindingRecord = EXPECTED_ORACLE_BINDING,
+): boolean {
+    return actual !== null && JSON.stringify(actual) === JSON.stringify(expected);
+}
+
+async function readOracleBinding(runtime: Runtime): Promise<OracleBindingRecord | null> {
+    const result = runtime.result;
+    const tx = new Transaction();
+    call(tx, target(result, "predict", "protocol_config", "oracle_binding"), [
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+        tx.pure.u32(ASSET.propbookUnderlyingId),
+    ]);
+    return parseOracleBinding(returnBytes(await devInspect(runtime, "read_oracle_binding", tx)));
+}
+
+export function oracleBindingTransaction(result: DeploymentResult): Transaction {
+    const tx = new Transaction();
+    call(tx, target(result, "predict", "protocol_config", "set_oracle_binding"), [
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+        tx.object(capId(result, "predict", "admin::AdminCap")),
+        tx.pure.u32(ASSET.propbookUnderlyingId),
+        tx.pure.u32(EXPECTED_ORACLE_BINDING.lazerFeedId),
+        tx.pure.u8(EXPECTED_ORACLE_BINDING.lazerChannel),
+        tx.pure.string(EXPECTED_ORACLE_BINDING.blockScholesBaseAsset),
+        tx.pure.string(EXPECTED_ORACLE_BINDING.sviModel),
+        tx.pure.u8(EXPECTED_ORACLE_BINDING.sviDecimals),
+        tx.object(CLOCK_ID),
+    ]);
+    return tx;
+}
+
+const oracleBindingOperations = { readOracleBinding, executeTransaction };
+
+// Version 6 markets price, settle, and value from the signed data this binding names, and
+// creation refuses an underlying without one. Set only when the chain does not already hold
+// exactly the expected binding, and read it back either way.
+export async function ensureOracleBinding(
+    runtime: Runtime,
+    ops = oracleBindingOperations,
+): Promise<void> {
+    if (!oracleBindingMatches(await ops.readOracleBinding(runtime))) {
+        await ops.executeTransaction(
+            runtime,
+            "set_oracle_binding",
+            oracleBindingTransaction(runtime.result),
+        );
+    }
+    const binding = await ops.readOracleBinding(runtime);
+    if (!oracleBindingMatches(binding)) {
+        throw new Error(`oracle binding did not read back as expected: ${JSON.stringify(binding)}`);
+    }
+}
+
+async function readBsTiming(runtime: Runtime): Promise<BsTimingSpec> {
+    const result = runtime.result;
+    const tx = new Transaction();
+    call(tx, target(result, "predict_orders", "desk", "bs_timing"), [
+        tx.object(sharedId(result, "predict_orders", "desk::OrderDesk")),
+    ]);
+    const bytes = returnBytes(await devInspect(runtime, "read_bs_timing", tx));
+    if (bytes.length !== 24) throw new Error(`invalid BsTiming return (${bytes.length} bytes)`);
+    return {
+        valueLagMs: parseU64(bytes.slice(0, 8)),
+        sviLagMs: parseU64(bytes.slice(8, 16)),
+        gapWaitMs: parseU64(bytes.slice(16, 24)),
+    };
+}
+
+function bsTimingMatches(actual: BsTimingSpec, expected: BsTimingSpec): boolean {
+    return (
+        actual.valueLagMs === expected.valueLagMs &&
+        actual.sviLagMs === expected.sviLagMs &&
+        actual.gapWaitMs === expected.gapWaitMs
+    );
+}
+
+const bsTimingOperations = { readBsTiming, executeTransaction };
+
+// Optional: with `BS_TIMING` unset the desk keeps the contract defaults and nothing is sent.
+export async function ensureBsTiming(
+    runtime: Runtime,
+    timing: BsTimingSpec | null = BS_TIMING,
+    ops = bsTimingOperations,
+): Promise<void> {
+    if (!timing) return;
+    const result = runtime.result;
+    if (!bsTimingMatches(await ops.readBsTiming(runtime), timing)) {
+        const tx = new Transaction();
+        call(tx, target(result, "predict_orders", "desk", "set_bs_timing"), [
+            tx.object(sharedId(result, "predict_orders", "desk::OrderDesk")),
+            tx.object(capId(result, "predict", "admin::AdminCap")),
+            tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+            tx.pure.u64(timing.valueLagMs),
+            tx.pure.u64(timing.sviLagMs),
+            tx.pure.u64(timing.gapWaitMs),
+            tx.object(CLOCK_ID),
+        ]);
+        await ops.executeTransaction(runtime, "set_bs_timing", tx);
+    }
+    if (!bsTimingMatches(await ops.readBsTiming(runtime), timing)) {
+        throw new Error("Block Scholes timing did not read back as configured");
+    }
+}
+
 async function readCadence(runtime: Runtime, spec: CadenceSpec): Promise<CadenceRecord> {
     const result = runtime.result;
     const registry = sharedId(result, "predict", "registry::Registry");
@@ -4685,20 +4852,27 @@ function isCadenceWindowFull(error: unknown): boolean {
     );
 }
 
-function marketCreationTransaction(
+// One whole probability in Predict's 1e9 fixed point: an upper entry bound no template exceeds.
+const FULL_ENTRY_BAND_MAX = 1_000_000_000n;
+
+export function marketCreationTransaction(
     result: DeploymentResult,
     lifecycleCapId: string,
     cadence: CadenceSpec,
 ): Transaction {
     const tx = new Transaction();
-    call(tx, target(result, "predict", "registry", "create_and_share_expiry_market"), [
+    // Version 6 creation reads Predict's oracle binding, not Propbook. No expected expiry, and
+    // the widest entry band, so the market takes the template band unchanged.
+    call(tx, target(result, "predict", "registry", "create_and_share_expiry_market_v2"), [
         tx.object(sharedId(result, "predict", "registry::Registry")),
         tx.object(sharedId(result, "predict", "plp::PoolVault")),
         tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
-        tx.object(sharedId(result, "propbook", "registry::OracleRegistry")),
         tx.object(lifecycleCapId),
         tx.pure.u32(ASSET.propbookUnderlyingId),
         tx.pure.u8(cadence.id),
+        tx.pure.option("u64", null),
+        tx.pure.u64(0n),
+        tx.pure.u64(FULL_ENTRY_BAND_MAX),
         tx.object(CLOCK_ID),
     ]);
     return tx;
@@ -4925,6 +5099,9 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     const external = await verifyExternalDependencies(runtime);
     if (!result.wiring.lifecycleCap.id) throw new Error("lifecycle cap is missing");
     if (!result.wiring.valuationCap.id) throw new Error("pool valuation cap is missing");
+    if (!oracleBindingMatches(await readOracleBinding(runtime))) {
+        throw new Error("the underlying's oracle binding is missing or unexpected");
+    }
     await verifyOperationalCapAllowlists(runtime);
     const packages: Record<string, ObjectEvidence> = {};
     const sharedObjects: Record<string, Record<string, ObjectEvidence>> = {};
@@ -5379,6 +5556,8 @@ const deploymentOperations = {
     ensureValuationCap,
     ensureOracleObjects,
     ensureUnderlyingRegistered,
+    ensureOracleBinding,
+    ensureBsTiming,
     ensureCadences,
     ensureOrderFlow,
     ensureAccountWrapper,
@@ -5581,6 +5760,8 @@ export async function executeDeployment(
         const valuationCap = await ops.ensureValuationCap(runtime);
         await ops.ensureOracleObjects(runtime);
         await ops.ensureUnderlyingRegistered(runtime);
+        await ops.ensureOracleBinding(runtime);
+        await ops.ensureBsTiming(runtime);
         await ops.ensureCadences(runtime);
         await ops.ensureOrderFlow(runtime);
         const wrapper = NETWORK === "testnet" ? await ops.ensureAccountWrapper(runtime) : "";

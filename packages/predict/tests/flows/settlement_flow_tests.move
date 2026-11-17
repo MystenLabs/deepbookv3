@@ -26,7 +26,6 @@ use std::{bcs, unit_test::assert_eq};
 use sui::{event, test_scenario::return_shared};
 
 const SECOND_SOURCE_ID: u32 = 2;
-const FOREIGN_UNDERLYING_ID: u32 = 9_002;
 const IDLE_SEED: u64 = 1_200_000_000_000;
 const ONE_MS: u64 = 1;
 const ZERO_SPOT: u128 = 0;
@@ -265,64 +264,6 @@ fun oversized_block_scholes_fallback_spot_remains_retryable() {
 
     helpers::return_market_bundle(market);
     fx.finish();
-}
-
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
-fun block_scholes_fallback_rejects_another_underlyings_store() {
-    let expiry = test_constants::default_expiry_ms();
-    let mut fx = helpers::setup_market_default();
-    let expiry_id = fx.create_expiry(expiry);
-    let foreign_pair = fx.create_foreign_block_scholes_stores(FOREIGN_UNDERLYING_ID);
-    let foreign_values_id = foreign_pair.block_scholes_value_store_id();
-    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let foreign_values = fx
-        .scenario_mut()
-        .take_shared_by_id<BlockScholesValueStore>(foreign_values_id);
-    fx.try_settle_bundle_with_bs_values(&mut market, &foreign_values);
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
-fun try_settle_with_wrong_pyth_feed_aborts() {
-    let mut fx = helpers::setup_market_default();
-    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    fx.set_clock_for_testing(test_constants::default_expiry_ms());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_pyth_id = propbook_registry::create_and_share_pyth_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    return_shared(oracle_registry);
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
-
-    fx.try_settle_bundle_with_pyth(&mut market, &wrong_pyth);
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
-fun try_settle_rejects_old_pyth_after_propbook_rebind() {
-    let mut fx = helpers::setup_market_default();
-    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    let _rebound_pyth_id = fx.create_and_rebind_pyth(SECOND_SOURCE_ID);
-    fx.set_clock_for_testing(test_constants::default_expiry_ms());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(expiry_id);
-
-    fx.try_settle_bundle(&mut market);
-
-    abort 999
 }
 
 #[test]

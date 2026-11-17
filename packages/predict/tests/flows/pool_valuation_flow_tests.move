@@ -31,6 +31,7 @@ use deepbook_predict::{
     pricing_ssvi_reference_data as ssvi,
     protocol_config::{Self, ProtocolConfig},
     range_codec,
+    signed_data,
     strike_exposure_config,
     test_constants,
     vault_events
@@ -187,10 +188,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     // market holds its cash target less that worth.
     let expected_nav = MARKET_CASH_TARGET - premium;
     let mint_cost = premium + MINT_MIN_FEE;
-    let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
-    let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    assert_eq!(nav1, expected_nav);
-    assert_eq!(nav2, expected_nav);
+    assert_eq!(last_flush_active_nav(), 2 * expected_nav);
 
     // Each market swept its premium and fee to idle; the funding it drew is the
     // debit side of the profit basis.
@@ -267,10 +265,6 @@ fun multi_market_pool_nav_is_exact_with_a_mid_flush_rebalance() {
     // market holds its cash target less that worth.
     let expected_nav = MARKET_CASH_TARGET - premium;
     let mint_cost = premium + MINT_MIN_FEE;
-    let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
-    let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    assert_eq!(nav1, expected_nav);
-    assert_eq!(nav2, expected_nav);
 
     // Each market swept its premium and fee to idle; the funding it drew is the
     // debit side of the profit basis.
@@ -332,8 +326,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
-    assert_eq!(fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs), MARKET_CASH_TARGET);
-    assert_eq!(fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs), MARKET_CASH_TARGET);
+    assert_eq!(last_flush_active_nav(), 2 * MARKET_CASH_TARGET);
     assert_eq!(vault.profit_basis_debits(), 2 * MARKET_CASH_TARGET);
     assert_eq!(vault.profit_basis_credits(), 0);
     assert_eq!(pool_nav, IDLE_SEED);
@@ -374,10 +367,11 @@ fun empty_pool_valuation_returns_idle() {
 // === Oracle-width propagation and recovery ===
 
 /// Freezing the pricer is the mandatory per-market leg of a pool-wide flush, so an over-wide
-/// active market observation must surface the named pricing-boundary error there rather than a
-/// VM cast. The oracle read happens in the atomic snapshot stage rather than in `value_expiry`,
-/// so the abort lands inside the flush's first transaction.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+/// active market observation must surface a named error there rather than a VM cast: the
+/// library's decode drops the value (`block_scholes::vols`), and the snapshot aborts on the
+/// missing inputs. The oracle read happens in the atomic snapshot stage rather than in
+/// `value_expiry`, so the abort lands inside the flush's first transaction.
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
 fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
     let mut fx = helpers::setup_market_default();
     bootstrap_pool(&mut fx, IDLE_SEED);
@@ -495,13 +489,10 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
             > pricer.up_price(range_codec::strike_from_tick(DUST_LOWER_TICK, tick_size)),
     );
 
-    // Live NAV is free cash less the independent per-order sum (`live_order_value`
-    // prices and floors each order on its own instead of netting boundaries).
+    // The independent per-order sum (each order priced and floored on its own
+    // instead of netting boundaries).
     let per_order_liability =
         fx.live_order_value_bundle(&market, id_low) + fx.live_order_value_bundle(&market, id_high);
-    let free_cash =
-        helpers::market(&market).cash_balance() - helpers::market(&market).inventory_impact_reserve();
-    assert_eq!(fx.current_nav_bundle(&market), free_cash - per_order_liability);
 
     // ... and the flush runs to completion over that same book, marking the market
     // at that same per-order figure.
@@ -595,9 +586,6 @@ fun a_tolerated_rise_is_charged_through_the_flush() {
     let liability =
         fx.live_order_value_bundle(&market, id_open) + fx.live_order_value_bundle(&market, id_close)
             + DUST_RISE_CHARGE;
-    let free_cash =
-        helpers::market(&market).cash_balance() - helpers::market(&market).inventory_impact_reserve();
-    assert_eq!(fx.current_nav_bundle(&market), free_cash - liability);
     assert_flush_marks_liability(&mut fx, &mut market, liability);
 
     helpers::return_market_bundle(market);
@@ -608,8 +596,9 @@ fun a_tolerated_rise_is_charged_through_the_flush() {
 
 /// The flush freezes every active market's pricer in its atomic snapshot stage, so
 /// a surface the pricing-safe envelope rejects stops the pool-wide flush from
-/// starting. A `sigma` one raw unit under the 1e-7 floor still does.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+/// starting: no `Pricer` exists at the instant. A `sigma` one raw unit under the
+/// 1e-7 floor still does.
+#[test, expected_failure(abort_code = expiry_market::EWrongVol)]
 fun svi_sigma_below_the_floor_aborts_pool_valuation_flush() {
     let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
         test_constants::pricing_min_svi_sigma() - 1,
@@ -680,26 +669,6 @@ fun market_with_short_dated_ssvi_shape(svi_sigma: u64): (helpers::Fixture, helpe
 }
 
 // === Completeness proof ===
-
-#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
-fun evicted_spot_pair_blocks_pool_snapshot() {
-    let mut fx = helpers::setup_market_default();
-    bootstrap_pool(&mut fx, IDLE_SEED);
-    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(e);
-    let mut i = 1;
-    while (i <= SPOT_BUFFER_SIZE) {
-        fx.set_bs_spot_raw_for_testing_bundle(
-            &mut market,
-            test_constants::live_source_timestamp_ms() + i,
-            (test_constants::default_live_price() as u128),
-        );
-        i = i + 1;
-    };
-    fx.start_flush_bundle(&mut market);
-    abort 999
-}
 
 #[test]
 fun newer_matched_pair_restores_pool_snapshot_after_eviction() {
@@ -914,14 +883,28 @@ fun valuation_split_across_transactions_marks_at_the_snapshot_instant() {
     // Move the oracle between valuation transactions.
     fx.scenario_mut().next_tx(test_constants::alice());
     let now_ms = fx.clock().timestamp_ms();
+    let before_move = signed_data::pricer(
+        &m2,
+        &config,
+        &pyth,
+        &bs,
+        now_ms,
+        fx.scenario_mut().ctx(),
+    );
     fx.set_pyth_price_for_testing(&mut pyth, test_constants::default_live_price() * 2, now_ms);
 
-    // Guard against a vacuous test: prove the move is load-bearing. A pricer loaded
-    // live at this moment marks m2 differently from its frozen one, so if
-    // `value_expiry` re-read the oracle the pool mark below could not still match.
-    let expected_nav = MARKET_CASH_TARGET - premium;
-    let live_nav_after_move = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    assert!(live_nav_after_move != expected_nav);
+    // Guard against a vacuous test: prove the move is load-bearing. A pricer built
+    // from the moved feed at this moment prices m2's order differently from the
+    // pricer before the move, so if `value_expiry` re-read the oracle the pool mark
+    // below could not still match.
+    let moved = signed_data::pricer(&m2, &config, &pyth, &bs, now_ms, fx.scenario_mut().ctx());
+    let tick_size = test_constants::default_tick_size();
+    let atm = range_codec::strike_from_tick(helpers::strike_tick(), tick_size);
+    let pos_inf = range_codec::strike_from_tick(constants::pos_inf_tick!(), tick_size);
+    assert!(
+        moved.range_price(atm, pos_inf).probability()
+            != before_move.range_price(atm, pos_inf).probability(),
+    );
 
     // Valuation stage, transaction 2 of 2 — priced off the frozen snapshot.
     fx.value_expiry(&mut vault, &mut m2, &config);
@@ -931,6 +914,7 @@ fun valuation_split_across_transactions_marks_at_the_snapshot_instant() {
     let pool_nav = fx.finish_flush(&mut vault, &mut config);
 
     let mint_cost = premium + MINT_MIN_FEE;
+    let expected_nav = MARKET_CASH_TARGET - premium;
     let active = 2 * expected_nav;
     let expected_exclusion = math::mul_down(
         2 * mint_cost + active - 2 * MARKET_CASH_TARGET,
@@ -1926,4 +1910,10 @@ fun a_stale_market_alongside_a_live_one_is_skipped_and_the_live_one_still_values
     return_shared(m_doomed);
     helpers::return_bs(bs);
     fx.finish();
+}
+
+/// The active-market NAV the latest flush valued, from its `FlushExecuted` event.
+fun last_flush_active_nav(): u64 {
+    let events = event::events_by_type<vault_events::FlushExecuted>();
+    vault_events::flush_executed_active_market_nav(&events[events.length() - 1])
 }

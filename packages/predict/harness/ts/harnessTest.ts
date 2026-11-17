@@ -19,7 +19,9 @@ import {
   serializableSnapshot,
   subscriptionItemMatches,
 } from "./marketSource.js";
+import { PRICING_DEFAULTS } from "./predictConfig.js";
 import { rollDownSvi } from "./pricer.js";
+import { readLandedSnapshot, signedOracleFor } from "./signedOracle.js";
 import {
   type KeeperChain,
   type LaneMarket,
@@ -159,6 +161,81 @@ test("landed snapshot advances each source independently and ignores retransmit 
   });
   assert.equal(future.bsSpot1e9, 20n);
   assert.equal(future.bsSpotSourceTimestampMs, 100);
+});
+
+test("signed oracle values pair the forward with its own spot, refuse stale data, and roll the SVI", () => {
+  const expiry = 200_000;
+  const svi1e9 = {
+    a: 40_000_000n, aNegative: false, b: 80_000_000n, sigma: 3n, rho: 4n,
+    rhoNegative: true, m: 5n, mNegative: false,
+  };
+  const row = (forwardSourceTimestampMs: number, sviSourceTimestampMs: number) => ({
+    forward: 31,
+    forward1e9: 31n,
+    forwardSourceTimestampMs,
+    svi: { alpha: 0.04, beta: 0.08, rho: -0.3, m: 0.4, sigma: 0.5 },
+    svi1e9,
+    sviSourceTimestampMs,
+  });
+  const advance = (spotMs: number | null, forwardMs: number | null, sviMs: number | null) => ({
+    pythSourceTimestampMs: 101n,
+    bsSpotSourceTimestampMs: spotMs,
+    forwardSourceTimestampMsByExpiry: new Map(forwardMs === null ? [] : [[expiry, forwardMs]]),
+    sviSourceTimestampMsByExpiry: new Map(sviMs === null ? [] : [[expiry, sviMs]]),
+  });
+  const candidate = (bsSpot1e9: bigint, spotMs: number, forwardMs: number, sviMs: number) => ({
+    spot1e9: 11n,
+    pythSourceTimestampMs: 101n,
+    bsSpot1e9,
+    bsSpotSourceTimestampMs: spotMs,
+    expiries: new Map([[expiry, row(forwardMs, sviMs)]]),
+  });
+
+  const dir = mkdtempSync(path.join(tmpdir(), "signed-oracle-"));
+  try {
+    assert.equal(readLandedSnapshot(dir, [expiry]), null, "no snapshot before the first push");
+    const write = (landed: LandedMarketSnapshot) =>
+      writeFileSync(path.join(dir, "snapshot.json"), JSON.stringify(serializableLandedSnapshot(landed)));
+
+    // Spot and forward land together at 100_000, the SVI at 100_000.
+    let landed = projectLandedSnapshot(null, candidate(21n, 100_000, 100_000, 100_000), advance(100_000, 100_000, 100_000));
+    write(landed);
+    let snapshot = readLandedSnapshot(dir, [expiry])!;
+    // Stamped at its source time the SVI is unchanged.
+    assert.deepEqual(signedOracleFor(snapshot, expiry, 100_000, 100_000), { bsSpot: 21n, forward: 31n, svi: svi1e9 });
+    // Stamped halfway to expiry it carries half the total variance, as the chain would roll it.
+    const rolled = signedOracleFor(snapshot, expiry, 100_000, 150_000)!;
+    assert.equal(rolled.svi.a, 20_000_000n);
+    assert.equal(rolled.svi.b, 40_000_000n);
+    assert.equal(signedOracleFor(snapshot, expiry, 100_000, expiry), null, "nothing at expiry");
+    assert.equal(signedOracleFor(snapshot, expiry + 60_000, 100_000, 100_000), null, "an expiry with no row");
+
+    // Too old for the instant: the forward past the price window, then the SVI past its window.
+    const priceWindow = PRICING_DEFAULTS.blockScholesPriceFreshnessMs;
+    const sviWindow = PRICING_DEFAULTS.blockScholesSviFreshnessMs;
+    assert.ok(signedOracleFor(snapshot, expiry, 100_000 + priceWindow, 100_000));
+    assert.equal(signedOracleFor(snapshot, expiry, 100_000 + priceWindow + 1, 100_000), null);
+    assert.ok(signedOracleFor(snapshot, expiry, 100_000, 100_000 + sviWindow));
+    assert.equal(signedOracleFor(snapshot, expiry, 100_000, 100_000 + sviWindow + 1), null);
+
+    // A newer spot lands before its forward: the forward keeps the spot it was observed with.
+    landed = projectLandedSnapshot(landed, candidate(25n, 101_000, 101_000, 100_000), advance(101_000, null, null));
+    write(landed);
+    snapshot = readLandedSnapshot(dir, [expiry])!;
+    assert.equal(snapshot.bsSpot1e9, 25n);
+    assert.equal(signedOracleFor(snapshot, expiry, 101_000, 101_000)!.bsSpot, 21n);
+
+    // A forward with no retained spot at its source time is not signed.
+    landed = projectLandedSnapshot(null, candidate(21n, 100_000, 100_500, 100_000), advance(100_000, 100_500, 100_000));
+    write(landed);
+    assert.equal(signedOracleFor(readLandedSnapshot(dir, [expiry])!, expiry, 100_500, 100_000), null);
+
+    // Nothing landed for the forward yet.
+    write(projectLandedSnapshot(null, candidate(21n, 100_000, 100_000, 100_000), advance(100_000, null, 100_000)));
+    assert.equal(signedOracleFor(readLandedSnapshot(dir, [expiry])!, expiry, 100_000, 100_000), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("landed snapshot does not infer an on-chain advance after local state is lost", () => {

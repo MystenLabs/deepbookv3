@@ -16,6 +16,7 @@ use deepbook_predict::{
     pricing::Pricer,
     protocol_config::ProtocolConfig,
     range_test_helpers,
+    signed_data,
     test_constants
 };
 use deepbook_sessions::{
@@ -90,7 +91,7 @@ const ZERO_PREMIUM: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
-const FUTURE_VERSION: u64 = 5;
+const FUTURE_VERSION: u64 = 6;
 
 public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
@@ -1003,13 +1004,14 @@ fun begin_live_tx(fixture: &mut SessionFlowFixture, sender: address): LiveInputs
     let pyth = scenario.take_shared_by_id<PythFeed>(fixture.pyth_id);
     let bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(fixture.bs_values_id);
     let bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(fixture.bs_svi_id);
-    let pricer = market.load_live_pricer(
+    let pricer = signed_data::pricer_from(
         &config,
-        &oracle_registry,
         &pyth,
         &bs_values,
         &bs_svi,
-        clock,
+        market.id(),
+        market.expiry(),
+        clock.timestamp_ms(),
         scenario.ctx(),
     );
     return_shared(oracle_registry);
@@ -1081,8 +1083,14 @@ fun settle_flow_market(fixture: &mut SessionFlowFixture, settlement_price: u64) 
         .predict
         .scenario_mut()
         .take_shared_by_id<BlockScholesValueStore>(fixture.bs_values_id);
+    let expiry = market.expiry();
     assert_eq!(
-        market.try_settle(&config, &oracle_registry, &pyth, &bs_values, &fixture.clock),
+        market.try_settle_v2(
+            &config,
+            signed_data::exact_pyth(&pyth, expiry),
+            signed_data::exact_bs_spot(&bs_values, expiry),
+            &fixture.clock,
+        ),
         true,
     );
     assert_eq!(market.try_settlement_price(), option::some(settlement_price));

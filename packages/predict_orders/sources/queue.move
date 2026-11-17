@@ -3,16 +3,18 @@
 
 /// One expiry market's delayed-execution queue, `MarketQueue`, and its flows:
 /// placement of queued mints and early sells, commit of verified Pyth Lazer
-/// prices, resolve at the committed tick, the deadline and admin refunds, the
+/// prices and Block Scholes inputs, resolve at the committed tick, the deadline and admin refunds, the
 /// settlement drain and payout walk, cleanup, and the queue reads.
 ///
 /// Every money-moving step runs inside one of Predict's order-flow primitives,
 /// which check their own gates and bindings when they run: admission
-/// (`admit_mint`, `admit_sell`), `commit`, `try_fill`, `release`, and
+/// (`admit_mint_v2`, `admit_sell_v2`), `commit_v2`, `try_fill`, `release`, and
 /// `try_pay_settled`. The queue owns what Predict leaves to the companion: τ and
 /// the deadline, the stuck gate, capacities and per-account caps, cohort order,
-/// the exact-or-backup tick choice, escrow custody, refund routing, and the
-/// queue events. Each record holds Predict's receipt for its order and that
+/// the exact-or-backup tick choice, the Block Scholes slot rule (`BsTiming`),
+/// escrow custody, refund routing, and the queue events. Placement reads no
+/// oracle: the version 5 enqueue signatures take Propbook objects and ignore
+/// them. Each record holds Predict's receipt for its order and that
 /// order's own escrow, so a refund pays exactly that record's escrow.
 ///
 /// A queued fill never enters the account: it stays an Open record until
@@ -41,9 +43,9 @@ use deepbook_predict::{
     pricing::Pricer,
     protocol_config::ProtocolConfig
 };
-use deepbook_predict_math::{lazer_price::{Self, LazerPrice}, math as pmath};
+use deepbook_predict_math::{block_scholes::BsVol, lazer_price::{Self, LazerPrice}, math as pmath};
 use deepbook_predict_orders::{
-    delayed_execution_config::{Self, DelayedExecutionPolicy},
+    delayed_execution_config::{Self, BsTiming, DelayedExecutionPolicy},
     desk::{OrderDesk, QueueRegistry},
     order_flow,
     order_queue::{Self, OrderBook, OrderRequest, OrderTiming, OrderView, HeldPosition},
@@ -78,6 +80,8 @@ const ERecordNotOpen: u64 = 9;
 const ENotRecordOwner: u64 = 10;
 const EMarketNotSettled: u64 = 11;
 const EMarketNotExpired: u64 = 12;
+/// An entry point of an earlier version. Use its `_v2`.
+const EUseV2: u64 = 13;
 
 /// Most records one `resolve` or `refund` call visits, whatever `max_orders`
 /// asks. A resolved record emits at most two events: a fill emits Predict's
@@ -112,7 +116,7 @@ public struct MarketQueue has key {
 }
 
 #[test_only]
-/// Stands in for one verified Lazer update in `commit_for_testing`, since a
+/// Stands in for one verified Lazer update in `commit_v2_for_testing`, since a
 /// real `Update` has no Move test constructor: its channel and envelope, and
 /// per feed the price `lazer_price::from_update` would decode.
 public struct TestUpdate has copy, drop {
@@ -212,7 +216,9 @@ public fun builder_fee_per_contract(queue: &MarketQueue, record_id: u64): u64 {
 }
 
 /// Quote an early sell of `close_quantity` from the Open record `record_id` at a
-/// live `Pricer` through Predict's `quote_close`: the close a queued sell fills,
+/// live `Pricer` through Predict's `quote_close`, which Predict retired in
+/// version 6 (it aborts `EUseV2`, since no transaction can build a live `Pricer`
+/// any more): the close a queued sell fills,
 /// with the trading fee at the clock instead of a committed tick. No builder fee,
 /// matching `enqueue_redeem_open`; `quote_redeem_open_with_builder_fee` quotes a
 /// sell that names a builder. `proceeds` is before the order fee. Changes nothing.
@@ -292,6 +298,45 @@ public fun create_and_share(
 
 // --- Placement ---
 
+/// The oracle-free `enqueue_exact_quantity_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_quantity(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_exact_quantity_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
+        root,
+        clock,
+        ctx,
+    )
+}
+
 /// Place a queued mint for an exact quantity, priced later at Pyth's signed
 /// price for its τ. `max_cost` caps the all-in withdrawal and is mandatory;
 /// `max_probability` caps the entry probability at τ. Escrows the budget,
@@ -303,19 +348,17 @@ public fun create_and_share(
 /// full queue (`EQueueStuck`, `EQueueFull`, `EAccountOrderCap`), τ at or past
 /// the cutoff (`EPastCutoff`), an unlimited or zero `max_cost`
 /// (`EMintCostCapRequired`), or a balance not above the order fee
-/// (`EFeeNotCovered`). Then Predict's `admit_mint` applies its gates, the
-/// order's own limits at the clock, and the market's spare cash.
-public fun enqueue_exact_quantity(
+/// (`EFeeNotCovered`). Then Predict's `admit_mint_v2` applies its gates, the
+/// range and timing checks, and the market's spare cash. The order's own limits
+/// are checked at τ, where an order that misses them is refunded with its order
+/// fee kept.
+public fun enqueue_exact_quantity_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -332,13 +375,52 @@ public fun enqueue_exact_quantity(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::none(),
         order_queue::kind_exact_quantity(),
         request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_quantity_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_quantity_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_exact_quantity_with_builder_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
         root,
         clock,
         ctx,
@@ -352,17 +434,13 @@ public fun enqueue_exact_quantity(
 /// prices the order's limits with it, and the fill pays `quantity * fee`, rounded
 /// down, to the code. Refuses orders like `enqueue_exact_quantity`. Returns the
 /// new record ID.
-public fun enqueue_exact_quantity_with_builder(
+public fun enqueue_exact_quantity_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     lower_tick: u64,
@@ -381,13 +459,48 @@ public fun enqueue_exact_quantity_with_builder(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         order_queue::kind_exact_quantity(),
         request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_amount_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_amount(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_exact_amount_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        max_cost,
         root,
         clock,
         ctx,
@@ -398,17 +511,13 @@ public fun enqueue_exact_quantity_with_builder(
 /// `min_quantity`, with the all-in withdrawal capped by the mandatory `max_cost`.
 /// Escrows `min(max_cost, available - order_fee)` and the order fee. Refuses
 /// orders like `enqueue_exact_quantity`. Returns the new record ID.
-public fun enqueue_exact_amount(
+public fun enqueue_exact_amount_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     lower_tick: u64,
     higher_tick: u64,
     max_premium: u64,
@@ -425,10 +534,6 @@ public fun enqueue_exact_amount(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::none(),
         order_queue::kind_exact_amount(),
         request,
@@ -438,9 +543,8 @@ public fun enqueue_exact_amount(
     )
 }
 
-/// `enqueue_exact_amount` for an order that names a builder, charging the capped
-/// `builder_fee_per_contract` to `code` like `enqueue_exact_quantity_with_builder`.
-/// The fee is inside the `max_cost` withdrawal cap. Returns the new record ID.
+/// The oracle-free `enqueue_exact_amount_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
 public fun enqueue_exact_amount_with_builder(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -448,10 +552,50 @@ public fun enqueue_exact_amount_with_builder(
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_exact_amount_with_builder_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        max_cost,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// `enqueue_exact_amount` for an order that names a builder, charging the capped
+/// `builder_fee_per_contract` to `code` like `enqueue_exact_quantity_with_builder`.
+/// The fee is inside the `max_cost` withdrawal cap. Returns the new record ID.
+public fun enqueue_exact_amount_with_builder_v2(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     lower_tick: u64,
@@ -470,13 +614,46 @@ public fun enqueue_exact_amount_with_builder(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         order_queue::kind_exact_amount(),
         request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_cost_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_cost(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_exact_cost_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
         root,
         clock,
         ctx,
@@ -488,17 +665,13 @@ public fun enqueue_exact_amount_with_builder(
 /// order_fee)` and the order fee. `max_cost` is mandatory here too: the
 /// unlimited value is refused. Refuses orders like `enqueue_exact_quantity`.
 /// Returns the new record ID.
-public fun enqueue_exact_cost(
+public fun enqueue_exact_cost_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     lower_tick: u64,
     higher_tick: u64,
     max_cost: u64,
@@ -514,13 +687,50 @@ public fun enqueue_exact_cost(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::none(),
         order_queue::kind_exact_cost(),
         request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_cost_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_cost_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_exact_cost_with_builder_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
         root,
         clock,
         ctx,
@@ -531,17 +741,13 @@ public fun enqueue_exact_cost(
 /// `builder_fee_per_contract` to `code` like `enqueue_exact_quantity_with_builder`.
 /// The fill sizes the order so the fee fits inside `max_cost`. Returns the new
 /// record ID.
-public fun enqueue_exact_cost_with_builder(
+public fun enqueue_exact_cost_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     lower_tick: u64,
@@ -559,13 +765,46 @@ public fun enqueue_exact_cost_with_builder(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         order_queue::kind_exact_cost(),
         request,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_redeem_open_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_redeem_open(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_redeem_open_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
         root,
         clock,
         ctx,
@@ -582,21 +821,17 @@ public fun enqueue_exact_cost_with_builder(
 ///
 /// Escrows only the order fee, so a balance equal to it is enough. Refuses a
 /// sell below `min_sell_quantity` or one leaving a remainder below it
-/// (`EBelowMinSell`), and otherwise like `enqueue_exact_quantity`. Predict's
-/// `admit_sell` is open during the trading pause and a market mint pause and has
-/// no spare-cash check: the keeper funds the market before τ, and resolve
+/// (`EBelowMinSell`), and otherwise like `enqueue_exact_quantity_v2`. Predict's
+/// `admit_sell_v2` is open during the trading pause and a market mint pause and
+/// has no spare-cash check: the keeper funds the market before τ, and resolve
 /// refunds a sell the market still cannot cover.
-public fun enqueue_redeem_open(
+public fun enqueue_redeem_open_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     record_id: u64,
     close_quantity: u64,
     min_probability: u64,
@@ -611,11 +846,48 @@ public fun enqueue_redeem_open(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::none(),
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_redeem_open_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_redeem_open_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    wrapper: &mut AccountWrapper,
+    auth: Auth,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    queue.enqueue_redeem_open_with_builder_v2(
+        market,
+        wrapper,
+        auth,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
         record_id,
         close_quantity,
         min_probability,
@@ -633,17 +905,13 @@ public fun enqueue_redeem_open(
 /// checks `min_proceeds` with it, and the fill pays `close_quantity * fee`,
 /// rounded down, to the code, capped at the redeem value left after the trading
 /// fee. Refuses sells like `enqueue_redeem_open`. Returns the new record ID.
-public fun enqueue_redeem_open_with_builder(
+public fun enqueue_redeem_open_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     record_id: u64,
@@ -660,10 +928,6 @@ public fun enqueue_redeem_open_with_builder(
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         option::some(builder_code::new_fee(code, builder_fee_per_contract)),
         record_id,
         close_quantity,
@@ -677,32 +941,60 @@ public fun enqueue_redeem_open_with_builder(
 
 // --- Commit and resolve ---
 
-/// Attach verified Pyth Lazer prices to the waiting cohorts whose τ they match.
-/// Permissionless. Each update must come from the Pyth Lazer verifier earlier
-/// in the same PTB; their order in `updates` does not matter. An update that
-/// matches no waiting cohort is skipped.
+/// Retired: the Lazer-only commit of earlier versions. Aborts `EUseV2`.
+/// `commit_v2` is the only way to commit a cohort.
+#[allow(deprecated_usage)]
+public fun commit(
+    _queue: &mut MarketQueue,
+    _market: &mut ExpiryMarket,
+    _desk: &OrderDesk,
+    _config: &ProtocolConfig,
+    _updates: vector<Update>,
+    _clock: &Clock,
+    _ctx: &TxContext,
+) {
+    abort EUseV2
+}
+
+/// Attach verified Pyth Lazer prices and Block Scholes inputs to the waiting
+/// cohorts whose τ they match. Permissionless. Each update must come from the
+/// Pyth Lazer verifier earlier in the same PTB, and each `BsVol` from
+/// `deepbook_predict_math::block_scholes` over updates `bs_oracle` verified
+/// there, in any order. Updates and inputs that match no waiting
+/// cohort are skipped.
 ///
 /// Matching reads only the inline cohort list and picks at most one update per
 /// waiting cohort before its deadline: the one stamped exactly its τ on its
 /// channel, or else, once the price buffer is above zero and now is at least
 /// `gap_wait_ms` past τ, the one stamped one tick of the cohort's own channel
-/// later. Each matched cohort then commits whole or not at all: one price per
-/// feed is decoded through `lazer_price::from_update`, every Pending order is
-/// checked against it before any is written, and an empty price, a price
-/// generated before τ, or an envelope after now leaves the cohort for a later
-/// commit or its deadline refund. The decode aborts on an update that lacks an
-/// order's feed or one of its properties, because the caller passed the wrong
-/// update. Each committed mint escrows the subsidy Predict reserves for it.
+/// later. It then picks the cohort's Block Scholes inputs by the desk's
+/// `BsTiming`: the spot and forward stamped at the 500 ms boundary at or before
+/// `τ - value_lag_ms` and the SVI stamped at the 1,000 ms boundary at or before
+/// `τ - svi_lag_ms`, for this market's expiry. Once now is the timing's gap wait
+/// past τ it also accepts, in this order, the next SVI slot, the next value slot,
+/// and both. A cohort with no update or no inputs, or with an order admitted
+/// under a Pyth feed the market's oracle binding no longer names, waits for a
+/// later commit or its deadline refund.
+///
+/// Each matched cohort then commits whole or not at all: one price per feed is
+/// decoded through `lazer_price::from_update`, every Pending order is checked
+/// against it before any is written, and an empty price, a price generated
+/// before τ, or an envelope after now leaves the cohort for a later commit or its
+/// deadline refund. The decode aborts on an update that lacks an order's feed or
+/// one of its properties, because the caller passed the wrong update. Predict's
+/// `commit_v2` aborts on inputs decoded under another oracle binding. Each
+/// committed mint escrows the subsidy Predict reserves for it.
 ///
 /// Uses Lazer's v1 `Update`, which Pyth marked deprecated on Mainnet but still
 /// serves; v2 arrives with a later library constructor.
 #[allow(deprecated_usage)]
-public fun commit(
+public fun commit_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     desk: &OrderDesk,
     config: &ProtocolConfig,
     updates: vector<Update>,
+    vols: vector<BsVol>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
@@ -716,6 +1008,7 @@ public fun commit(
         &channels,
         &envelopes_us,
         |index, feed_id| lazer_price::from_update(&updates[index], feed_id),
+        &vols,
         clock,
         ctx.sender(),
     );
@@ -1083,10 +1376,6 @@ fun enqueue_mint(
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     builder: Option<BuilderFee>,
     kind: u8,
     request: OrderRequest,
@@ -1117,10 +1406,6 @@ fun enqueue_mint(
         market,
         config,
         account,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         builder,
         kind,
         request.lower_tick(),
@@ -1131,12 +1416,10 @@ fun enqueue_mint(
         request.max_probability(),
         budget,
         order_fee,
-        policy.svi_max_age_ms(),
         timing.pyth_channel(),
         timing.tau_ms(),
         timing.deadline_ms(),
         clock,
-        ctx,
     );
     let funds = account.withdraw<USDC>(budget + order_fee, ctx).into_balance();
     let referrer_account_id = account.referrer_account_id();
@@ -1170,10 +1453,6 @@ fun enqueue_sell(
     auth: Auth,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     builder: Option<BuilderFee>,
     record_id: u64,
     close_quantity: u64,
@@ -1195,7 +1474,7 @@ fun enqueue_sell(
     let min_sell_quantity = policy.min_sell_quantity();
     assert!(close_quantity >= min_sell_quantity, EBelowMinSell);
     // A partial sell leaves a sellable remainder. A close above the held
-    // quantity fails Predict's dry run instead.
+    // quantity fails Predict's admission instead.
     assert!(
         close_quantity >= held_quantity || held_quantity - close_quantity >= min_sell_quantity,
         EBelowMinSell,
@@ -1211,21 +1490,15 @@ fun enqueue_sell(
         config,
         account,
         &mut receipt,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         builder,
         close_quantity,
         min_probability,
         min_proceeds,
         order_fee,
-        policy.svi_max_age_ms(),
         timing.pyth_channel(),
         timing.tau_ms(),
         timing.deadline_ms(),
         clock,
-        ctx,
     );
     let funds = if (order_fee > 0) {
         account.withdraw<USDC>(order_fee, ctx).into_balance()
@@ -1360,8 +1633,9 @@ fun place(
 // --- Commit ---
 
 /// Commit's logic over a batch of verified updates, given each update's channel
-/// and envelope and a decode of one feed of one update. `commit` decodes real
-/// Lazer updates; `commit_for_testing` stands in for them.
+/// and envelope, a decode of one feed of one update, and the Block Scholes
+/// inputs. `commit_v2` decodes real Lazer updates, and `commit_v2_for_testing`
+/// stands in for them.
 macro fun commit_updates(
     $queue: &mut MarketQueue,
     $market: &mut ExpiryMarket,
@@ -1370,18 +1644,28 @@ macro fun commit_updates(
     $channels: &vector<u8>,
     $envelopes_us: &vector<u64>,
     $price_of: |u64, u32| -> Option<LazerPrice>,
+    $vols: &vector<BsVol>,
     $clock: &Clock,
     $sender: address,
 ) {
     let queue = $queue;
     let market = $market;
+    let desk = $desk;
     let config = $config;
+    let vols = $vols;
     let clock = $clock;
     let sender = $sender;
     let now_ms = clock.timestamp_ms();
+    let timing = desk.bs_timing();
+    let expiry = market.expiry();
+    // Orders admitted under a feed the binding no longer names never commit, so
+    // they wait for their deadline refund rather than abort the commit.
+    let bound_feed = config
+        .oracle_binding(market.propbook_underlying_id())
+        .map!(|binding| binding.lazer_feed_id());
     let (cohort_indices, update_indices) = queue.match_cohorts(
         market,
-        $desk,
+        desk,
         $channels,
         $envelopes_us,
         now_ms,
@@ -1390,26 +1674,41 @@ macro fun commit_updates(
         let index = cohort_indices[i];
         let span = queue.book.cohort(index);
         let tau_ms = span.span_tau_ms();
+        let vol = pick_vol(vols, &timing, expiry, tau_ms, now_ms);
         // One decode per feed in the cohort, checked for every Pending order
         // before any is written.
         let mut feed_ids = vector[];
         let mut prices = vector[];
-        let mut usable = true;
+        let mut usable = vol.is_some();
         let mut record_id = span.span_first_id();
         while (usable && record_id < span.span_end_id()) {
             queue.book.pending_feed(record_id).do!(|feed_id| {
-                let mut slot = feed_ids.find_index!(|id| *id == feed_id);
-                if (slot.is_none()) {
-                    feed_ids.push_back(feed_id);
-                    prices.push_back($price_of(update_indices[i], feed_id));
-                    slot.fill(feed_ids.length() - 1);
-                };
-                usable = price_fits(&prices[slot.destroy_some()], tau_ms, now_ms);
+                // Checked before the decode, which aborts on an update without
+                // the feed.
+                usable =
+                    bound_feed.contains(&feed_id) && {
+                        let mut slot = feed_ids.find_index!(|id| *id == feed_id);
+                        if (slot.is_none()) {
+                            feed_ids.push_back(feed_id);
+                            prices.push_back($price_of(update_indices[i], feed_id));
+                            slot.fill(feed_ids.length() - 1);
+                        };
+                        price_fits(&prices[slot.destroy_some()], tau_ms, now_ms)
+                    };
             });
             record_id = record_id + 1;
         };
         if (usable && !feed_ids.is_empty()) {
-            queue.commit_cohort(market, config, index, &feed_ids, &prices, clock, sender);
+            queue.commit_cohort(
+                market,
+                config,
+                index,
+                &feed_ids,
+                &prices,
+                vol.borrow(),
+                clock,
+                sender,
+            );
         };
     });
 }
@@ -1479,7 +1778,46 @@ fun find_update(
     option::none()
 }
 
-/// The checks Predict's `commit` makes that the cohort's price can still fail
+/// The Block Scholes inputs a cohort at `tau_ms` in a market expiring at
+/// `expiry` prices from (`commit_v2`'s slot rule), or `none` when `vols` holds
+/// none of the admissible slots.
+fun pick_vol(
+    vols: &vector<BsVol>,
+    timing: &BsTiming,
+    expiry: u64,
+    tau_ms: u64,
+    now_ms: u64,
+): Option<BsVol> {
+    let value_step = delayed_execution_config::bs_value_step_ms!();
+    let svi_step = delayed_execution_config::bs_svi_step_ms!();
+    let value_at = tau_ms - timing.bs_value_lag_ms();
+    let value_ms = value_at - value_at % value_step;
+    let svi_at = tau_ms - timing.bs_svi_lag_ms();
+    let svi_ms = svi_at - svi_at % svi_step;
+    // Pairs of (value slot, SVI slot), in order of preference.
+    let mut slots = vector[value_ms, svi_ms];
+    if (now_ms >= tau_ms + timing.bs_gap_wait_ms()) {
+        slots.append(vector[
+            value_ms,
+            svi_ms + svi_step,
+            value_ms + value_step,
+            svi_ms,
+            value_ms + value_step,
+            svi_ms + svi_step,
+        ]);
+    };
+    let mut k = 0;
+    while (k < slots.length()) {
+        let found = vols.find_index!(|vol| {
+            vol.expiry_ms() == expiry && vol.value_ms() == slots[k] && vol.svi_ms() == slots[k + 1]
+        });
+        if (found.is_some()) return option::some(vols[found.destroy_some()]);
+        k = k + 2;
+    };
+    option::none()
+}
+
+/// The checks Predict's `commit_v2` makes that the cohort's price can still fail
 /// after matching: a price exists, generated at or after τ, with its envelope
 /// at or before now. Checked across the cohort first so a commit never aborts
 /// halfway through it.
@@ -1489,7 +1827,8 @@ fun price_fits(price: &Option<LazerPrice>, tau_ms: u64, now_ms: u64): bool {
     price.generation_us() >= tau_ms * 1000 && price.envelope_us() <= now_ms * 1000
 }
 
-/// Commit every Pending order of a checked cohort at its feed's price, escrow
+/// Commit every Pending order of a checked cohort at its feed's price and the
+/// cohort's Block Scholes inputs, escrow
 /// each mint's reserved subsidy, mark the cohort committed, and emit
 /// `CohortCommitted` with the first order's price.
 fun commit_cohort(
@@ -1499,6 +1838,7 @@ fun commit_cohort(
     index: u64,
     feed_ids: &vector<u32>,
     prices: &vector<Option<LazerPrice>>,
+    vol: &BsVol,
     clock: &Clock,
     sender: address,
 ) {
@@ -1514,6 +1854,7 @@ fun commit_cohort(
                 config,
                 queue.book.receipt_mut(record_id),
                 &price,
+                vol,
                 clock,
             );
             queue
@@ -2020,14 +2361,21 @@ public fun new_test_update(
 }
 
 #[test_only]
-/// `commit` over `TestUpdate`s. A feed the update does not carry aborts, as
+/// A `TestUpdate`'s channel and its envelope in ms.
+public fun test_update_tick(update: &TestUpdate): (u8, u64) {
+    (update.channel, update.envelope_us / 1000)
+}
+
+#[test_only]
+/// `commit_v2` over `TestUpdate`s. A feed the update does not carry aborts, as
 /// `lazer_price::from_update` does.
-public fun commit_for_testing(
+public fun commit_v2_for_testing(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     desk: &OrderDesk,
     config: &ProtocolConfig,
     updates: vector<TestUpdate>,
+    vols: vector<BsVol>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
@@ -2036,5 +2384,5 @@ public fun commit_for_testing(
     commit_updates!(queue, market, desk, config, &channels, &envelopes_us, |index, feed_id| {
         let update = &updates[index];
         update.prices[update.feed_ids.find_index!(|id| *id == feed_id).destroy_some()]
-    }, clock, ctx.sender());
+    }, &vols, clock, ctx.sender());
 }

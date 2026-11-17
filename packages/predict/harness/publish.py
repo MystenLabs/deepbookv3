@@ -26,7 +26,7 @@ PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
     "bs_oracle": (),
     "bs_sid": (),
     "propbook": ("fixed_math", "wormhole", "pyth_lazer", "bs_oracle", "bs_sid"),
-    "predict_math": ("fixed_math", "wormhole", "pyth_lazer"),
+    "predict_math": ("fixed_math", "wormhole", "pyth_lazer", "bs_oracle", "bs_sid"),
     "predict": (
         "token",
         "usdc",
@@ -166,9 +166,8 @@ def rewrite_consumer(
     build_env: str = config.BUILD_ENV,
 ) -> None:
     """Point a staged Propbook, Predict, Predict-math, or order-flow companion
-    manifest at staged oracle packages. The math library has no Block Scholes
-    dependency, so `bs_oracle`, like `bs_sid`, is rewritten only where the
-    manifest declares it."""
+    manifest at staged oracle packages. `bs_oracle` and `bs_sid` are rewritten
+    only where the manifest declares them."""
     text = toml_path.read_text()
     text = _replace_first(
         r"(?m)^pyth_lazer = \{ (?:git|local)[^}]*\}",

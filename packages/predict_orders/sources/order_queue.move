@@ -66,6 +66,9 @@ const REASON_NO_CASH: u8 = 8;
 /// before anything moves. Fee returned, and parked in the record with the rest
 /// of the escrow, since the same check refuses that send.
 const REASON_RECIPIENT_DENIED: u8 = 9;
+/// The Block Scholes inputs committed for the order's τ do not price at its
+/// tick: they leave Predict's pricing envelope. Fee returned.
+const REASON_NO_VOL: u8 = 10;
 
 /// One market's delayed-execution queue state.
 public struct OrderBook has store {
@@ -202,8 +205,10 @@ public struct OrderEscrow has copy, drop, store {
     budget: u64,
     /// Flat fee charged at placement.
     order_fee: u64,
-    /// The admission dry run's pre-subsidy trading fee, capped at the budget.
-    /// Bounds the subsidy commit reserves.
+    /// The pre-subsidy trading fee bounding the subsidy commit reserves, capped
+    /// at the budget, as admission recorded it: the t₀ dry run's for orders
+    /// placed before version 6, `0` for a mint placed since, whose commit prices
+    /// the bound at τ.
     subsidy_bound: u64,
     /// The incentives commit reserved for the order, held with its escrow.
     subsidy_reserved: u64,
@@ -284,6 +289,8 @@ public fun reason_admin(): u8 { REASON_ADMIN }
 public fun reason_no_cash(): u8 { REASON_NO_CASH }
 
 public fun reason_recipient_denied(): u8 { REASON_RECIPIENT_DENIED }
+
+public fun reason_no_vol(): u8 { REASON_NO_VOL }
 
 // === OrderView Getters ===
 // Public for SDK and devInspect reads of `queue::order`.

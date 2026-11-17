@@ -31,6 +31,7 @@ const EInvalidSettlePayoutBatch: u64 = 12;
 const EUnsupportedPythChannel: u64 = 13;
 const EInvalidTiming: u64 = 14;
 const EInvalidLimits: u64 = 15;
+const EInvalidBsTiming: u64 = 16;
 
 /// Delayed-execution settings, stored in the shared `OrderDesk`. Times are
 /// milliseconds and USDC amounts are base units.
@@ -58,8 +59,9 @@ public struct DelayedExecutionPolicy has copy, drop, store {
     /// `3` (`fixed_rate@200ms`). Its tick period is τ's grid. Each order stores
     /// the channel it was placed under.
     pyth_channel: u8,
-    /// Oldest Block Scholes SVI a placement accepts into an order's volatility
-    /// snapshot.
+    /// Oldest Block Scholes SVI a version 5 placement accepted into an order's
+    /// volatility snapshot. Placement reads no oracle since version 6, so
+    /// nothing reads it. The setter still bounds it.
     svi_max_age_ms: u64,
     /// Most unfinished queued mints per market.
     mint_capacity: u64,
@@ -77,6 +79,19 @@ public struct DelayedExecutionPolicy has copy, drop, store {
     settle_refund_batch: u64,
     /// Most records one `settle_step` call visits while paying Open records.
     settle_payout_batch: u64,
+}
+
+/// Which signed Block Scholes slots price a cohort, kept on the `OrderDesk` off
+/// the policy's frozen layout (`desk::set_bs_timing`). Block Scholes stamps spot
+/// and forward on a 500 ms grid and SVI on a 1,000 ms grid. A cohort at τ prices
+/// from the spot and forward stamped at its value slot, the 500 ms boundary at or
+/// before `τ - value_lag_ms`, and the SVI stamped at its SVI slot, the 1,000 ms
+/// boundary at or before `τ - svi_lag_ms`. Once now is `gap_wait_ms` past τ, commit
+/// also accepts the slot one step after either. Times are ms.
+public struct BsTiming has copy, drop, store {
+    value_lag_ms: u64,
+    svi_lag_ms: u64,
+    gap_wait_ms: u64,
 }
 
 // === Defaults and bounds ===
@@ -153,8 +168,24 @@ macro fun default_settle_payout_batch(): u64 { 900 }
 
 macro fun max_settle_payout_batch(): u64 { 900 }
 
+/// Block Scholes' spot and forward grid, in ms.
+public macro fun bs_value_step_ms(): u64 { 500 }
+
+/// Block Scholes' SVI grid, in ms.
+public macro fun bs_svi_step_ms(): u64 { 1_000 }
+
+/// Launch Block Scholes lags and gap wait, in ms. Each lag's floor is its grid
+/// step, so even the slot after a cohort's slot is stamped at or before τ.
+macro fun default_bs_value_lag_ms(): u64 { 500 }
+
+macro fun default_bs_svi_lag_ms(): u64 { 1_000 }
+
+macro fun default_bs_gap_wait_ms(): u64 { 1_000 }
+
+macro fun max_bs_lag_ms(): u64 { 10_000 }
+
 // === Getters ===
-// Public for SDK and devInspect reads of `desk::policy`.
+// Public for SDK and devInspect reads of `desk::policy` and `desk::bs_timing`.
 
 public fun delay_ms(policy: &DelayedExecutionPolicy): u64 { policy.delay_ms }
 
@@ -189,6 +220,12 @@ public fun settle_refund_batch(policy: &DelayedExecutionPolicy): u64 {
 public fun settle_payout_batch(policy: &DelayedExecutionPolicy): u64 {
     policy.settle_payout_batch
 }
+
+public fun bs_value_lag_ms(timing: &BsTiming): u64 { timing.value_lag_ms }
+
+public fun bs_svi_lag_ms(timing: &BsTiming): u64 { timing.svi_lag_ms }
+
+public fun bs_gap_wait_ms(timing: &BsTiming): u64 { timing.gap_wait_ms }
 
 // === Public-Package Functions ===
 
@@ -315,6 +352,27 @@ public(package) fun set_limits(
     policy.min_sell_quantity = min_sell_quantity;
     policy.settle_refund_batch = settle_refund_batch;
     policy.settle_payout_batch = settle_payout_batch;
+}
+
+/// The launch Block Scholes timing.
+public(package) fun default_bs_timing(): BsTiming {
+    BsTiming {
+        value_lag_ms: default_bs_value_lag_ms!(),
+        svi_lag_ms: default_bs_svi_lag_ms!(),
+        gap_wait_ms: default_bs_gap_wait_ms!(),
+    }
+}
+
+/// A Block Scholes timing within its bounds (`EInvalidBsTiming`): each lag from
+/// its grid step to 10 s, and the gap wait within the Pyth gap wait's bounds.
+public(package) fun new_bs_timing(value_lag_ms: u64, svi_lag_ms: u64, gap_wait_ms: u64): BsTiming {
+    assert!(
+        value_lag_ms >= bs_value_step_ms!() && value_lag_ms <= max_bs_lag_ms!()
+            && svi_lag_ms >= bs_svi_step_ms!() && svi_lag_ms <= max_bs_lag_ms!()
+            && gap_wait_ms >= min_gap_wait_ms!() && gap_wait_ms <= max_gap_wait_ms!(),
+        EInvalidBsTiming,
+    );
+    BsTiming { value_lag_ms, svi_lag_ms, gap_wait_ms }
 }
 
 /// Write the flat order fee, at most 1 USDC.

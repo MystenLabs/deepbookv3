@@ -5,28 +5,33 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns trade
 /// execution, strike exposure state, and an embedded expiry-cash custody
-/// component, plus local sponsor-funded fee incentives. Live oracle validation is
-/// delegated to `pricing::load_live_pricer`; this module owns market flow policy
-/// and then passes loaded `Pricer` snapshots into exposure business logic.
-/// Pool-wide PLP accounting and profit accounting remain outside this module.
+/// component, plus local sponsor-funded fee incentives. Oracle data arrives
+/// inline and signed, checked against the underlying's oracle binding on
+/// `ProtocolConfig`. This module owns market flow policy and passes the `Pricer`
+/// built from that data into exposure business logic. Pool-wide PLP accounting
+/// and profit accounting remain outside this module.
 ///
 /// It also owns the order-flow primitives an order-flow companion package
-/// drives. `admit_mint` and `admit_sell` admit one queued order, pin a mint's
-/// boundary nodes, record the order's cash need in the market's
-/// `OrderFlowLedger`, and issue or advance its `OrderReceipt`. `commit` stores
-/// the bounded Pyth price the order fills at, `try_fill` fills or refunds it,
-/// `release` takes it out without filling, and `try_pay_settled` pays a
-/// queue-held position after settlement. A queued fill never enters the
-/// account: its position stays in the receipt. Admission, commit, and fill need
-/// an allowlisted companion witness; release and the settled payout need only
-/// the receipt. The queue itself, its escrow, its policy, and its events live in
-/// the companion.
+/// drives. `admit_mint_v2` and `admit_sell_v2` admit one queued order without
+/// reading any oracle, pin a mint's boundary nodes, record the order's cash need
+/// in the market's `OrderFlowLedger`, and issue or advance its `OrderReceipt`.
+/// `commit_v2` stores the Pyth price and the Block Scholes inputs for the order's
+/// τ, `try_fill` fills or refunds it, `release` takes it out without filling,
+/// and `try_pay_settled` pays a queue-held position after settlement. A queued
+/// fill never enters the account: its position stays in the receipt. Admission,
+/// commit, and fill need an allowlisted companion witness. Release and the
+/// settled payout need only the receipt. The queue itself, its escrow, its
+/// policy, and its events live in the companion.
+///
+/// Settlement (`try_settle_v2`) and the reference tick (`set_reference_tick_v2`)
+/// take the signed observation at their exact timestamp. The entry points of
+/// earlier versions that read Propbook objects abort `EUseV2`.
 ///
 /// A trade that pays a builder names its code and fee per contract
-/// (`builder_code::BuilderFee`). `admit_mint_with_builder` and
-/// `admit_sell_with_builder` cap the fee at `protocol_config::builder_fee_cap` and
-/// record the code and the capped fee in the receipt, and the fill charges what
-/// the receipt records. The plain admissions name no builder and charge none.
+/// (`builder_code::BuilderFee`). Admission caps the fee at
+/// `protocol_config::builder_fee_cap` and records the code and the capped fee in
+/// the receipt, and the fill charges what the receipt records. An order that
+/// names no builder charges none.
 ///
 /// Mainnet USDC is a regulated coin: Sui aborts a transaction that sends it to
 /// an address on its deny list, or to anyone while it is globally paused. So the
@@ -53,7 +58,11 @@ use deepbook_predict::{
     strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure},
     strike_exposure_config::StrikeExposureConfig
 };
-use deepbook_predict_math::{lazer_price::{Self, LazerPrice}, math as pmath};
+use deepbook_predict_math::{
+    block_scholes::{BsSpot, BsVol},
+    lazer_price::{Self, LazerPrice},
+    math as pmath
+};
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -104,6 +113,12 @@ const EWrongStage: u64 = 19;
 const ENotRecordOwner: u64 = 20;
 const EEscrowMismatch: u64 = 21;
 const EWrongPrice: u64 = 22;
+/// An entry point of an earlier version that read Propbook objects. Use its `_v2`.
+const EUseV2: u64 = 23;
+/// The Block Scholes inputs are not the market's: another base asset, SVI model,
+/// decimals, or expiry than its oracle binding, or source times outside the
+/// order's window.
+const EWrongVol: u64 = 24;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -186,8 +201,9 @@ public struct RedeemQuote has copy, drop {
 ///
 /// `stage` is a `constants::receipt_stage_*` code: a mint admitted, an open
 /// position, or a sell of that position admitted. Admission writes the parties,
-/// request, timing, snapshot, and escrow terms; `commit` the price and the
-/// reserved subsidy; a mint fill the position. Every transition writes every
+/// request, timing, the snapshot's Pyth feed, and escrow terms. `commit_v2` writes
+/// the price, the snapshot's Block Scholes inputs, the subsidy bound, and the
+/// reserved subsidy, and a mint fill writes the position. Every transition writes every
 /// field group (`to_open` for the open stage): the open stage keeps the parties,
 /// range, last snapshot, and position and zeroes the kind, request, timing,
 /// channel, escrow, and price, and a sell admission rewrites that open receipt
@@ -232,8 +248,9 @@ public struct OrderReceipt has store {
     /// Worst-case market cash the fill can consume. Counted in the ledger's
     /// `waiting_cash_need` while the order is admitted.
     cash_need: u64,
-    /// The t₀ quote's pre-subsidy trading fee, capped at `budget`. Bounds the
-    /// subsidy `commit` reserves.
+    /// The pre-subsidy trading fee at the committed tick, capped at `budget`
+    /// (`commit_v2` sets it, and it is `0` until then). Bounds the subsidy the commit
+    /// reserves.
     subsidy_bound: u64,
     subsidy_rate: u64,
     subsidy_reserved: u64,
@@ -389,38 +406,20 @@ public fun required_cash(market: &ExpiryMarket): u64 {
     market.cash.required_cash(market.payout_liability())
 }
 
-/// Load a PTB-local live pricing snapshot for this market.
-///
-/// The returned `Pricer` is bound to `market.id()` and can be passed into live
-/// mint, redeem, and NAV functions in the same transaction.
-///
-/// Aborts `pricing::EOracleWrittenInThisTransaction` when any observation that
-/// feeds the returned forward or SVI was written in this transaction (RP-24).
-/// Independently submitted refresh-then-trade PTBs are unaffected: the guard
-/// compares observation `writer_digest` to `tx_context::digest()`, not sender
-/// identity, and does not prohibit reads of older observations.
+/// Retired: earlier versions loaded a live `Pricer` from Propbook's objects here.
+/// Aborts `EUseV2`. Live quotes come from signed data off chain, and on chain a
+/// `Pricer` exists only inside a fill or the flush.
 public fun load_live_pricer(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    clock: &Clock,
-    ctx: &TxContext,
+    _market: &ExpiryMarket,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    _clock: &Clock,
+    _ctx: &TxContext,
 ): Pricer {
-    pricing::load_live_pricer(
-        config.pr_cfg(),
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        market.id(),
-        market.propbook_underlying_id,
-        market.expiry,
-        clock,
-        ctx,
-    )
+    abort EUseV2
 }
 
 /// Return whether this market is snapshotted into the in-flight flush and still
@@ -433,25 +432,15 @@ public fun is_pending_valuation(market: &ExpiryMarket, config: &ProtocolConfig):
         && config.is_cur(market.valuation_stamp.borrow().flush_seq)
 }
 
-/// Return live marked NAV as free expiry cash minus the exposure book's marked
-/// liability, floored at zero. This read requires a market-bound pre-expiry
-/// `Pricer`; an expired but unsettled market cannot be valued through this path.
-/// Public for PTB composition and devInspect pool valuation.
-public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
-    market.chk_pricer(pricer);
-    let liability = market.strike_exposure.marked_liab(pricer);
-    // Marked liability and free cash are computed through different rounded
-    // aggregates; negative marked NAV is represented as zero.
-    market.cash.free_cash().saturating_sub(liability)
+/// Retired: live NAV needs a `Pricer`, which only a fill or the flush builds
+/// since live pricing reads no Propbook object. Aborts `EUseV2`.
+public fun current_nav(_market: &ExpiryMarket, _pricer: &Pricer): u64 {
+    abort EUseV2
 }
 
-/// Return one live order's full-close range value before fees. Requires a
-/// market-bound `Pricer` and does not prove account ownership of `order_id`.
-/// Public for SDK, PTB, and devInspect position valuation.
-public fun live_order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
-    market.chk_pricer(pricer);
-    let order = order::from_id(order_id);
-    market.strike_exposure.live_order_value(pricer, &order)
+/// Retired like `current_nav`. Aborts `EUseV2`.
+public fun live_order_value(_market: &ExpiryMarket, _pricer: &Pricer, _order_id: u256): u64 {
+    abort EUseV2
 }
 
 /// Return one settled order's terminal payout. This function does not prove
@@ -468,174 +457,94 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Quote a prospective mint at a market-bound `Pricer`, priced like a queued
-/// fill at the clock, for SDK and devInspect previews. `exact_quantity` quotes
-/// `min_quantity` exactly; otherwise the largest quantity whose premium fits
-/// `max_premium`, at least `min_quantity`. No builder fee. The fee subsidy is
-/// the configured rate capped by the market's incentive balance, and
-/// `penalty_fee` is always 0. Gated only on the pricer binding (`EWrongPricer`)
-/// and `now < expiry` (`EInvalidOrderTiming`). Aborts `EOrderFailsLimits` when
-/// the mint would be refused at the clock.
+/// Retired: mint quotes need a `Pricer`, which only a fill or the flush builds
+/// since live pricing reads no Propbook object, so quotes are computed off chain
+/// from the same signed data. Aborts `EUseV2`.
 public fun quote_mint(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    clock: &Clock,
+    _market: &ExpiryMarket,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _exact_quantity: bool,
+    _clock: &Clock,
     _ctx: &mut TxContext,
 ): MintQuote {
-    market.quote_now(
-        config,
-        pricer,
-        if (exact_quantity) constants::mint_kind_exact_quantity!()
-        else constants::mint_kind_exact_amount!(),
-        lower_tick,
-        higher_tick,
-        max_premium,
-        min_quantity,
-        std::u64::max_value!(),
-        0,
-        clock,
-    )
+    abort EUseV2
 }
 
-/// `quote_mint` for the wrapper's account: `max_premium` is capped at the
-/// account's balance. No builder fee, matching the enqueue calls that name no
-/// builder: `quote_mint_with_builder_fee` at a zero fee.
+/// Retired like `quote_mint`. Aborts `EUseV2`.
 public fun quote_mint_for_account(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _market: &ExpiryMarket,
+    _wrapper: &AccountWrapper,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _exact_quantity: bool,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): MintQuote {
-    market.quote_mint_with_builder_fee(
-        wrapper,
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        max_premium,
-        min_quantity,
-        exact_quantity,
-        0,
-        root,
-        clock,
-        ctx,
-    )
+    abort EUseV2
 }
 
-/// `quote_mint_for_account` for an order that names a builder: charges
-/// `builder_fee_per_contract`, in FLOAT_SCALING of the $1 payout, capped at
-/// `protocol_config::builder_fee_cap` as admission caps it. Prices and gates like
-/// `quote_mint`. For SDK and devInspect previews of the `_with_builder` enqueue
-/// calls.
+/// Retired like `quote_mint`. Aborts `EUseV2`.
 public fun quote_mint_with_builder_fee(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    exact_quantity: bool,
-    builder_fee_per_contract: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
+    _market: &ExpiryMarket,
+    _wrapper: &AccountWrapper,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _exact_quantity: bool,
+    _builder_fee_per_contract: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
     _ctx: &mut TxContext,
 ): MintQuote {
-    let account = wrapper.load_account();
-    market.quote_now(
-        config,
-        pricer,
-        if (exact_quantity) constants::mint_kind_exact_quantity!()
-        else constants::mint_kind_exact_amount!(),
-        lower_tick,
-        higher_tick,
-        max_premium.min(account.balance<USDC>(root, clock)),
-        min_quantity,
-        std::u64::max_value!(),
-        capped_fee(config, builder_fee_per_contract),
-        clock,
-    )
+    abort EUseV2
 }
 
-/// Quote the largest mint whose all-in cost fits `min(max_cost, account
-/// balance)`, at least `min_quantity`, for the wrapper's account, priced like a
-/// queued exact-cost fill at the clock. No builder fee, matching the enqueue
-/// calls that name no builder: `quote_mint_exact_cost_with_builder_fee` at a zero
-/// fee. Otherwise prices and gates like `quote_mint`.
+/// Retired like `quote_mint`. Aborts `EUseV2`.
 public fun quote_mint_exact_cost_for_account(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): MintQuote {
-    market.quote_mint_exact_cost_with_builder_fee(
-        wrapper,
-        config,
-        pricer,
-        lower_tick,
-        higher_tick,
-        max_cost,
-        min_quantity,
-        0,
-        root,
-        clock,
-        ctx,
-    )
-}
-
-/// `quote_mint_exact_cost_for_account` for an order that names a builder: the
-/// budget search fits `builder_fee_per_contract`, in FLOAT_SCALING of the $1
-/// payout and capped at `protocol_config::builder_fee_cap`, inside the budget.
-/// For SDK and devInspect previews of `enqueue_exact_cost_with_builder`.
-public fun quote_mint_exact_cost_with_builder_fee(
-    market: &ExpiryMarket,
-    wrapper: &AccountWrapper,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_cost: u64,
-    min_quantity: u64,
-    builder_fee_per_contract: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
+    _market: &ExpiryMarket,
+    _wrapper: &AccountWrapper,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_cost: u64,
+    _min_quantity: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
     _ctx: &mut TxContext,
 ): MintQuote {
-    let account = wrapper.load_account();
-    market.quote_now(
-        config,
-        pricer,
-        constants::mint_kind_exact_cost!(),
-        lower_tick,
-        higher_tick,
-        0,
-        min_quantity,
-        max_cost.min(account.balance<USDC>(root, clock)),
-        capped_fee(config, builder_fee_per_contract),
-        clock,
-    )
+    abort EUseV2
+}
+
+/// Retired like `quote_mint`. Aborts `EUseV2`.
+public fun quote_mint_exact_cost_with_builder_fee(
+    _market: &ExpiryMarket,
+    _wrapper: &AccountWrapper,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _max_cost: u64,
+    _min_quantity: u64,
+    _builder_fee_per_contract: u64,
+    _root: &AccumulatorRoot,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
+): MintQuote {
+    abort EUseV2
 }
 
 // === Order-Flow Reads ===
@@ -760,48 +669,30 @@ public fun redeem_inventory_impact_rebate(quote: &RedeemQuote): u64 {
 
 // === Order-Flow Quotes ===
 
-/// Quote an early sell of `close_quantity` of an open receipt's position at a
-/// market-bound `Pricer` and the clock: the close a sell fill prices, without the
-/// trader's floors. `proceeds` is before the order fee. No builder fee, matching
-/// the sell enqueue that names no builder, whatever `_builder_code_id` names;
-/// `quote_close_with_builder_fee` quotes one that does. Changes nothing. Aborts on
-/// the pricer binding (`EWrongPricer`), another market's receipt
-/// (`EWrongMarket`), a receipt that is not open (`EWrongStage`), `now >= expiry`
-/// (`EInvalidOrderTiming`), or a close that cannot be priced
-/// (`EOrderFailsLimits`). Public for the order-flow companion's sell preview and
-/// SDK reads.
+/// Retired like `quote_mint`: sell quotes are computed off chain. Aborts
+/// `EUseV2`.
 public fun quote_close(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    receipt: &OrderReceipt,
-    close_quantity: u64,
+    _market: &ExpiryMarket,
+    _pricer: &Pricer,
+    _receipt: &OrderReceipt,
+    _close_quantity: u64,
     _builder_code_id: Option<ID>,
-    clock: &Clock,
+    _clock: &Clock,
 ): RedeemQuote {
-    market.quote_sell(pricer, receipt, close_quantity, 0, clock)
+    abort EUseV2
 }
 
-/// `quote_close` for a sell that names a builder: charges
-/// `builder_fee_per_contract`, in FLOAT_SCALING of the $1 payout, capped at
-/// `protocol_config::builder_fee_cap` and then at the redeem value left after the
-/// trading fee, as the fill charges it. Public for the order-flow companion's sell
-/// preview and SDK reads.
+/// Retired like `quote_close`. Aborts `EUseV2`.
 public fun quote_close_with_builder_fee(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    receipt: &OrderReceipt,
-    close_quantity: u64,
-    builder_fee_per_contract: u64,
-    clock: &Clock,
+    _market: &ExpiryMarket,
+    _config: &ProtocolConfig,
+    _pricer: &Pricer,
+    _receipt: &OrderReceipt,
+    _close_quantity: u64,
+    _builder_fee_per_contract: u64,
+    _clock: &Clock,
 ): RedeemQuote {
-    market.quote_sell(
-        pricer,
-        receipt,
-        close_quantity,
-        capped_fee(config, builder_fee_per_contract),
-        clock,
-    )
+    abort EUseV2
 }
 
 /// Retired by delayed execution: always aborts `EDelayedExecutionRequired`.
@@ -915,31 +806,45 @@ public fun redeem_settled_permissionless(
     abort EDelayedExecutionRequired
 }
 
-/// Set this expiry's reference fine-grid tick from the exact previous-window
-/// Propbook Pyth observation. The source observation must be inserted into the
-/// feed at `reference_tick_source_timestamp_ms` before this call, and the
-/// normalized spot is floored to the market's `tick_size`. Not gated on the
-/// valuation lock: the reference tick shapes mint admission only, and a mint it
-/// admits mid-flush is invisible to the captured snapshot like any other.
+/// Retired: earlier versions read the reference tick's observation from
+/// Propbook. Aborts `EUseV2`. Use `set_reference_tick_v2`.
 public fun set_reference_tick(
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _clock: &Clock,
+): u64 {
+    abort EUseV2
+}
+
+/// Set this expiry's reference fine-grid tick from the signed Pyth Lazer price at
+/// exactly the period start (`reference_tick_source_timestamp_ms`): the binding's
+/// feed and channel, an envelope at exactly that time, and a generation time at
+/// most `constants::max_settlement_carry_ms!()` before it. The spot is floored to
+/// the market's `tick_size`. Permissionless. The first tick set stays: a later
+/// call that derives the same tick returns it, and one that derives another aborts
+/// (`strike_exposure::EReferenceTickAlreadySet`). Aborts
+/// `EReferenceTickObservationMissing` when `price` is none or not that
+/// observation. Not gated on the valuation lock: the reference tick shapes mint
+/// admission only, and a mint it admits mid-flush is invisible to the captured
+/// snapshot like any other.
+public fun set_reference_tick_v2(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
+    price: Option<LazerPrice>,
     clock: &Clock,
 ): u64 {
     config.chk_version();
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
-    let spot = pricing::exact_spot(
-        propbook_registry,
-        pyth,
-        market.propbook_underlying_id,
-        source_timestamp_ms,
+    let binding = config.binding(market.propbook_underlying_id);
+    assert!(
+        price.is_some_and!(|price| binding.px_ok(price, source_timestamp_ms)),
+        EReferenceTickObservationMissing,
     );
-    assert!(spot.is_some(), EReferenceTickObservationMissing);
 
-    let spot = spot.destroy_some();
+    let spot = price.destroy_some().spot();
     let tick_size = market.strike_exposure.tick_size();
     let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
@@ -969,20 +874,39 @@ public fun set_mint_paused(
     config_events::mkt_paused(market.id(), paused);
 }
 
-/// Settle from Propbook's exact positive Pyth spot at expiry, or from the exact Block Scholes
-/// minute-boundary spot when Pyth remains unavailable after the compiled grace period.
-/// Permissionless and idempotent; missing or unusable observations leave the market unsettled.
+/// Retired: earlier versions settled from Propbook's exact rows. Aborts
+/// `EUseV2`. Use `try_settle_v2`, which settles every market, including those
+/// created before it.
+public fun try_settle(
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _clock: &Clock,
+): bool {
+    abort EUseV2
+}
+
+/// Settle from the signed Pyth Lazer price at exactly expiry: the oracle
+/// binding's feed and channel, an envelope at exactly expiry, and a generation
+/// time at most `constants::max_settlement_carry_ms!()` before it. Once the
+/// compiled grace period (`constants::settlement_fallback_grace_ms!()`) has passed
+/// since expiry, a Block Scholes spot of the binding's base asset stamped exactly
+/// at expiry settles it instead when no such price is passed. Permissionless and
+/// idempotent: the first valid call settles, and later calls return `true`.
+/// Returns `false`, changing nothing, before expiry and when neither observation
+/// qualifies. Aborts only on the version gate and an underlying with no binding.
 ///
 /// Settlement reads nothing from the order-flow queue. Every admission's deadline is at least
 /// `constants::deadline_expiry_margin_ms!()` before expiry, so at expiry a waiting order can
 /// only be released, and the settled liability already covers every queue-held position,
 /// which lives in the payout tree. The companion drains and pays its queue afterwards.
-public fun try_settle(
+public fun try_settle_v2(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
+    price: Option<LazerPrice>,
+    spot: Option<BsSpot>,
     clock: &Clock,
 ): bool {
     config.chk_version();
@@ -1001,24 +925,18 @@ public fun try_settle(
     let now = clock.timestamp_ms();
     if (now < market.expiry) return false;
 
-    let pyth_spot = pricing::exact_spot(
-        propbook_registry,
-        pyth,
-        market.propbook_underlying_id,
-        market.expiry,
-    );
-    let (settlement_price, settlement_source) = if (pyth_spot.is_some()) {
-        (pyth_spot.destroy_some(), constants::settlement_source_pyth!())
+    let expiry = market.expiry;
+    let binding = config.binding(market.propbook_underlying_id);
+    let (settlement_price, settlement_source) = if (
+        price.is_some_and!(|price| binding.px_ok(price, expiry))
+    ) {
+        (price.destroy_some().spot(), constants::settlement_source_pyth!())
     } else {
-        if (now - market.expiry < constants::settlement_fallback_grace_ms!()) return false;
-        let block_scholes_spot = pricing::bs_spot_at(
-            propbook_registry,
-            bs_values,
-            market.propbook_underlying_id,
-            market.expiry,
-        );
-        if (block_scholes_spot.is_none()) return false;
-        (block_scholes_spot.destroy_some(), constants::settlement_source_block_scholes!())
+        if (
+            now - expiry < constants::settlement_fallback_grace_ms!()
+                || !spot.is_some_and!(|spot| binding.spot_ok(spot, expiry))
+        ) return false;
+        (spot.destroy_some().spot_price(), constants::settlement_source_block_scholes!())
     };
     market.strike_exposure.set_settled(settlement_price);
     // Live-close rebates are no longer reachable after settlement. Release the
@@ -1040,99 +958,167 @@ public fun try_settle(
 // the companion's witness `W`, which `protocol_config::set_order_flow` must have
 // allowlisted. `release` and `try_pay_settled` need only the receipt.
 
+/// Retired: earlier versions admitted a mint after reading Propbook's objects.
+/// Aborts `EUseV2`. Use `admit_mint_v2`.
+public fun admit_mint<W: drop>(
+    _w: W,
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _account: &mut Account,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    _kind: u8,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _quantity: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _max_probability: u64,
+    _budget: u64,
+    _order_fee: u64,
+    _svi_max_age_ms: u64,
+    _channel: u8,
+    _tau_ms: u64,
+    _deadline_ms: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): OrderReceipt {
+    abort EUseV2
+}
+
+/// Retired like `admit_mint`. Aborts `EUseV2`. Use `admit_mint_v2`.
+public fun admit_mint_with_builder<W: drop>(
+    _w: W,
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _account: &mut Account,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    _builder: Option<BuilderFee>,
+    _kind: u8,
+    _lower_tick: u64,
+    _higher_tick: u64,
+    _quantity: u64,
+    _max_premium: u64,
+    _min_quantity: u64,
+    _max_probability: u64,
+    _budget: u64,
+    _order_fee: u64,
+    _svi_max_age_ms: u64,
+    _channel: u8,
+    _tau_ms: u64,
+    _deadline_ms: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): OrderReceipt {
+    abort EUseV2
+}
+
+/// Retired: earlier versions admitted a sell after reading Propbook's objects.
+/// Aborts `EUseV2`. Use `admit_sell_v2`.
+public fun admit_sell<W: drop>(
+    _w: W,
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _account: &mut Account,
+    _receipt: &mut OrderReceipt,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    _close_quantity: u64,
+    _min_probability: u64,
+    _min_proceeds: u64,
+    _order_fee: u64,
+    _svi_max_age_ms: u64,
+    _channel: u8,
+    _tau_ms: u64,
+    _deadline_ms: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+) {
+    abort EUseV2
+}
+
+/// Retired like `admit_sell`. Aborts `EUseV2`. Use `admit_sell_v2`.
+public fun admit_sell_with_builder<W: drop>(
+    _w: W,
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _account: &mut Account,
+    _receipt: &mut OrderReceipt,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    _builder: Option<BuilderFee>,
+    _close_quantity: u64,
+    _min_probability: u64,
+    _min_proceeds: u64,
+    _order_fee: u64,
+    _svi_max_age_ms: u64,
+    _channel: u8,
+    _tau_ms: u64,
+    _deadline_ms: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+) {
+    abort EUseV2
+}
+
+/// Retired: the Lazer-only commit. Aborts `EUseV2`. `commit_v2` is the only
+/// commit, and it also records the order's Block Scholes inputs.
+public fun commit<W: drop>(
+    _w: W,
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _receipt: &mut OrderReceipt,
+    _price: &LazerPrice,
+    _clock: &Clock,
+): Balance<USDC> {
+    abort EUseV2
+}
+
 /// Admit one queued mint for the order-flow companion and return its receipt.
+/// Reads no oracle: the order is priced only at its τ, by `commit_v2` and the
+/// fill.
 ///
 /// `kind` is a `constants` mint kind. The companion has already taken `budget +
 /// order_fee` from the account and escrows it. `budget` caps the fill's all-in
 /// cost; the companion sets it to `min(max_cost, balance - order_fee)`, and to
 /// at most `quantity` for an exact-quantity mint. The order prices at a Pyth
 /// price on Lazer channel `channel`, generated at or after `tau_ms`, and must
-/// fill before `deadline_ms`.
+/// fill before `deadline_ms`. `builder` is the code the trade pays and its fee
+/// per contract, or none: admission caps the fee at
+/// `protocol_config::builder_fee_cap` and records the code and the capped fee in
+/// the receipt, and the fill charges the recorded fee, so a later cap change does
+/// not reach the order.
 ///
 /// Aborts unless `W` is allowlisted, the version and cutover gates pass, trading
-/// and this market's mints are unpaused, and the snapshot stage is closed. The
-/// timing must fit (`EInvalidOrderTiming`): `channel` a supported fixed-rate
-/// channel (`lazer_price::channel_fixed_rate_*`), `tau_ms` on its grid, at most one of
+/// and this market's mints are unpaused, the snapshot stage is closed, and the
+/// market's underlying has an oracle binding. The timing must fit
+/// (`EInvalidOrderTiming`): `channel` a supported fixed-rate channel
+/// (`lazer_price::channel_fixed_rate_*`), `tau_ms` on its grid, at most one of
 /// its ticks before now, and before `deadline_ms`, τ before the no-trade window,
-/// and the deadline at least
-/// `constants::deadline_expiry_margin_ms!()` before expiry. Then
-/// `svi_max_age_ms` must be within `constants::max_svi_max_age_ms!()` and `kind`
-/// a mint kind (`EInvalidOrderTerms`), the volatility snapshot must load,
-/// `budget` must be positive (`EMintCostCapRequired`), the order must pass its
-/// own limits at the clock without subsidy (`EOrderFailsLimits`), and its cash
-/// need must fit the market's spare cash (`EInsufficientMarketCash`). Admission
-/// then pins both boundary nodes, creating them under the node cap, and adds the
-/// cash need to the ledger.
-public fun admit_mint<W: drop>(
+/// and the deadline at least `constants::deadline_expiry_margin_ms!()` before
+/// expiry. Then `kind` must be a mint kind (`EInvalidOrderTerms`), the range a
+/// valid range on the market's admission grid (`EOrderFailsLimits`), `budget`
+/// positive (`EMintCostCapRequired`), a named builder past
+/// `constants::builder_fee_version!()` (`EBuilderFeeCutoverNotReached`), and the
+/// order's cash need must fit the market's spare cash (`EInsufficientMarketCash`).
+/// Admission then pins both boundary nodes, creating them under the node cap, and
+/// adds the cash need to the ledger. The order's own limits, the entry band, and
+/// the minimum premium are checked at τ, and an order that misses them is
+/// refunded then with its order fee kept.
+public fun admit_mint_v2<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     account: &mut Account,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    kind: u8,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    max_probability: u64,
-    budget: u64,
-    order_fee: u64,
-    svi_max_age_ms: u64,
-    channel: u8,
-    tau_ms: u64,
-    deadline_ms: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderReceipt {
-    config.chk_flow<W>();
-    market.admit_mnt(
-        config,
-        account,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        option::none(),
-        kind,
-        lower_tick,
-        higher_tick,
-        quantity,
-        max_premium,
-        min_quantity,
-        max_probability,
-        budget,
-        order_fee,
-        svi_max_age_ms,
-        channel,
-        tau_ms,
-        deadline_ms,
-        clock,
-        ctx,
-    )
-}
-
-/// `admit_mint` for an order that may name a builder. `builder` is the code the
-/// trade pays and its fee per contract, or none, which admits exactly as
-/// `admit_mint` does. Admission caps the fee at `protocol_config::builder_fee_cap`,
-/// records the code and the capped fee in the receipt, and prices the order's own
-/// limits at the clock with that fee. The fill charges the recorded fee, so a
-/// later cap change does not reach the order. Aborts as `admit_mint` does, and,
-/// for an order that names a builder, `EBuilderFeeCutoverNotReached` until the
-/// version watermark retires every version whose fill charges the legacy fee
-/// instead (`constants::builder_fee_version!()`).
-public fun admit_mint_with_builder<W: drop>(
-    _w: W,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    account: &mut Account,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     builder: Option<BuilderFee>,
     kind: u8,
     lower_tick: u64,
@@ -1143,174 +1129,177 @@ public fun admit_mint_with_builder<W: drop>(
     max_probability: u64,
     budget: u64,
     order_fee: u64,
-    svi_max_age_ms: u64,
     channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
-    ctx: &TxContext,
 ): OrderReceipt {
     config.chk_flow<W>();
-    market.admit_mnt(
-        config,
-        account,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        builder,
+    let vol = market.admit_gates(config, true, channel, tau_ms, deadline_ms, clock);
+    assert!(kind <= constants::mint_kind_exact_cost!(), EInvalidOrderTerms);
+    assert!(market.strike_exposure.rng_ok(lower_tick, higher_tick), EOrderFailsLimits);
+    assert!(budget > 0, EMintCostCapRequired);
+    let (builder_code_id, bfee) = bldr_terms(&builder, config);
+    // A fill pays at least `min_entry_probability` per contract into market
+    // cash (`pmath::need_qty` and `need_budget`). A premium-budget fill buys no
+    // more than `max_premium` allows, so a large budget does not inflate its need.
+    let p = market.strike_exposure.min_prob();
+    let cash_need = if (kind == constants::mint_kind_exact_quantity!()) {
+        pmath::need_qty(quantity, p)
+    } else if (kind == constants::mint_kind_exact_amount!()) {
+        pmath::need_budget(max_premium.min(budget), p)
+    } else {
+        pmath::need_budget(budget, p)
+    };
+    // Only this order's own need, against cash above required cash: one that
+    // misses at its tick never touches cash, and the fill checks cash again.
+    assert!(cash_need <= market.cash.balance() - market.required_cash(), EInsufficientMarketCash);
+    // Pinning both boundary nodes now means a fill never creates one.
+    market.strike_exposure.ens_nodes(lower_tick, higher_tick);
+    let ledger = market.ledger_mut();
+    pin(&mut ledger.pins, lower_tick);
+    pin(&mut ledger.pins, higher_tick);
+    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
+    let zero = 0;
+    OrderReceipt {
+        expiry_market_id: market.id(),
+        stage: constants::receipt_stage_mint!(),
         kind,
+        parties: parties(account, builder_code_id),
         lower_tick,
         higher_tick,
         quantity,
         max_premium,
         min_quantity,
         max_probability,
-        budget,
-        order_fee,
-        svi_max_age_ms,
-        channel,
+        min_probability: zero,
+        // A mint never uses its sell floor, so it carries the builder fee.
+        min_proceeds: bfee,
         tau_ms,
         deadline_ms,
-        clock,
-        ctx,
-    )
+        channel,
+        vol,
+        budget,
+        order_fee,
+        cash_need,
+        // `commit_v2` sets the bound from the order's price at τ.
+        subsidy_bound: zero,
+        subsidy_rate: zero,
+        subsidy_reserved: zero,
+        spot: zero,
+        tick_ms: zero,
+        generation_us: zero,
+        order_id: (zero as u256),
+        root_id: (zero as u256),
+        opened_at_ms: zero,
+        held_quantity: zero,
+    }
 }
 
 /// Admit an early sell of `close_quantity` of an open receipt's position: the
 /// receipt moves to the sell stage in place, with the sell's request, the
-/// account's current owner and no builder code, a fresh volatility snapshot, τ,
-/// the deadline, and no price. The companion escrows `order_fee` and owns the
-/// minimum-sell checks.
+/// account's current owner and the builder code `builder` names, τ, the
+/// deadline, and no price. Reads no oracle. The companion escrows `order_fee`
+/// and owns the minimum-sell checks. `builder` is capped and recorded as in
+/// `admit_mint_v2`.
 ///
 /// Open during the trading pause and a market mint pause. Aborts unless `W` is
 /// allowlisted, the version, cutover, and snapshot-stage gates and
-/// `admit_mint`'s timing and SVI-age checks pass, the receipt is this market's
+/// `admit_mint_v2`'s timing and binding checks pass, the receipt is this market's
 /// (`EWrongMarket`), open (`EWrongStage`), and `account`'s (`ENotRecordOwner`),
-/// the volatility snapshot loads, and the close passes its own floors at the
-/// clock (`EOrderFailsLimits`). Then adds the sell's cash need,
-/// `ceil(close_quantity * (1 - backing_buffer_lambda)) + 1`, to the ledger: a
-/// close lowers payout liability by at least `lambda * close_quantity` and pays
-/// at most `close_quantity`. There is no spare-cash check. The keeper funds the
-/// market before τ, and the fill refunds a sell the market cannot cover.
-public fun admit_sell<W: drop>(
+/// and `close_quantity` is a positive whole number of lots at most the position
+/// (`EOrderFailsLimits`). The close's floors are checked at τ. Then adds the
+/// sell's cash need, `ceil(close_quantity * (1 - backing_buffer_lambda)) + 1`, to
+/// the ledger: a close lowers payout liability by at least `lambda *
+/// close_quantity` and pays at most `close_quantity`. There is no spare-cash
+/// check. The keeper funds the market before τ, and the fill refunds a sell the
+/// market cannot cover.
+public fun admit_sell_v2<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     account: &mut Account,
     receipt: &mut OrderReceipt,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    close_quantity: u64,
-    min_probability: u64,
-    min_proceeds: u64,
-    order_fee: u64,
-    svi_max_age_ms: u64,
-    channel: u8,
-    tau_ms: u64,
-    deadline_ms: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    config.chk_flow<W>();
-    market.admit_sl(
-        config,
-        account,
-        receipt,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        option::none(),
-        close_quantity,
-        min_probability,
-        min_proceeds,
-        order_fee,
-        svi_max_age_ms,
-        channel,
-        tau_ms,
-        deadline_ms,
-        clock,
-        ctx,
-    );
-}
-
-/// `admit_sell` for a sell that may name a builder. `builder` is the code the
-/// sell pays and its fee per contract, or none, which admits exactly as
-/// `admit_sell` does. Admission caps the fee at `protocol_config::builder_fee_cap`,
-/// records the code in the receipt in place of the mint's along with the capped
-/// fee, and prices the close's floors at the clock with that fee. The fill
-/// charges the recorded fee. Aborts as `admit_sell` does, and, for a sell that
-/// names a builder, `EBuilderFeeCutoverNotReached` until the version watermark
-/// reaches `constants::builder_fee_version!()`.
-public fun admit_sell_with_builder<W: drop>(
-    _w: W,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    account: &mut Account,
-    receipt: &mut OrderReceipt,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     builder: Option<BuilderFee>,
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
     order_fee: u64,
-    svi_max_age_ms: u64,
     channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
-    ctx: &TxContext,
 ) {
     config.chk_flow<W>();
-    market.admit_sl(
-        config,
-        account,
-        receipt,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        builder,
+    let vol = market.admit_gates(config, false, channel, tau_ms, deadline_ms, clock);
+    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
+    // Canonical open: every move into the open stage goes through `to_open`,
+    // and the position's size is the one its order ID names.
+    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
+    let held = order::from_id(receipt.order_id).quantity();
+    assert!(held == receipt.held_quantity, EWrongStage);
+    assert!(receipt.parties.account_id == account.account_id(), ENotRecordOwner);
+    assert!(
+        close_quantity > 0 && close_quantity <= held
+            && close_quantity % constants::position_lot_size!() == 0,
+        EOrderFailsLimits,
+    );
+    let (builder_code_id, bfee) = bldr_terms(&builder, config);
+    let cash_need = pmath::need_sell(
         close_quantity,
-        min_probability,
-        min_proceeds,
-        order_fee,
-        svi_max_age_ms,
-        channel,
-        tau_ms,
-        deadline_ms,
-        clock,
-        ctx,
-    )
+        market.strike_exposure.backing_buffer_lambda(),
+    );
+    let ledger = market.ledger_mut();
+    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
+    // Canonical open already zeroes the mint limits, the budget, the subsidy,
+    // and the price, so only the sell column is written. The position group
+    // stays, so a refund restores it whole.
+    receipt.stage = constants::receipt_stage_sell!();
+    receipt.kind = constants::order_kind_sell!();
+    receipt.parties = parties(account, builder_code_id);
+    receipt.quantity = close_quantity;
+    receipt.min_probability = min_probability;
+    receipt.min_proceeds = min_proceeds;
+    receipt.tau_ms = tau_ms;
+    receipt.deadline_ms = deadline_ms;
+    receipt.channel = channel;
+    receipt.vol = vol;
+    receipt.order_fee = order_fee;
+    receipt.cash_need = cash_need;
+    // A sell never uses the mint's premium cap, so it carries the builder fee.
+    receipt.max_premium = bfee;
 }
 
-/// Commit the Pyth price an admitted order fills at: a `LazerPrice`, which only
-/// the `deepbook_predict_math` library builds, from a Pyth-verified Lazer
-/// update. Stores the spot, the envelope time (the tick the fill prices at),
-/// and the feed's generation time. For a mint it also reserves the fee subsidy,
-/// `min(subsidy_bound * fee_incentive_subsidy_rate, incentives left)`, records
-/// the rate and amount, and returns the reservation for the companion to escrow
-/// with the order. A sell returns a zero balance.
+/// Commit the price an admitted order fills at. `price` is a `LazerPrice`, which
+/// only the `deepbook_predict_math` library builds, from a Pyth-verified Lazer
+/// update. `vol` is a `block_scholes::BsVol`, which only that library builds,
+/// from Block Scholes-verified updates. Stores the spot, the envelope time (the
+/// tick the fill prices at), the feed's generation time, and the Block Scholes
+/// inputs in the receipt's `VolSnapshot` (an 18-decimal SVI tuple also in the
+/// market's SVI cache). For a mint it then prices the order at the tick without
+/// subsidy and caps the subsidy bound at that quote's trading fee and the budget,
+/// reserves the fee subsidy, `min(subsidy_bound * fee_incentive_subsidy_rate,
+/// incentives left)`, records the rate and amount, and returns the reservation for
+/// the companion to escrow with the order. A sell returns a zero balance.
 ///
-/// The price must be the receipt's: its Pyth feed and channel, an envelope at
-/// exactly τ or one tick of that channel later (the backup tick), a generation
-/// time between τ and the envelope, an envelope at or before now, and a
-/// pricing-safe spot (`EWrongPrice`). Aborts unless `W` is allowlisted, the
-/// version gate passes, the receipt is this market's (`EWrongMarket`), admitted
-/// with no price yet (`EWrongStage`), and before its deadline
-/// (`EInvalidOrderTiming`).
-public fun commit<W: drop>(
+/// The price must be the receipt's: its Pyth feed, which must still be the
+/// market's oracle binding's, and channel, an envelope at exactly τ or one tick
+/// of that channel later (the backup tick), a generation time between τ and the
+/// envelope, an envelope at or before now, and a pricing-safe spot
+/// (`EWrongPrice`). `vol` must match the market's oracle
+/// binding (base asset, SVI model, and decimals) and expiry, with both source
+/// times at or before τ and at most `constants::max_svi_max_age_ms!()` before it
+/// (`EWrongVol`). Which Block Scholes slots an order takes is the companion's
+/// rule. Aborts unless `W` is allowlisted, the version gate passes, the receipt
+/// is this market's (`EWrongMarket`), admitted with no price yet (`EWrongStage`),
+/// and before its deadline (`EInvalidOrderTiming`).
+public fun commit_v2<W: drop>(
     _w: W,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     receipt: &mut OrderReceipt,
     price: &LazerPrice,
+    vol: &BsVol,
     clock: &Clock,
 ): Balance<USDC> {
     config.chk_flow<W>();
@@ -1324,10 +1313,58 @@ public fun commit<W: drop>(
     let now = clock.timestamp_ms();
     assert!(now < receipt.deadline_ms, EInvalidOrderTiming);
     chk_price(receipt, price, now);
+    let tau = receipt.tau_ms;
+    let value_ms = vol.value_ms();
+    let svi_ms = vol.svi_ms();
+    let max_age = constants::max_svi_max_age_ms!();
+    let binding = config.binding(market.propbook_underlying_id);
+    // An order admitted under another feed commits under no binding: it waits for
+    // its deadline refund.
+    assert!(receipt.vol.pyth_source_id() == binding.lazer_feed_id(), EWrongPrice);
+    assert!(
+        binding.vol_ok(vol, market.expiry)
+            && value_ms <= tau && tau - value_ms <= max_age
+            && svi_ms <= tau && tau - svi_ms <= max_age,
+        EWrongVol,
+    );
+    let tick_ms = price.envelope_us() / 1000;
+    receipt.vol = pricing::snap_v2(vol, receipt.vol.pyth_source_id(), &mut market.id);
     receipt.spot = price.spot();
-    receipt.tick_ms = price.envelope_us() / 1000;
+    receipt.tick_ms = tick_ms;
     receipt.generation_us = price.generation_us();
     if (!is_mint) return balance::zero();
+    // The subsidy bound is the order's pre-subsidy trading fee at its tick, so one
+    // order cannot reserve more of the market's incentives than it can use. Priced
+    // without the payout-tree reads, so a whole cohort commits in one transaction.
+    let pricer = pricing::pricer_at(
+        &receipt.vol,
+        &market.id,
+        receipt.spot,
+        receipt.generation_us / 1000,
+        tick_ms,
+        market.id(),
+        market.expiry,
+    );
+    let fee = pricer.map!(|pricer| {
+        let (_, quote, _, _) = market.price_mint(
+            &pricer,
+            receipt.kind,
+            receipt.lower_tick,
+            receipt.higher_tick,
+            receipt.quantity,
+            receipt.max_premium,
+            receipt.min_quantity,
+            receipt.budget,
+            receipt.max_probability,
+            receipt.builder_fee_per_contract(),
+            0,
+            0,
+            tick_ms,
+            false,
+        );
+        quote.trading_fee
+    });
+    receipt.subsidy_bound = fee.destroy_or!(0).min(receipt.budget);
     let rate = config.fee_incentive_subsidy_rate();
     let amount = math::mul_down(receipt.subsidy_bound, rate).min(market
         .fee_incentive_balance
@@ -1353,10 +1390,11 @@ public fun commit<W: drop>(
 /// or past the deadline, which also covers expiry and settlement; 9 when USDC
 /// sent to the receipt's receive address would abort the transaction (`denied`:
 /// the address is on USDC's deny list for the current epoch, or USDC is
-/// globally paused), so nothing is sent there; 2 when no `Pricer` exists at the
-/// tick; then the fill's own 1 (the order's limits), 2 (admission), 4 (a pinned
-/// node is missing, a backstop), and 8 (the market's cash after the fill would
-/// not cover its required cash).
+/// globally paused), so nothing is sent there. 10 when the committed Block
+/// Scholes inputs build no `Pricer` at the tick (`pricing::pricer_at`). Then the
+/// fill's own 1 (the order's limits), 2 (admission), 4 (a pinned node is
+/// missing, a backstop), and 8 (the market's cash after the fill would not cover
+/// its required cash).
 ///
 /// A mint fill pays the premium, the trading fee net of the referral share, the
 /// used subsidy, the order fee, and the inventory-impact charge into market
@@ -1416,7 +1454,7 @@ public fun try_fill<W: drop>(
                 market.id(),
                 market.expiry,
             );
-            reason = constants::fill_reason_admission!();
+            reason = constants::fill_reason_no_vol!();
             if (pricer.is_some() && is_mint) {
                 let (fill_reason, quote, referral_fee) = market.fill_mint(
                     config,
@@ -1584,6 +1622,61 @@ public(package) fun inc_in(market: &mut ExpiryMarket, incentives: Balance<USDC>)
     market.fee_incentive_balance.join(incentives);
 }
 
+/// The flush's frozen mark for this market, for a flush started at
+/// `started_at_ms`: the Pyth price and Block Scholes inputs signed for one
+/// instant under the market's oracle binding, built into a `Pricer` as a fill
+/// builds one, with an 18-decimal SVI tuple kept in the market's SVI cache. The
+/// instant is the price's envelope time. Aborts `EWrongPrice` unless `price` is
+/// the binding's observation with a pricing-safe spot, stamped at or before
+/// `started_at_ms` and at most the Block Scholes price freshness before it, and
+/// `EWrongVol` unless `vol` is the binding's, for this expiry, with spot,
+/// forward, and SVI all stamped at the instant and pricing there.
+public(package) fun frozen_v2(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    price: Option<LazerPrice>,
+    vol: Option<BsVol>,
+    started_at_ms: u64,
+): FrozenPricer {
+    let binding = config.binding(market.propbook_underlying_id);
+    let instant_ms = price.map_ref!(|price| price.envelope_us() / 1000).destroy_or!(0);
+    assert!(
+        price.is_some_and!(
+            |
+                price,
+            | binding.px_ok(price, instant_ms)
+            && instant_ms <= started_at_ms
+            && started_at_ms - instant_ms <= config.pr_cfg().bs_age()
+            && pricing::safe_spot(price.spot()),
+        ),
+        EWrongPrice,
+    );
+    let expiry = market.expiry;
+    assert!(
+        vol.is_some_and!(
+            |
+                vol,
+            | binding.vol_ok(vol, expiry)
+            && vol.value_ms() == instant_ms
+            && vol.svi_ms() == instant_ms,
+        ),
+        EWrongVol,
+    );
+    let price = price.destroy_some();
+    let snapshot = pricing::snap_v2(vol.borrow(), binding.lazer_feed_id(), &mut market.id);
+    let pricer = pricing::pricer_at(
+        &snapshot,
+        &market.id,
+        price.spot(),
+        price.generation_us() / 1000,
+        instant_ms,
+        market.id(),
+        expiry,
+    );
+    assert!(pricer.is_some(), EWrongVol);
+    pricer.destroy_some().into_frozen()
+}
+
 /// Stamp this market for the flush freezing it: capture the two cash rows (this
 /// call IS the snapshot instant) and activate the tree snapshot. A surviving
 /// stamp being replaced is stale by construction — `begin_val` bumped the
@@ -1615,8 +1708,8 @@ public(package) fun clear_stamp(market: &mut ExpiryMarket) {
     market.strike_exposure.drop_snap(pins);
 }
 
-/// NAV at the flush's snapshot instant: `current_nav`'s exact shape over values
-/// captured AT that instant — the stamp's cash copy predates every
+/// NAV at the flush's snapshot instant: free cash less the marked liability,
+/// floored at zero, over values captured AT that instant — the stamp's cash copy predates every
 /// post-snapshot mutation and the tree captures each node before its first, so
 /// the zero floors are exact (backing keeps the pre-floor value above zero up
 /// to P-13's rounding dust).
@@ -1804,11 +1897,7 @@ fun assert_live_flow_allowed(
     // fallback would price the trade on the lower-frequency Block Scholes forward
     // and let it land on either side of the source switch. A gap in Pyth updates
     // therefore delays a live close as well as a mint; the position still exits
-    // through settlement. Valuation reads (`current_nav`,
-    // `live_order_value`, the flush snapshot) do not pass through here and keep the
-    // fallback, so the flush does not stall on a stale or unavailable Pyth spot,
-    // and a client previewing a close through `live_order_value` gets a value
-    // while the close itself aborts.
+    // through settlement.
     pricer.assert_pyth_spot_fresh(config.pr_cfg(), clock);
 }
 
@@ -2350,202 +2439,6 @@ fun settle_live_redeem_payment(
 
 // --- Order flow ---
 
-/// `admit_mint`'s body, for an order that names `builder` or none.
-fun admit_mnt(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    account: &mut Account,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    builder: Option<BuilderFee>,
-    kind: u8,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    max_probability: u64,
-    budget: u64,
-    order_fee: u64,
-    svi_max_age_ms: u64,
-    channel: u8,
-    tau_ms: u64,
-    deadline_ms: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderReceipt {
-    let (vol, pricer) = market.admit_gates(
-        config,
-        true,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        svi_max_age_ms,
-        channel,
-        tau_ms,
-        deadline_ms,
-        clock,
-        ctx,
-    );
-    assert!(budget > 0, EMintCostCapRequired);
-    let (builder_code_id, bfee) = bldr_terms(&builder, config);
-    // The t₀ dry run is the fill's own predicate at the clock without subsidy,
-    // so admission refuses exactly what a fill would refund on the same inputs.
-    let (_, quote, _, reason) = market.price_mint(
-        &pricer,
-        kind,
-        lower_tick,
-        higher_tick,
-        quantity,
-        max_premium,
-        min_quantity,
-        budget,
-        max_probability,
-        bfee,
-        0,
-        0,
-        clock.timestamp_ms(),
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    // A fill pays at least `min_entry_probability` per contract into market
-    // cash (`pmath::need_qty` and `need_budget`). A premium-budget fill buys no
-    // more than `max_premium` allows, so a large budget does not inflate its need.
-    let p = market.strike_exposure.min_prob();
-    let cash_need = if (kind == constants::mint_kind_exact_quantity!()) {
-        pmath::need_qty(quantity, p)
-    } else if (kind == constants::mint_kind_exact_amount!()) {
-        pmath::need_budget(max_premium.min(budget), p)
-    } else {
-        pmath::need_budget(budget, p)
-    };
-    // Only this order's own need, against cash above required cash: one that
-    // misses at its tick never touches cash, and the fill checks cash again.
-    assert!(cash_need <= market.cash.balance() - market.required_cash(), EInsufficientMarketCash);
-    // Pinning both boundary nodes now means a fill never creates one.
-    market.strike_exposure.ens_nodes(lower_tick, higher_tick);
-    let ledger = market.ledger_mut();
-    pin(&mut ledger.pins, lower_tick);
-    pin(&mut ledger.pins, higher_tick);
-    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
-    let zero = 0;
-    OrderReceipt {
-        expiry_market_id: market.id(),
-        stage: constants::receipt_stage_mint!(),
-        kind,
-        parties: parties(account, builder_code_id),
-        lower_tick,
-        higher_tick,
-        quantity,
-        max_premium,
-        min_quantity,
-        max_probability,
-        min_probability: zero,
-        // A mint never uses its sell floor, so it carries the builder fee.
-        min_proceeds: bfee,
-        tau_ms,
-        deadline_ms,
-        channel,
-        vol,
-        budget,
-        order_fee,
-        cash_need,
-        // Bounds the subsidy a commit reserves, so one order cannot soak up the
-        // market's incentives.
-        subsidy_bound: quote.trading_fee.min(budget),
-        subsidy_rate: zero,
-        subsidy_reserved: zero,
-        spot: zero,
-        tick_ms: zero,
-        generation_us: zero,
-        order_id: (zero as u256),
-        root_id: (zero as u256),
-        opened_at_ms: zero,
-        held_quantity: zero,
-    }
-}
-
-/// `admit_sell`'s body, for a sell that names `builder` or none.
-fun admit_sl(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    account: &mut Account,
-    receipt: &mut OrderReceipt,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    builder: Option<BuilderFee>,
-    close_quantity: u64,
-    min_probability: u64,
-    min_proceeds: u64,
-    order_fee: u64,
-    svi_max_age_ms: u64,
-    channel: u8,
-    tau_ms: u64,
-    deadline_ms: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    let (vol, pricer) = market.admit_gates(
-        config,
-        false,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        svi_max_age_ms,
-        channel,
-        tau_ms,
-        deadline_ms,
-        clock,
-        ctx,
-    );
-    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
-    // Canonical open: every move into the open stage goes through `to_open`,
-    // and the position's size is the one its order ID names.
-    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
-    let held = order::from_id(receipt.order_id);
-    assert!(held.quantity() == receipt.held_quantity, EWrongStage);
-    assert!(receipt.parties.account_id == account.account_id(), ENotRecordOwner);
-    let (builder_code_id, bfee) = bldr_terms(&builder, config);
-    let (_, _, reason) = market.price_close(
-        &pricer,
-        &held,
-        close_quantity,
-        min_probability,
-        min_proceeds,
-        bfee,
-        clock.timestamp_ms(),
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    let cash_need = pmath::need_sell(
-        close_quantity,
-        market.strike_exposure.backing_buffer_lambda(),
-    );
-    let ledger = market.ledger_mut();
-    ledger.waiting_cash_need = ledger.waiting_cash_need + cash_need;
-    // Canonical open already zeroes the mint limits, the budget, the subsidy,
-    // and the price, so only the sell column is written. The position group
-    // stays, so a refund restores it whole.
-    receipt.stage = constants::receipt_stage_sell!();
-    receipt.kind = constants::order_kind_sell!();
-    receipt.parties = parties(account, builder_code_id);
-    receipt.quantity = close_quantity;
-    receipt.min_probability = min_probability;
-    receipt.min_proceeds = min_proceeds;
-    receipt.tau_ms = tau_ms;
-    receipt.deadline_ms = deadline_ms;
-    receipt.channel = channel;
-    receipt.vol = vol;
-    receipt.order_fee = order_fee;
-    receipt.cash_need = cash_need;
-    // A sell never uses the mint's premium cap, so it carries the builder fee.
-    receipt.max_premium = bfee;
-}
-
 /// The code and capped fee per contract an order's optional `builder` names, or
 /// `(none, 0)` without one.
 fun bldr_terms(builder: &Option<BuilderFee>, config: &ProtocolConfig): (Option<ID>, u64) {
@@ -2562,24 +2455,18 @@ fun capped_fee(config: &ProtocolConfig, fee_per_contract: u64): u64 {
     fee_per_contract.min(config.builder_fee_cap())
 }
 
-/// The gates, timing checks, and volatility snapshot both admissions share,
-/// after the caller's witness check. Returns the snapshot and the t₀ `Pricer`
-/// the dry run prices with; the `Pricer` never leaves the admission.
+/// The gates and timing checks both admissions share, after the caller's
+/// witness check. Returns the receipt's snapshot: the binding's Pyth feed and no
+/// Block Scholes inputs.
 fun admit_gates(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     is_mint: bool,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    svi_max_age_ms: u64,
     channel: u8,
     tau_ms: u64,
     deadline_ms: u64,
     clock: &Clock,
-    ctx: &TxContext,
-): (VolSnapshot, Pricer) {
+): VolSnapshot {
     config.chk_version();
     config.chk_cutover();
     if (is_mint) {
@@ -2605,86 +2492,7 @@ fun admit_gates(
             && deadline_ms + constants::deadline_expiry_margin_ms!() <= expiry,
         EInvalidOrderTiming,
     );
-    assert!(svi_max_age_ms <= constants::max_svi_max_age_ms!(), EInvalidOrderTerms);
-    pricing::load_vol(
-        config.pr_cfg(),
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
-        market.id(),
-        market.propbook_underlying_id,
-        expiry,
-        svi_max_age_ms,
-        &mut market.id,
-        clock,
-        ctx,
-    )
-}
-
-/// The quote core behind the published mint previews, at tick `now` with the
-/// configured subsidy rate capped by the market's incentive balance.
-fun quote_now(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    kind: u8,
-    lower_tick: u64,
-    higher_tick: u64,
-    max_premium: u64,
-    min_quantity: u64,
-    cost_cap: u64,
-    bfee: u64,
-    clock: &Clock,
-): MintQuote {
-    market.chk_pricer(pricer);
-    let now = clock.timestamp_ms();
-    assert!(now < market.expiry, EInvalidOrderTiming);
-    let (_, quote, _, reason) = market.price_mint(
-        pricer,
-        kind,
-        lower_tick,
-        higher_tick,
-        min_quantity,
-        max_premium,
-        min_quantity,
-        cost_cap,
-        std::u64::max_value!(),
-        bfee,
-        config.fee_incentive_subsidy_rate(),
-        market.fee_incentive_balance.value(),
-        now,
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    quote
-}
-
-/// The close a sell fill prices at the clock for an open receipt, charging the
-/// capped `bfee`, without the trader's floors. Both sell quotes share it.
-fun quote_sell(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    receipt: &OrderReceipt,
-    close_quantity: u64,
-    bfee: u64,
-    clock: &Clock,
-): RedeemQuote {
-    market.chk_pricer(pricer);
-    assert!(receipt.expiry_market_id == market.id(), EWrongMarket);
-    assert!(receipt.stage == constants::receipt_stage_open!(), EWrongStage);
-    let now = clock.timestamp_ms();
-    assert!(now < market.expiry, EInvalidOrderTiming);
-    let (_, quote, reason) = market.price_close(
-        pricer,
-        &order::from_id(receipt.order_id),
-        close_quantity,
-        0,
-        0,
-        bfee,
-        now,
-    );
-    assert!(reason == 0, EOrderFailsLimits);
-    quote
+    pricing::feed_snap(config.binding(market.propbook_underlying_id).lazer_feed_id())
 }
 
 /// Fill a committed mint at its tick `pricer` and return `0`, its quote, and
@@ -2716,6 +2524,7 @@ fun fill_mint(
         receipt.subsidy_rate,
         receipt.subsidy_reserved,
         tick_ms,
+        true,
     );
     if (reason != 0) return (reason, quote, 0);
     if (!market.strike_exposure.nodes_exist(receipt.lower_tick, receipt.higher_tick)) {
@@ -3053,16 +2862,16 @@ fun unpin(pins: &mut VecMap<u64, u64>, tick: u64) {
 
 /// Price a queued mint at a tick against its own limits. Returns the terms (or
 /// `none`), the quote, the payout liability after the fill, and the refund
-/// reason (`0` with terms). Admission's dry run, the fill, and the published
-/// mint previews share it, so admission refuses exactly what a fill would
-/// refund on the same inputs. Aborts `EInvalidOrderTerms` unless `kind` is a
-/// mint kind.
+/// reason (`0` with terms). The commit's subsidy bound, the fill, and the
+/// version 5 mint previews share it, so the bound comes from the price the fill
+/// charges. Aborts `EInvalidOrderTerms` unless `kind` is a mint kind.
 ///
 /// Reason 2 when the range cannot be priced or leaves the entry band, misses the
 /// minimum premium, or costs more than its maximum payout. Reason 1 when the
 /// size is zero or below `min_quantity`, an exact-quantity order's probability is
 /// above its `max_probability`, or the all-in cost is above `cost_cap`. The
-/// liability comes from the range's own pre-mint book reads.
+/// liability comes from the range's own pre-mint book reads, taken only with
+/// `book` (`strike_exposure::try_rng`).
 fun price_mint(
     market: &ExpiryMarket,
     pricer: &Pricer,
@@ -3078,9 +2887,10 @@ fun price_mint(
     subsidy_rate: u64,
     subsidy_cap: u64,
     tick_ms: u64,
+    book: bool,
 ): (Option<MintTerms>, MintQuote, u64, u8) {
     assert!(kind <= constants::mint_kind_exact_cost!(), EInvalidOrderTerms);
-    let range = market.strike_exposure.try_rng(pricer, lower_tick, higher_tick);
+    let range = market.strike_exposure.try_rng(pricer, lower_tick, higher_tick, book);
     if (range.is_none()) {
         return (option::none(), empty_mint_q(), 0, constants::fill_reason_admission!())
     };
@@ -3287,7 +3097,7 @@ fun mint_q_at(
 /// Price a queued sell at a tick against its own floors. Returns the close terms
 /// (or `none`), the quote, and the refund reason (`0` with terms): 2 when the
 /// close cannot be priced, 1 below `min_probability` or `min_proceeds`.
-/// Admission's dry run, the fill, and `quote_close` share it.
+/// The fill and the version 5 `quote_close` share it.
 fun price_close(
     market: &ExpiryMarket,
     pricer: &Pricer,
@@ -3434,6 +3244,10 @@ fun chk_backed(market: &ExpiryMarket) {
             >= market.strike_exposure.impact_pot(),
     );
 }
+
+// === Test-Only: the Pricer reads version 5 published ===
+// Retired with live pricing in version 6 (they abort `EUseV2`), and kept so tests
+// can still read quotes and NAV from a test `Pricer`.
 
 // === Test-Only: retired instant-trading paths ===
 // The bodies the retired public functions had, kept so tests can still seed

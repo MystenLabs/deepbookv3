@@ -230,7 +230,7 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertFalse((root / "Move.lock").exists())
         self.assertEqual(canonical.read_bytes(), before)
 
-    def test_consumer_rewrite_accepts_the_math_library_without_block_scholes(self) -> None:
+    def test_consumer_rewrite_points_the_math_library_at_staged_oracles(self) -> None:
         canonical = config.PACKAGES_DIR / "predict_math" / "Move.toml"
         before = canonical.read_bytes()
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,8 +244,11 @@ class PublicationPlanTests(unittest.TestCase):
             rewritten = staging._manifest(manifest)
             self.assertEqual(rewritten["dependencies"]["pyth_lazer"], {"local": str(root / "pyth")})
             self.assertEqual(rewritten["dep-replacements"]["testnet"]["wormhole"]["original-id"], "0x22")
-            self.assertNotIn("bs_oracle", rewritten["dependencies"])
-            self.assertNotIn("bs_oracle", rewritten["dep-replacements"]["testnet"])
+            # The library decodes Block Scholes updates since Predict version 6.
+            self.assertEqual(rewritten["dependencies"]["bs_oracle"], {"local": str(root / "bs_oracle")})
+            self.assertEqual(rewritten["dependencies"]["bs_sid"], {"local": str(root / "bs_sid")})
+            self.assertEqual(rewritten["dep-replacements"]["testnet"]["bs_oracle"]["original-id"], "0x33")
+            self.assertEqual(rewritten["dep-replacements"]["testnet"]["bs_sid"]["original-id"], "0x44")
         self.assertEqual(canonical.read_bytes(), before)
 
     def test_consumer_rewrite_points_the_order_flow_companion_at_staged_oracles(self) -> None:
@@ -739,6 +742,7 @@ class LifecycleTests(unittest.TestCase):
             for name in (
                 "predict",
                 "predict_orders",
+                "predict_math",
                 "account",
                 "fixed_math",
                 "block_scholes_oracle",

@@ -33,7 +33,7 @@ use deepbook_predict_orders::{
     order_queue,
     queue,
     queue_event_views as events,
-    queue_fixture as fixture
+    queue_fixture::{Self as fixture, QueueTest}
 };
 use std::unit_test::assert_eq;
 
@@ -400,18 +400,23 @@ fun a_builder_mint_capped_at_exactly_its_cost_with_the_fee_fills() {
     q.finish();
 }
 
-/// One unit less and placement refuses the order: its t₀ dry run costs
-/// ALL_IN_COST_WITH_FEE against a budget of min(max_cost, quantity) one short.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_builder_mint_capped_one_unit_short_of_its_cost_with_the_fee_is_refused() {
+/// One unit less and the fill refunds the order at τ: the fee brings its cost to
+/// ALL_IN_COST_WITH_FEE, one past its budget of min(max_cost, quantity).
+#[test]
+fun a_builder_mint_capped_one_unit_short_of_its_cost_with_the_fee_is_refunded() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
-    q.enqueue_atm_with_builder(
+    let record_id = q.enqueue_atm_with_builder(
         QUANTITY,
         ONE_SHORT_OF_4M_WITH_FEE,
         code_id,
         BUILDER_FEE_PER_CONTRACT,
     );
-    abort 999
+    let (refunded, reason, fee_returned) = refund_at(&mut q, TAU);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 /// The same `max_cost` admits and fills the same mint without a builder, so
@@ -454,15 +459,20 @@ fun a_builder_mint_costing_exactly_its_payout_fills() {
     q.finish();
 }
 
-/// One unit past the payout is refused at placement. An exact-quantity budget is
-/// min(max_cost, quantity), here the payout itself, so the cost cap refuses the
-/// same order; the premium-budget pair below separates the two bounds.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_builder_mint_costing_one_unit_above_its_payout_is_refused() {
+/// One unit past the payout is refunded at τ. The payout bound is checked before
+/// the cost cap, so the refund is admission's (reason 2). The premium-budget pair
+/// below separates the two bounds.
+#[test]
+fun a_builder_mint_costing_one_unit_above_its_payout_is_refunded() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
     q.set_builder_fee_cap(MAX_CAP);
-    q.enqueue_atm_with_builder(QUANTITY, QUANTITY, code_id, PAST_PAYOUT_FEE);
-    abort 999
+    let record_id = q.enqueue_atm_with_builder(QUANTITY, QUANTITY, code_id, PAST_PAYOUT_FEE);
+    let (refunded, reason, fee_returned) = refund_at(&mut q, TAU);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_admission());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 /// A premium-budget mint's budget is not capped at its quantity: with a 5 USDC
@@ -492,20 +502,25 @@ fun a_premium_budget_builder_mint_costing_exactly_its_payout_fills_inside_a_larg
     q.finish();
 }
 
-/// One unit past the payout is refused by the payout bound alone: the
-/// 4_000_001 all-in cost is inside the 5 USDC budget.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_premium_budget_builder_mint_one_unit_above_its_payout_is_refused_inside_its_budget() {
+/// One unit past the payout is refunded by the payout bound alone: the 4_000_001
+/// all-in cost is inside the 5 USDC budget.
+#[test]
+fun a_premium_budget_builder_mint_one_unit_above_its_payout_is_refunded_inside_its_budget() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
     q.set_builder_fee_cap(MAX_CAP);
-    q.enqueue_amount_with_builder(
+    let record_id = q.enqueue_amount_with_builder(
         MAX_PREMIUM,
         QUANTITY,
         ABOVE_PAYOUT_MAX_COST,
         code_id,
         PAST_PAYOUT_FEE,
     );
-    abort 999
+    let (refunded, reason, fee_returned) = refund_at(&mut q, TAU);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_admission());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 /// A premium-budget builder mint sizes to 4m from its premium cap alone and
@@ -536,18 +551,23 @@ fun a_premium_budget_builder_mint_charges_its_fee_on_the_filled_quantity_within_
 }
 
 /// A premium-budget mint is sized by its premium, not its budget, so a cap one
-/// unit short of the cost with the fee refuses it instead of shrinking it.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_premium_budget_builder_mint_capped_one_unit_short_of_its_cost_with_the_fee_is_refused() {
+/// unit short of the cost with the fee refunds it at τ instead of shrinking it.
+#[test]
+fun a_premium_budget_builder_mint_capped_one_unit_short_of_its_cost_with_the_fee_is_refunded() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
-    q.enqueue_amount_with_builder(
+    let record_id = q.enqueue_amount_with_builder(
         MAX_PREMIUM,
         QUANTITY,
         ONE_SHORT_OF_4M_WITH_FEE,
         code_id,
         BUILDER_FEE_PER_CONTRACT,
     );
-    abort 999
+    let (refunded, reason, fee_returned) = refund_at(&mut q, TAU);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 /// A plain sell of a builder mint names no builder, pays no builder fee, and
@@ -616,17 +636,16 @@ fun a_builder_sell_with_its_floor_at_its_net_proceeds_fills() {
     q.finish();
 }
 
-/// One unit above the net proceeds is refused at placement: the t₀ dry run
-/// prices the close at the clock to the same proceeds the fill would pay at τ,
-/// while a refund at the fill would need the price to move between the two.
-#[test, expected_failure(abort_code = expiry_market::EOrderFailsLimits)]
-fun a_builder_sell_with_its_floor_one_unit_above_its_net_proceeds_is_refused() {
+/// One unit above the net proceeds is refunded at τ: the fill prices the close at
+/// the same proceeds and misses the floor (reason 1).
+#[test]
+fun a_builder_sell_with_its_floor_one_unit_above_its_net_proceeds_is_refunded() {
     let (mut q, code_id) = fixture::new().new_builder_code(BUILDER_CODE_INDEX);
     let open_id = q.enqueue_atm(QUANTITY, MAX_COST);
     q.commit_at(TAU, fixture::live_price());
     assert_eq!(q.resolve(RESOLVE_ALL), 1);
     q.refresh_oracle_at(TAU);
-    q.enqueue_sell_with_builder(
+    let record_id = q.enqueue_sell_with_builder(
         open_id,
         QUANTITY,
         NO_FLOOR,
@@ -634,7 +653,12 @@ fun a_builder_sell_with_its_floor_one_unit_above_its_net_proceeds_is_refused() {
         code_id,
         BUILDER_FEE_PER_CONTRACT,
     );
-    abort 999
+    let (refunded, reason, fee_returned) = refund_at(&mut q, SELL_TAU);
+    assert_eq!(refunded, record_id);
+    assert_eq!(reason, order_queue::reason_limits());
+    // Reasons 1 and 2 keep the order fee.
+    assert_eq!(fee_returned, 0);
+    q.finish();
 }
 
 /// A sell that names the largest fee is admitted and charged at the default
@@ -786,4 +810,14 @@ fun builder_fee_of_is_zero_for_a_missing_record_and_a_plain_order() {
     assert_eq!(q.builder_fee_of(record_id), 0);
     assert_eq!(q.builder_fee_of(NEXT_RECORD), 0);
     q.finish();
+}
+
+/// Commit the waiting order at `tau` at the live price, resolve it, and return
+/// the refunded record, its reason, and the order fee it returned.
+fun refund_at(q: &mut QueueTest, tau: u64): (u64, u8, u64) {
+    q.commit_at(tau, fixture::live_price());
+    assert_eq!(q.resolve(RESOLVE_ALL), 1);
+    let refunds = events::refunds();
+    let refund = refunds[refunds.length() - 1];
+    (refund.refund_record_id(), refund.refund_reason(), refund.refund_order_fee_returned())
 }

@@ -36,12 +36,8 @@ const ELifecycleCapNotFound: u64 = 2;
 const EPoolValuationCapNotValid: u64 = 3;
 const EPoolValuationCapNotFound: u64 = 4;
 const EUnexpectedExpiry: u64 = 5;
-
-/// The band the unbanded creation entrypoints request: it narrows nothing, so the
-/// market keeps the template's band. Constants rather than literals and
-/// `std::u64::max_value!()`, which expand at each call site, to save package bytes.
-const OPEN_MIN_ENTRY_PROBABILITY: u64 = 0;
-const OPEN_MAX_ENTRY_PROBABILITY: u64 = 18_446_744_073_709_551_615;
+/// An entry point of an earlier version that read Propbook objects. Use its `_v2`.
+const EUseV2: u64 = 6;
 
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
@@ -310,85 +306,83 @@ public fun set_template_cadence_config(
     );
 }
 
-/// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
-///
-/// Requires an allowlisted lifecycle capability, a registered underlying with all
-/// canonical feed objects bound, and an enabled cadence with a deployable slot.
-/// Slots owned by a longer enabled cadence and existing markets are skipped. The
-/// market snapshots cadence and expiry policy, starts with zero cash, and cannot
-/// mint until pool rebalancing funds it. Live pricing reads current Propbook bindings.
+/// Retired: earlier versions checked Propbook's registry for the underlying's
+/// feeds here. Aborts `EUseV2`. Use `create_and_share_expiry_market_v2`.
 public fun create_and_share_expiry_market(
-    registry: &mut Registry,
-    pool_vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    lifecycle_cap: &MarketLifecycleCap,
-    propbook_underlying_id: u32,
-    cadence_id: u8,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _registry: &mut Registry,
+    _pool_vault: &mut PoolVault,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _lifecycle_cap: &MarketLifecycleCap,
+    _propbook_underlying_id: u32,
+    _cadence_id: u8,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): ID {
-    registry.create_and_share_expiry_market_with_band(
-        pool_vault,
-        config,
-        propbook_registry,
-        lifecycle_cap,
-        propbook_underlying_id,
-        cadence_id,
-        option::none(),
-        OPEN_MIN_ENTRY_PROBABILITY,
-        OPEN_MAX_ENTRY_PROBABILITY,
-        clock,
-        ctx,
-    )
+    abort EUseV2
 }
 
-/// `create_and_share_expiry_market`, aborting unless the deployable expiry is
-/// `expected_expiry`. A keeper that planned the expiry off chain uses this so that a
-/// stale view of the cadence table fails instead of creating an unplanned market.
+/// Retired like `create_and_share_expiry_market`. Aborts `EUseV2`. Use
+/// `create_and_share_expiry_market_v2`.
 public fun create_and_share_expiry_market_at(
-    registry: &mut Registry,
-    pool_vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    lifecycle_cap: &MarketLifecycleCap,
-    propbook_underlying_id: u32,
-    cadence_id: u8,
-    expected_expiry: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
+    _registry: &mut Registry,
+    _pool_vault: &mut PoolVault,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _lifecycle_cap: &MarketLifecycleCap,
+    _propbook_underlying_id: u32,
+    _cadence_id: u8,
+    _expected_expiry: u64,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
 ): ID {
-    registry.create_and_share_expiry_market_with_band(
-        pool_vault,
-        config,
-        propbook_registry,
-        lifecycle_cap,
-        propbook_underlying_id,
-        cadence_id,
-        option::some(expected_expiry),
-        OPEN_MIN_ENTRY_PROBABILITY,
-        OPEN_MAX_ENTRY_PROBABILITY,
-        clock,
-        ctx,
-    )
+    abort EUseV2
 }
 
-/// `create_and_share_expiry_market` with the new market's mint entry band narrowed
-/// to `[min_entry_probability, max_entry_probability]`, aborting unless the deployable
-/// expiry is `expected_expiry` when that is set. The other two creation entrypoints
-/// call this with `[0, u64::MAX]`, which keeps the template's band.
-///
-/// The band can only tighten: each side keeps the tighter of the requested value and
-/// the template's, so a bound looser than the template leaves that side at the
-/// template's, and the call aborts when the two bands do not overlap. Like every
-/// snapshotted term, the band is fixed for the market's life, and `MarketCreated`
-/// reports it. A keeper uses this to admit fewer mints in markets open across a
-/// chosen window.
+/// Retired like `create_and_share_expiry_market`. Aborts `EUseV2`. Use
+/// `create_and_share_expiry_market_v2`.
 public fun create_and_share_expiry_market_with_band(
+    _registry: &mut Registry,
+    _pool_vault: &mut PoolVault,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _lifecycle_cap: &MarketLifecycleCap,
+    _propbook_underlying_id: u32,
+    _cadence_id: u8,
+    _expected_expiry: Option<u64>,
+    _min_entry_probability: u64,
+    _max_entry_probability: u64,
+    _clock: &Clock,
+    _ctx: &mut TxContext,
+): ID {
+    abort EUseV2
+}
+
+/// Create the next deployable `ExpiryMarket` for one cadence on a Propbook
+/// underlying, the one creation entry point.
+///
+/// Requires an allowlisted lifecycle capability, an underlying registered here
+/// with an oracle binding on `ProtocolConfig`
+/// (`protocol_config::EOracleBindingMissing`), and an enabled cadence with a
+/// deployable slot. Slots owned by a longer enabled cadence and existing markets
+/// are skipped. Aborts `EUnexpectedExpiry` unless the deployable expiry is
+/// `expected_expiry` when that is set: a keeper that planned the expiry off chain
+/// passes it so that a stale view of the cadence table fails instead of creating
+/// an unplanned market. The market snapshots cadence and expiry policy, starts
+/// with zero cash, and cannot mint until pool rebalancing funds it.
+///
+/// The new market's mint entry band is narrowed to `[min_entry_probability,
+/// max_entry_probability]`, and `[0, u64::MAX]` keeps the template's band. The band
+/// can only tighten: each side keeps the tighter of the requested value and the
+/// template's, so a bound looser than the template leaves that side at the
+/// template's, and the call aborts when the two bands do not overlap. Like every
+/// snapshotted term, the band is fixed for the market's life, and
+/// `MarketCreated` reports it. A keeper uses this to admit fewer mints in markets
+/// open across a chosen window.
+public fun create_and_share_expiry_market_v2(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
     lifecycle_cap: &MarketLifecycleCap,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -417,7 +411,8 @@ public fun create_and_share_expiry_market_with_band(
     let periods = registry.cad_periods();
     let deployable = registry
         .market_manager
-        .next_deploy(&periods, propbook_registry, propbook_underlying_id, cadence_id, clock);
+        .next_deploy(&periods, propbook_underlying_id, cadence_id, clock);
+    config.binding(propbook_underlying_id);
     let expiry = deployable.expiry();
     expected_expiry.do!(|expected| assert!(expiry == expected, EUnexpectedExpiry));
     let tick_size = deployable.tick_size();

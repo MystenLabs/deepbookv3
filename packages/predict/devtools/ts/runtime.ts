@@ -29,6 +29,7 @@ import {
     PACKAGE_ID,
     POOL_VAULT_ID,
     PROPBOOK_PACKAGE_ID,
+    PREDICT_MATH_PACKAGE_ID,
     PROTOCOL_CONFIG_ID,
     PYTH_LAZER_PACKAGE_ID,
     PYTH_LAZER_STATE_ID,
@@ -55,6 +56,7 @@ import {
     type BsValueUpdate,
 } from "./blockScholesWire.js";
 import {
+    LAZER_CHANNEL_FIXED_RATE_200MS,
     type LocalPythConfig,
     hexToBytes,
     lazerUpdateFromConfig,
@@ -686,7 +688,6 @@ function localPythConfig(): LocalPythConfig {
     };
 }
 
-let lastSourceTimestampMs = 0n;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -930,19 +931,6 @@ export async function readPredictEconomicState(params: {
     };
 }
 
-async function nextSourceTimestampMs(): Promise<bigint> {
-    for (let attempt = 0; attempt < 50; attempt++) {
-        const latestAllowed = (await clockTimestampMs()) - 1n;
-        if (latestAllowed > lastSourceTimestampMs) {
-            lastSourceTimestampMs = latestAllowed;
-            return latestAllowed;
-        }
-        await sleep(25);
-    }
-
-    throw new Error("localnet Clock did not advance enough for a fresh source timestamp");
-}
-
 export async function nextOneMonthExpiryMs(): Promise<bigint> {
     const now = await clockTimestampMs();
     return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
@@ -972,32 +960,6 @@ interface OracleRefreshParams extends OracleFeedIds {
         mNegative: boolean;
         sigma: bigint;
     };
-}
-
-interface MintParams extends OracleFeedIds {
-    expiryMarketId: string;
-    protocolConfigId: string;
-    wrapperId: string;
-    strike: bigint;
-    isUp: boolean;
-    higherStrike?: bigint; // Optional finite upper boundary for an UP range.
-    quantity: bigint;
-    tickSize?: bigint; // cadence tick size; live harness default is $0.01
-    maxCost?: bigint; // all-in USDC withdrawal cap; U64_MAX (uncapped) if omitted
-    maxProbability?: bigint; // per-contract probability cap (1e9); U64_MAX if omitted
-}
-
-interface RedeemParams extends OracleFeedIds {
-    expiryMarketId: string;
-    protocolConfigId: string;
-    wrapperId: string;
-    orderId: string;
-    closeQuantity: bigint;
-}
-
-interface LivePricerParams extends OracleFeedIds {
-    expiryMarketId: string;
-    protocolConfigId: string;
 }
 
 // Inputs to drive one privileged full-pool flush (the async LP drain).
@@ -1043,27 +1005,6 @@ export function mintRangeTicks(
     const higherTick = binaryRangeTicks(higherStrike, true, tickSize).lowerTick;
     if (range.lowerTick >= higherTick) throw new Error("higher_strike must exceed strike");
     return { lowerTick: range.lowerTick, higherTick };
-}
-
-async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
-    const sourceTimestampMs = await nextSourceTimestampMs();
-    addPythFeedUpdate(tx, params.pythFeedId, params.spot, sourceTimestampMs);
-    addBlockScholesUpdates(tx, params, sourceTimestampMs);
-}
-
-// A refresh and the priced operation it feeds are always separate transactions.
-// `pricing::resolve_live_pricer` aborts `EOracleWrittenInThisTransaction` when an
-// observation carries the current transaction's digest. Return the refresh first so
-// callers can execute both legs in order without weakening snapshot determinism.
-async function refreshThen(
-    params: OracleRefreshParams,
-    addPricedOperation: (tx: Transaction) => void,
-): Promise<Transaction[]> {
-    const refreshTx = new Transaction();
-    await addOracleRefresh(refreshTx, params);
-    const pricedOperationTx = new Transaction();
-    addPricedOperation(pricedOperationTx);
-    return [refreshTx, pricedOperationTx];
 }
 
 // Live-data updater: stamp the transport batch from the relayer's observed Sui Clock and make it
@@ -1217,32 +1158,20 @@ function addPythFeedUpdate(
     });
 }
 
-// Settlement observation: same re-signed Lazer spot update as addPythFeedUpdate, but
-// stored via `insert_at` at the exact whole-second expiry timestamp for `try_settle`.
-function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, expiryMs: bigint): void {
-    const updateBytes = lazerUpdateFromConfig(localPythConfig(), PREDICT_ORACLE_ID, spot, expiryMs);
-    const update = tx.moveCall({
-        target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),
-        arguments: [tx.object(PYTH_LAZER_STATE_ID), tx.object(CLOCK_ID), tx.pure.vector("u8", Array.from(updateBytes))],
-    });
-    tx.moveCall({
-        target: propbookTarget("pyth_feed", "insert_at"),
-        arguments: [tx.object(pythFeedId), update, tx.object(CLOCK_ID)],
-    });
-}
-
+// `try_settle_v2` with the binding's Lazer price enveloped and generated at exactly the expiry,
+// and no Block Scholes fallback.
 function addTrySettle(
     tx: Transaction,
-    params: { marketId: string; protocolConfigId: string; pythFeedId: string; bsValueStoreId: string },
+    params: { marketId: string; protocolConfigId: string; expiryMs: bigint; price: bigint },
 ): void {
+    const price = addLazerPrice(tx, params.price, params.expiryMs);
     tx.moveCall({
-        target: target("expiry_market", "try_settle"),
+        target: target("expiry_market", "try_settle_v2"),
         arguments: [
             tx.object(params.marketId),
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
-            tx.object(params.bsValueStoreId),
+            price,
+            addNone(tx, BS_SPOT_TYPE()),
             tx.object(CLOCK_ID),
         ],
     });
@@ -1358,41 +1287,230 @@ function sviBatchUpdate(
     };
 }
 
-function addBlockScholesUpdates(
+// ── Version 6 signed oracle data ─────────────────────────────────────────────────────────
+// Predict reads no Propbook object from package version 6. Each call that prices takes the
+// signed data for its own instant: a `LazerPrice` and Block Scholes `BsVol` / `BsSpot` values
+// that only `deepbook_predict_math` builds, from updates the Pyth Lazer and `bs_oracle`
+// verifiers accept earlier in the same PTB. The local signers registered at setup sign them at
+// whatever instant the call needs, from the scenario's or the updater's oracle values.
+
+// The oracle binding setup gives the local underlying: its Pyth feed on the 200 ms fixed-rate
+// channel, and the Block Scholes series the local signer signs (model "SVI" at 9 decimals, the
+// identities `blockScholesSid` derives).
+export const BINDING_LAZER_CHANNEL = LAZER_CHANNEL_FIXED_RATE_200MS;
+export const BINDING_SVI_MODEL = "SVI";
+export const BINDING_SVI_DECIMALS = 9;
+
+// The companion's launch `BsTiming` (`delayed_execution_config`): a cohort at τ takes the spot
+// and forward stamped at the 500 ms boundary at or before `τ − 500` and the SVI at the 1,000 ms
+// boundary at or before `τ − 1,000`.
+const BS_VALUE_STEP_MS = 500n;
+const BS_SVI_STEP_MS = 1_000n;
+const BS_VALUE_LAG_MS = 500n;
+const BS_SVI_LAG_MS = 1_000n;
+
+export function bsValueSlotMs(tauMs: bigint): bigint {
+    const at = tauMs - BS_VALUE_LAG_MS;
+    return at - (at % BS_VALUE_STEP_MS);
+}
+
+export function bsSviSlotMs(tauMs: bigint): bigint {
+    const at = tauMs - BS_SVI_LAG_MS;
+    return at - (at % BS_SVI_STEP_MS);
+}
+
+// One expiry's Block Scholes values: the spot, the forward for the expiry, and the SVI tuple.
+export interface SignedOracle {
+    bsSpot: bigint;
+    forward: bigint;
+    svi: OracleRefreshParams["svi"];
+}
+
+function mathTarget(module: string, fn: string): `${string}::${string}::${string}` {
+    return `${PREDICT_MATH_PACKAGE_ID}::${module}::${fn}`;
+}
+
+const BS_VOL_TYPE = () => `${PREDICT_MATH_PACKAGE_ID}::block_scholes::BsVol`;
+const BS_SPOT_TYPE = () => `${PREDICT_MATH_PACKAGE_ID}::block_scholes::BsSpot`;
+
+// `Option<LazerPrice>` for the binding's feed: a locally signed Lazer update enveloped and
+// generated at `envelopeMs` on `channel`, verified by the published Pyth Lazer package.
+function addLazerPrice(
     tx: Transaction,
-    params: OracleRefreshParams,
-    timestampMs: bigint,
-): void {
-    addBsBatches(
-        tx,
-        params,
+    spot1e9: bigint,
+    envelopeMs: bigint,
+    channel = BINDING_LAZER_CHANNEL,
+) {
+    const update = tx.moveCall({
+        target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),
+        arguments: [
+            tx.object(PYTH_LAZER_STATE_ID),
+            tx.object(CLOCK_ID),
+            tx.pure.vector(
+                "u8",
+                Array.from(
+                    lazerUpdateFromConfig(localPythConfig(), PREDICT_ORACLE_ID, spot1e9, envelopeMs, channel),
+                ),
+            ),
+        ],
+    });
+    return tx.moveCall({
+        target: mathTarget("lazer_price", "from_update"),
+        arguments: [update, tx.pure.u32(PREDICT_ORACLE_ID)],
+    });
+}
+
+// A locally signed value batch, verified by `bs_oracle`, as `vector<ValueUpdate>`.
+function addValueUpdates(tx: Transaction, updates: BsValueUpdate[]) {
+    const batchTimestampMs = updates.reduce((max, update) => (update.timestampMs > max ? update.timestampMs : max), 0n);
+    const message = signedValueBatchBytes({
+        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+        batchTimestampMs,
+        updates,
+    });
+    const batch = tx.moveCall({
+        target: bsOracleTarget("verify", "verify_and_create_value_batch"),
+        arguments: [tx.object(BS_SIGNER_REGISTRY_ID), tx.pure.vector("u8", Array.from(message))],
+    });
+    return tx.moveCall({ target: bsOracleTarget("verify", "into_value_updates"), arguments: [batch] });
+}
+
+// A locally signed SVI batch, verified by `bs_oracle`, as `vector<SviUpdate>`.
+function addSviUpdates(tx: Transaction, updates: BsSviUpdate[]) {
+    const batchTimestampMs = updates.reduce((max, update) => (update.timestampMs > max ? update.timestampMs : max), 0n);
+    const message = signedSviBatchBytes({
+        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+        batchTimestampMs,
+        updates,
+    });
+    const batch = tx.moveCall({
+        target: bsOracleTarget("verify", "verify_and_create_svi_batch"),
+        arguments: [tx.object(BS_SIGNER_REGISTRY_ID), tx.pure.vector("u8", Array.from(message))],
+    });
+    return tx.moveCall({ target: bsOracleTarget("verify", "into_svi_updates"), arguments: [batch] });
+}
+
+function spotUpdate(value: bigint, timestampMs: bigint): BsValueUpdate {
+    return { sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET), timestampMs, value };
+}
+
+function forwardUpdate(expiry: bigint, value: bigint, timestampMs: bigint): BsValueUpdate {
+    return {
+        sid: forwardSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET, expiry),
         timestampMs,
-        {
-            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
-            timestampMs,
-            value: params.spot,
-        },
-        [
-            {
-                expiryMs: params.expiry,
-                update: {
-                    sid: forwardSid(
-                        BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-                        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
-                        params.expiry,
-                    ),
-                    timestampMs,
-                    value: params.forward,
-                },
-            },
+        value,
+    };
+}
+
+// The Block Scholes inputs one entry signs: spot and forward stamped `valueMs`, SVI stamped
+// `sviMs`, all for `expiry`.
+interface BsVolEntry {
+    valueMs: bigint;
+    sviMs: bigint;
+    oracle: SignedOracle;
+}
+
+// `vector<BsVol>` for `expiry` from the signed entries, through `block_scholes::vols`, which
+// pairs every spot and forward stamped at one time with every SVI. Entries that repeat a
+// timestamp keep the first entry's values.
+function addBsVols(tx: Transaction, expiry: bigint, entries: BsVolEntry[]) {
+    const values: BsValueUpdate[] = [];
+    const svis: BsSviUpdate[] = [];
+    const valueTimes = new Set<bigint>();
+    const sviTimes = new Set<bigint>();
+    for (const entry of entries) {
+        if (!valueTimes.has(entry.valueMs)) {
+            valueTimes.add(entry.valueMs);
+            values.push(spotUpdate(entry.oracle.bsSpot, entry.valueMs));
+            values.push(forwardUpdate(expiry, entry.oracle.forward, entry.valueMs));
+        }
+        if (!sviTimes.has(entry.sviMs)) {
+            sviTimes.add(entry.sviMs);
+            svis.push(sviBatchUpdate(expiry, entry.oracle.svi, entry.sviMs));
+        }
+    }
+    const valueUpdates = addValueUpdates(tx, values);
+    const sviUpdates = addSviUpdates(tx, svis);
+    return tx.moveCall({
+        target: mathTarget("block_scholes", "vols"),
+        arguments: [
+            valueUpdates,
+            sviUpdates,
+            tx.pure.string(PREDICT_BLOCK_SCHOLES_BASE_ASSET),
+            tx.pure.string(BINDING_SVI_MODEL),
+            tx.pure.u8(BINDING_SVI_DECIMALS),
+            tx.pure.vector("u64", [expiry]),
         ],
-        [
-            {
-                expiryMs: params.expiry,
-                update: sviBatchUpdate(params.expiry, params.svi, timestampMs),
-            },
+    });
+}
+
+// `Option<BsVol>` for `expiry` with spot, forward, and SVI all stamped `instantMs`.
+function addBsVolAt(tx: Transaction, expiry: bigint, instantMs: bigint, oracle: SignedOracle) {
+    const valueUpdates = addValueUpdates(tx, [
+        spotUpdate(oracle.bsSpot, instantMs),
+        forwardUpdate(expiry, oracle.forward, instantMs),
+    ]);
+    const sviUpdates = addSviUpdates(tx, [sviBatchUpdate(expiry, oracle.svi, instantMs)]);
+    return tx.moveCall({
+        target: mathTarget("block_scholes", "vol_at"),
+        arguments: [
+            valueUpdates,
+            sviUpdates,
+            tx.pure.string(PREDICT_BLOCK_SCHOLES_BASE_ASSET),
+            tx.pure.string(BINDING_SVI_MODEL),
+            tx.pure.u8(BINDING_SVI_DECIMALS),
+            tx.pure.u64(expiry),
+            tx.pure.u64(instantMs),
+            tx.pure.u64(instantMs),
         ],
-    );
+    });
+}
+
+function addNone(tx: Transaction, type: string) {
+    return tx.moveCall({ target: "0x1::option::none", typeArguments: [type] });
+}
+
+// Admin: bind the local underlying to the signed data its markets price, settle, and value
+// from. Market creation requires it.
+export function setOracleBindingTx(): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_oracle_binding"),
+        arguments: [
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
+            tx.pure.u8(BINDING_LAZER_CHANNEL),
+            tx.pure.string(PREDICT_BLOCK_SCHOLES_BASE_ASSET),
+            tx.pure.string(BINDING_SVI_MODEL),
+            tx.pure.u8(BINDING_SVI_DECIMALS),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// A flush marks each market at its Lazer price's instant, at most
+// `block_scholes_price_freshness_ms` before the flush starts. The localnet flush signs its data
+// at the latest Clock reading before it builds the transaction, so the window has to cover the
+// localnet's build-to-execution latency.
+export const LOCALNET_FLUSH_WINDOW_MS = 10_000n;
+
+export function setFlushWindowTx(windowMs = LOCALNET_FLUSH_WINDOW_MS): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_block_scholes_price_freshness_ms"),
+        arguments: [
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u64(windowMs),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
 }
 
 function mintUsdc(tx: Transaction, amount: bigint) {
@@ -1404,31 +1522,35 @@ function mintUsdc(tx: Transaction, amount: bigint) {
     return coin;
 }
 
-function loadLivePricer(tx: Transaction, params: LivePricerParams) {
-    return tx.moveCall({
-        target: target("expiry_market", "load_live_pricer"),
-        arguments: [
-            tx.object(params.expiryMarketId),
-            tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
-            tx.object(params.bsValueStoreId),
-            tx.object(params.bsSviStoreId),
-            tx.object(CLOCK_ID),
-        ],
-    });
+// One market a flush marks: its expiry and the Block Scholes values to sign for it, or null
+// for a market the snapshot sweeps as settled (its data is ignored).
+export interface FlushMarket {
+    id: string;
+    expiryMs: bigint;
+    oracle: SignedOracle | null;
+}
+
+// The signed data one flush marks at: the Lazer spot and the instant every market's price and
+// Block Scholes inputs are stamped. The instant must fall at or before the flush's start and
+// within `block_scholes_price_freshness_ms` of it.
+export interface FlushMark {
+    instantMs: bigint;
+    spot1e9: bigint;
 }
 
 // Add the ATOMIC snapshot stage: the privileged `start_pool_valuation` (via a
 // `PoolValuationCap` proof — the sole flush authority) -> one
-// `snapshot_expiry_pricer` per active market -> `seal_valuation_snapshot`, which
+// `snapshot_expiry_pricer_v2` per active market -> `seal_valuation_snapshot`, which
 // consumes the `SnapshotStage` potato. These commands MUST stay in one PTB and the
-// potato enforces it: every market's `Pricer` is frozen at the instant this
-// transaction executes, and that simultaneity is what lets valuation resume later.
-// This stage reads oracles and walks no payout tree, so it fits one PTB at any book
-// size. The oracle it reads must have been written in an EARLIER transaction —
-// `resolve_live_pricer` refuses a same-transaction write (RP-24).
-function addSnapshotStage(tx: Transaction, params: FlushParams): void {
+// potato enforces it. Each market's `Pricer` is built from the signed Lazer price and Block
+// Scholes inputs stamped at `mark.instantMs`, verified earlier in this same PTB. This stage
+// walks no payout tree, so it fits one PTB at any book size.
+function addSnapshotStage(
+    tx: Transaction,
+    params: { poolVaultId: string; protocolConfigId: string; poolValuationCapId: string },
+    markets: FlushMarket[],
+    mark: FlushMark,
+): void {
     const proof = tx.moveCall({
         target: target("registry", "generate_pool_valuation_proof"),
         arguments: [tx.object(REGISTRY_ID), tx.object(params.poolValuationCapId)],
@@ -1444,26 +1566,34 @@ function addSnapshotStage(tx: Transaction, params: FlushParams): void {
             tx.object(CLOCK_ID),
         ],
     });
-    // The devtools flow runs one expiry market; a multi-market topology snapshots each
-    // one here, all inside this same transaction.
-    tx.moveCall({
-        target: target("plp", "snapshot_expiry_pricer"),
-        arguments: [
-            tx.object(params.poolVaultId),
-            stage,
-            tx.object(params.expiryMarketId),
-            tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(params.pythFeedId),
-            tx.object(params.bsValueStoreId),
-            tx.object(params.bsSviStoreId),
-            tx.object(CLOCK_ID),
-        ],
-    });
+    for (const market of markets) {
+        const price = market.oracle === null ? addNone(tx, `${PREDICT_MATH_PACKAGE_ID}::lazer_price::LazerPrice`) : addLazerPrice(tx, mark.spot1e9, mark.instantMs);
+        const vol = market.oracle === null
+            ? addNone(tx, BS_VOL_TYPE())
+            : addBsVolAt(tx, market.expiryMs, mark.instantMs, market.oracle);
+        tx.moveCall({
+            target: target("plp", "snapshot_expiry_pricer_v2"),
+            arguments: [
+                tx.object(params.poolVaultId),
+                stage,
+                tx.object(market.id),
+                tx.object(params.protocolConfigId),
+                price,
+                vol,
+                tx.object(CLOCK_ID),
+            ],
+        });
+    }
     tx.moveCall({
         target: target("plp", "seal_valuation_snapshot"),
         arguments: [tx.object(params.poolVaultId), stage, tx.object(params.protocolConfigId)],
     });
+}
+
+// The instant a flush built now can mark at: the latest Clock reading, which the flush's own
+// start cannot precede.
+export async function flushInstantMs(): Promise<bigint> {
+    return clockTimestampMs();
 }
 
 // One RESUMABLE-stage transaction valuing ONE market. `value_expiry` reads no oracle —
@@ -1505,71 +1635,6 @@ function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }
     return tx;
 }
 
-// Retired live mint: `mint_exact_quantity` aborts `EDelayedExecutionRequired`
-// (expiry_market:13) at any watermark. Queued trading uses `enqueueMintTx` +
-// `commitAndResolveTx`. The mint builders below remain only for the capacity and cleanup
-// measurement strategies, which still need a queued-flow redesign.
-function addMint(tx: Transaction, params: MintParams): void {
-    const { lowerTick, higherTick } = mintRangeTicks(
-        params.strike,
-        params.isUp,
-        params.tickSize,
-        params.higherStrike,
-    );
-    const pricer = loadLivePricer(tx, params);
-    const auth = generateAuth(tx);
-    tx.moveCall({
-        target: target("expiry_market", "mint_exact_quantity"),
-        arguments: [
-            tx.object(params.expiryMarketId),
-            tx.object(params.wrapperId),
-            auth,
-            tx.object(params.protocolConfigId),
-            pricer,
-            tx.pure.u64(lowerTick),
-            tx.pure.u64(higherTick),
-            tx.pure.u64(params.quantity),
-            tx.pure.u64(params.maxCost ?? U64_MAX),
-            tx.pure.u64(params.maxProbability ?? U64_MAX),
-            // `mint_exact_quantity` loads the account and ambient-settles it
-            // (`settle<USDC>`) before charging the premium, so it reads the
-            // singleton AccumulatorRoot at 0xacc. `root` follows the slippage
-            // guards.
-            tx.object(ACCUMULATOR_ROOT_ID),
-            tx.object(CLOCK_ID),
-        ],
-    });
-}
-
-// Retired live close, which aborts like `addMint`. The queued early sell is `enqueueRedeemOpenTx`,
-// which sells an Open queue record rather than an account position.
-function addRedeem(tx: Transaction, params: RedeemParams): void {
-    // The caller acts as the account owner, so this uses the owner-authorized
-    // `redeem_live` (auth consumed).
-    const pricer = loadLivePricer(tx, params);
-    const auth = generateAuth(tx);
-    tx.moveCall({
-        target: target("expiry_market", "redeem_live"),
-        arguments: [
-            tx.object(params.expiryMarketId),
-            tx.object(params.wrapperId),
-            auth,
-            tx.object(params.protocolConfigId),
-            pricer,
-            tx.pure.u256(BigInt(params.orderId)),
-            tx.pure.u64(params.closeQuantity),
-            // `min_probability` then `min_proceeds` close-side slippage floors; the
-            // benchmark never sets a floor, so pass 0 to disable both (mirrors mint's
-            // U64_MAX caps).
-            tx.pure.u64(0),
-            tx.pure.u64(0),
-            // `redeem_live` loads the account and ambient-settles it (`settle<USDC>`)
-            // before crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
-            tx.object(ACCUMULATOR_ROOT_ID),
-            tx.object(CLOCK_ID),
-        ],
-    });
-}
 
 // === Account cleanout (settled-redeem gas measurement, E1) ===
 // Queued positions live in Open queue records, which the queue's `settle_step` pays. An
@@ -1851,30 +1916,12 @@ export function setBlockScholesSignerTx(): Transaction {
     return tx;
 }
 
-// Seed the Block Scholes stores (and Pyth spot) for the market's expiry. Market
-// creation itself reads NO spot now (absolute ticks need no grid centering), but a
-// fresh BS price/SVI series set must exist before the first mint and before any
-// flush valuation can price `current_nav`. The store pair exists from underlying
-// registration; seeding the per-expiry series rows happens after the market is
-// created (its expiry fixes their sids).
-export async function seedOracleTx(params: OracleFeedIds & {
-    expiry: bigint;
-    spot: bigint;
-    forward: bigint;
-    svi: OracleRefreshParams["svi"];
-}): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    return tx;
-}
 
-// Create the expiry market for one Propbook underlying. No spot is read at
-// creation. The registry validates, against propbook's canonical binding, that
-// the Pyth feed and the Block Scholes store pair are bound to `PREDICT_ORACLE_ID`
-// (run `bindFeedsToUnderlyingTx` first; the store pair binds at creation).
-// `create_and_share_expiry_market` returns one ID and
-// registers the market with the vault as a zero-cash accounting row (not mintable
-// until `rebalance_expiry_cash` funds it).
+// Create the expiry market for the local underlying through `create_and_share_expiry_market_v2`.
+// No spot is read at creation. The underlying needs its oracle binding first
+// (`setOracleBindingTx`). The call returns one ID and registers the market with the vault as a
+// zero-cash accounting row (not mintable until `rebalance_expiry_cash` funds it). No expected
+// expiry, and the open band `[0, u64::MAX]` keeps the template's entry band.
 export function createExpiryMarketTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
@@ -1883,15 +1930,17 @@ export function createExpiryMarketTx(params: {
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
-        target: target("registry", "create_and_share_expiry_market"),
+        target: target("registry", "create_and_share_expiry_market_v2"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.lifecycleCapId),
             tx.pure.u32(PREDICT_ORACLE_ID),
             tx.pure.u8(params.cadenceId),
+            tx.pure(bcs.option(bcs.u64()).serialize(null)),
+            tx.pure.u64(0n),
+            tx.pure.u64(U64_MAX),
             tx.object(CLOCK_ID),
         ],
     });
@@ -2030,11 +2079,15 @@ export function requestWithdrawTx(params: {
 // transaction than the refresh (RP-24 refuses a same-transaction oracle write) and
 // inside the feeds' freshness windows; `value_expiry` and `finish_flush` each get their
 // own transaction (the per-market node cap assumes it).
-export async function refreshOracleAndFlushTxs(
-    params: OracleRefreshParams & FlushParams,
-): Promise<Transaction[]> {
-    const txs = await refreshThen(params, (tx) => addSnapshotStage(tx, params));
-    return [...txs, valueExpiryTx(params), finishFlushTx(params)];
+// One market's full flush: the signed snapshot stage, its valuation, and the finish.
+export function signedFlushTxs(
+    params: { poolVaultId: string; protocolConfigId: string; poolValuationCapId: string; expiryMarketId: string },
+    market: FlushMarket,
+    mark: FlushMark,
+): Transaction[] {
+    const snapshotTx = new Transaction();
+    addSnapshotStage(snapshotTx, params, [market], mark);
+    return [snapshotTx, valueExpiryTx(params), finishFlushTx(params)];
 }
 
 // Genesis flush with NO active markets: proof -> start (snapshots an empty expected set)
@@ -2086,12 +2139,12 @@ export function bareFlushTx(params: {
 // `settle_step` paid its Open records, and the keeper, which rebuilds its work from that set,
 // would never pay them. The settlement lane (keeperTrySettleTx, settleStepTx, cleanupQueueTx)
 // settles, pays, cleans up, and sweeps every expired market first. A market that expires after that pass aborts the snapshot (expired and
-// unsettled) and the flush retries on the next tick. Live-market valuation reads the
-// updater-maintained fresh BS feed via the snapshot; a market that expires mid-flush is still
-// valued off its frozen pricer and settles on the next settlement pass.
+// unsettled) and the flush retries on the next tick. Each live market is marked from the
+// updater's latest values, signed at `mark.instantMs`. A market that expires mid-flush is
+// still valued off its frozen pricer and settles on the next settlement pass.
 export function keeperFlushTxs(params: {
-    feeds: OracleFeedIds;
-    marketIds: string[];
+    markets: FlushMarket[];
+    mark: FlushMark;
     poolVaultId: string;
     protocolConfigId: string;
     poolValuationCapId: string;
@@ -2100,51 +2153,12 @@ export function keeperFlushTxs(params: {
     //    `seal_valuation_snapshot` is one transaction because the `SnapshotStage` potato
     //    cannot leave it.
     const snapshotTx = new Transaction();
-    const proof = snapshotTx.moveCall({
-        target: target("registry", "generate_pool_valuation_proof"),
-        arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.poolValuationCapId)],
-    });
-    const stage = snapshotTx.moveCall({
-        target: target("plp", "start_pool_valuation"),
-        arguments: [
-            snapshotTx.object(params.protocolConfigId),
-            snapshotTx.object(params.poolVaultId),
-            proof,
-            // budgets committed at start; steps 2/3 (value_expiry, finish_flush) are permissionless
-            snapshotTx.pure(bcs.option(bcs.u64()).serialize(null)),
-            snapshotTx.pure(bcs.option(bcs.u64()).serialize(null)),
-            snapshotTx.object(CLOCK_ID),
-        ],
-    });
-    for (const marketId of params.marketIds) {
-        snapshotTx.moveCall({
-            target: target("plp", "snapshot_expiry_pricer"),
-            arguments: [
-                snapshotTx.object(params.poolVaultId),
-                stage,
-                snapshotTx.object(marketId),
-                snapshotTx.object(params.protocolConfigId),
-                snapshotTx.object(ORACLE_REGISTRY_ID),
-                snapshotTx.object(params.feeds.pythFeedId),
-                snapshotTx.object(params.feeds.bsValueStoreId),
-                snapshotTx.object(params.feeds.bsSviStoreId),
-                snapshotTx.object(CLOCK_ID),
-            ],
-        });
-    }
-    snapshotTx.moveCall({
-        target: target("plp", "seal_valuation_snapshot"),
-        arguments: [
-            snapshotTx.object(params.poolVaultId),
-            stage,
-            snapshotTx.object(params.protocolConfigId),
-        ],
-    });
+    addSnapshotStage(snapshotTx, params, params.markets, params.mark);
 
     // 2. One transaction per market — the split the per-market node cap assumes: only
     //    `value_expiry` walks payout trees, so each transaction carries one market's
     //    dynamic-field children instead of the pool's.
-    const valuationTxs = params.marketIds.map((expiryMarketId) =>
+    const valuationTxs = params.markets.map(({ id: expiryMarketId }) =>
         valueExpiryTx({
             poolVaultId: params.poolVaultId,
             protocolConfigId: params.protocolConfigId,
@@ -2159,34 +2173,25 @@ export function keeperFlushTxs(params: {
 }
 
 
-// Settle ONE expired market's price in its own PTB (decoupled from the flush): insert its
-// exact-expiry Pyth observation (`insert_at` skips an existing one), then call Predict's
-// try_settle. Needs only the exact Pyth spot, NOT live BS pricing, so it proceeds even while
-// the flush defers on a BS outage — no settlement backlog, no beyond-retention brick. Mirrors
-// the production keeper's settlement lane (deepbook-services decision 0010). Per-market so one
-// bad market's settle fails alone.
+// Settle ONE expired market's price in its own PTB (decoupled from the flush): Predict's
+// `try_settle_v2` with the binding's Lazer price enveloped and generated at exactly the expiry,
+// signed by the local signer. It needs only that price, NOT live Block Scholes data, so it
+// proceeds even while the flush defers on a Block Scholes outage. Mirrors the production
+// keeper's settlement lane. Per-market so one bad market's settle fails alone.
 //
-// `try_settle` settles from the oracle only. The market's queue then settles in its own calls:
+// `try_settle_v2` settles from the oracle only. The market's queue then settles in its own calls:
 // `settleStepTx` until the payout walk completes, `cleanupQueueTx`, and only then
 // `rebalanceExpiryCashTx`, which moves a settled market's free cash back to the pool and drops it
 // from active_expiry_markets. So a market whose Open records are still unpaid stays in the
 // chain-reconciled active set.
 export function keeperTrySettleTx(params: {
-    pythFeedId: string;
-    bsValueStoreId: string;
     expiryMs: bigint;
     price: bigint;
     marketId: string;
     protocolConfigId: string;
 }): Transaction {
     const tx = new Transaction();
-    addPythFeedInsert(tx, params.pythFeedId, params.price, params.expiryMs);
-    addTrySettle(tx, {
-        marketId: params.marketId,
-        protocolConfigId: params.protocolConfigId,
-        pythFeedId: params.pythFeedId,
-        bsValueStoreId: params.bsValueStoreId,
-    });
+    addTrySettle(tx, params);
     return tx;
 }
 
@@ -2433,18 +2438,6 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
 // Refresh the oracle, then enqueue in a second transaction: enqueue loads its volatility
 // snapshot from the feeds, and a priced operation may not read an observation written in its
 // own transaction.
-export async function refreshOracleAndEnqueueMintTxs(
-    params: OracleRefreshParams & EnqueueMintParams,
-): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addEnqueueMint(tx, params));
-}
-
-export async function refreshOracleAndEnqueueRedeemOpenTxs(
-    params: OracleRefreshParams & EnqueueSellParams,
-): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addEnqueueRedeemOpen(tx, params));
-}
-
 // Mint test USDC and transfer it to `toAddress`. The TreasuryCap is owned by the
 // publisher, so this is how the keeper (publisher) funds trader addresses, which cannot
 // self-mint.
@@ -2468,36 +2461,8 @@ export function depositOwnedCoinTx(wrapperId: string, coinId: string): Transacti
     return tx;
 }
 
-// Mint-only PTB (no oracle refresh): the trader prices against the updater-maintained
-// fresh feed via load_live_pricer.
-export function mintTx(params: MintParams): Transaction {
-    const tx = new Transaction();
-    addMint(tx, params);
-    return tx;
-}
-
-// Batched mint-only PTB: N `mint_exact_quantity` calls in ONE transaction, each pricing against the
-// updater-maintained fresh feed (no oracle refresh, like `mintTx`). The whole PTB reports ONE
-// `computationCost` — the `#cap-mintbatch` measurement vehicle: a batched mint is amplified
-// by transaction-level metering versus a standalone mint (see RP-10). Vary N to isolate the
-// cause via the total cost.
-export function mintBatchTx(mints: MintParams[]): Transaction {
-    if (mints.length === 0) throw new Error("mintBatchTx requires at least one mint");
-    const tx = new Transaction();
-    for (const mint of mints) addMint(tx, mint);
-    return tx;
-}
-
-// Live redeem-only PTB (no oracle refresh).
-export function redeemTx(params: RedeemParams): Transaction {
-    const tx = new Transaction();
-    addRedeem(tx, params);
-    return tx;
-}
-
 // === Delayed execution (queued trading) ===
-// `mint_exact_*` and `redeem_live` (the builders above) abort `EDelayedExecutionRequired` at
-// any watermark. Trading is queued in the `deepbook_predict_orders` companion: enqueue escrows
+// `mint_exact_*` and `redeem_live` abort `EDelayedExecutionRequired` at any watermark. Trading is queued in the `deepbook_predict_orders` companion: enqueue escrows
 // the order in the market's `MarketQueue` and stamps its τ, commit attaches a verified Pyth
 // Lazer price for τ to the waiting cohort, and resolve fills (or refunds) committed orders
 // through Predict's order-flow primitives. Commit and resolve are permissionless. The harness
@@ -2574,7 +2539,7 @@ export async function readIsFlushOperator(operator: string): Promise<boolean> {
     return ((await devInspectFirstReturn(tx))[0] ?? 0) !== 0;
 }
 
-export interface EnqueueMintParams extends OracleFeedIds {
+export interface EnqueueMintParams {
     expiryMarketId: string;
     protocolConfigId: string;
     wrapperId: string;
@@ -2597,10 +2562,10 @@ export function enqueueMintTx(params: EnqueueMintParams): Transaction {
     return tx;
 }
 
-// The leading arguments every placement takes: the market's queue, the market, the trader's
-// account wrapper and owner auth, the desk, Predict's config, and the oracle objects the
-// volatility snapshot loads from.
-function placementPrefix(tx: Transaction, params: OracleFeedIds & { expiryMarketId: string; protocolConfigId: string; wrapperId: string }) {
+// The leading arguments every version 6 placement takes: the market's queue, the market, the
+// trader's account wrapper and owner auth, the desk, and Predict's config. Placement reads no
+// oracle.
+function placementPrefix(tx: Transaction, params: { expiryMarketId: string; protocolConfigId: string; wrapperId: string }) {
     return [
         tx.object(deriveMarketQueueId(params.expiryMarketId)),
         tx.object(params.expiryMarketId),
@@ -2608,10 +2573,6 @@ function placementPrefix(tx: Transaction, params: OracleFeedIds & { expiryMarket
         generateAuth(tx),
         tx.object(ORDER_DESK_ID),
         tx.object(params.protocolConfigId),
-        tx.object(ORACLE_REGISTRY_ID),
-        tx.object(params.pythFeedId),
-        tx.object(params.bsValueStoreId),
-        tx.object(params.bsSviStoreId),
     ];
 }
 
@@ -2623,7 +2584,7 @@ function addEnqueueMint(tx: Transaction, params: EnqueueMintParams): void {
         params.higherStrike,
     );
     tx.moveCall({
-        target: ordersTarget("queue", "enqueue_exact_quantity"),
+        target: ordersTarget("queue", "enqueue_exact_quantity_v2"),
         arguments: [
             ...placementPrefix(tx, params),
             tx.pure.u64(lowerTick),
@@ -2637,7 +2598,7 @@ function addEnqueueMint(tx: Transaction, params: EnqueueMintParams): void {
     });
 }
 
-export interface EnqueueSellParams extends OracleFeedIds {
+export interface EnqueueSellParams {
     expiryMarketId: string;
     protocolConfigId: string;
     wrapperId: string;
@@ -2658,7 +2619,7 @@ export function enqueueRedeemOpenTx(params: EnqueueSellParams): Transaction {
 
 function addEnqueueRedeemOpen(tx: Transaction, params: EnqueueSellParams): void {
     tx.moveCall({
-        target: ordersTarget("queue", "enqueue_redeem_open"),
+        target: ordersTarget("queue", "enqueue_redeem_open_v2"),
         arguments: [
             ...placementPrefix(tx, params),
             tx.pure.u64(params.recordId),
@@ -2671,22 +2632,26 @@ function addEnqueueRedeemOpen(tx: Transaction, params: EnqueueSellParams): void 
     });
 }
 
-// One cohort price: the spot the local signer attests for envelope τ on the cohort's
-// fixed-rate channel. The feed's generation time is τ too, which satisfies the order's
-// `earliest_price_ms`.
+// One cohort's signed data: the spot the local signer attests for envelope τ on the cohort's
+// fixed-rate channel, and the Block Scholes values it signs at τ's canonical slots (spot and
+// forward at `bsValueSlotMs(τ)`, SVI at `bsSviSlotMs(τ)`). The feed's generation time is τ too,
+// which satisfies the order's `earliest_price_ms`.
 export interface CohortPrice {
     tauMs: bigint;
     channel: number;
     spot1e9: bigint;
+    oracle: SignedOracle;
 }
 
-// Commit locally signed Lazer prices to the market's waiting cohorts, then resolve up to
-// `maxOrders` committed records, in one PTB. Each update is verified by the published Pyth
-// Lazer package earlier in the same PTB and passed to `commit` by value, as it requires. An
-// update that matches no waiting cohort is skipped, and resolve also refunds orders past their
-// deadline. Resolve visits at most 450 records per call whatever `maxOrders` asks.
+// Commit locally signed Lazer prices and Block Scholes inputs to the market's waiting cohorts,
+// then resolve up to `maxOrders` committed records, in one PTB. Each update is verified by the
+// published Pyth Lazer package, and each Block Scholes batch by `bs_oracle`, earlier in the same
+// PTB, and `queue::commit_v2` takes them by value. An update or input that matches no waiting
+// cohort is skipped, and resolve also refunds orders past their deadline. Resolve visits at most
+// 450 records per call whatever `maxOrders` asks.
 export function commitAndResolveTx(params: {
     expiryMarketId: string;
+    expiryMs: bigint;
     protocolConfigId: string;
     prices: CohortPrice[];
     maxOrders: bigint;
@@ -2713,15 +2678,25 @@ export function commitAndResolveTx(params: {
             ],
         }),
     );
+    const vols = addBsVols(
+        tx,
+        params.expiryMs,
+        params.prices.map((price) => ({
+            valueMs: bsValueSlotMs(price.tauMs),
+            sviMs: bsSviSlotMs(price.tauMs),
+            oracle: price.oracle,
+        })),
+    );
     const queue = tx.object(deriveMarketQueueId(params.expiryMarketId));
     tx.moveCall({
-        target: ordersTarget("queue", "commit"),
+        target: ordersTarget("queue", "commit_v2"),
         arguments: [
             queue,
             tx.object(params.expiryMarketId),
             tx.object(ORDER_DESK_ID),
             tx.object(params.protocolConfigId),
             tx.makeMoveVec({ type: `${PYTH_LAZER_PACKAGE_ID}::update::Update`, elements: updates }),
+            vols,
             tx.object(CLOCK_ID),
         ],
     });

@@ -25,17 +25,22 @@ module deepbook_predict_orders::desk;
 
 use deepbook_predict::{admin::AdminCap, protocol_config::ProtocolConfig};
 use deepbook_predict_orders::{
-    delayed_execution_config::{Self, DelayedExecutionPolicy},
+    delayed_execution_config::{Self, BsTiming, DelayedExecutionPolicy},
     queue_events
 };
-use sui::clock::Clock;
+use sui::{clock::Clock, dynamic_field as df};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists as UID.exists_;
 
 const EPackageVersionDisabled: u64 = 0;
 const EVersionWatermarkNotAdvanced: u64 = 1;
 const EProtocolFrozen: u64 = 2;
 
 /// The companion's compiled version, compared against the desk floor.
-public macro fun current_version(): u64 { 2 }
+public macro fun current_version(): u64 { 3 }
 
 /// The shared policy and version floor of one order-flow companion deployment.
 public struct OrderDesk has key {
@@ -46,6 +51,11 @@ public struct OrderDesk has key {
     /// retiring older companion code.
     version_watermark: u64,
 }
+
+/// Dynamic-field key on the `OrderDesk` for its `BsTiming`, which was added
+/// after the policy's layout was published. An absent field reads as the launch
+/// timing.
+public struct BsTimingKey() has copy, drop, store;
 
 /// The parent each market's `MarketQueue` ID is derived from, bound to one
 /// desk. A separate shared object so permissionless queue creation never
@@ -80,6 +90,13 @@ public fun id(desk: &OrderDesk): ID {
 /// Return the policy, for SDK and devInspect reads.
 public fun policy(desk: &OrderDesk): DelayedExecutionPolicy {
     desk.policy
+}
+
+/// Return the Block Scholes timing commit applies, for SDK, keeper, and
+/// devInspect reads: the launch timing until `set_bs_timing` sets one.
+public fun bs_timing(desk: &OrderDesk): BsTiming {
+    if (!desk.id.exists_(BsTimingKey())) return delayed_execution_config::default_bs_timing();
+    *desk.id.borrow(BsTimingKey())
 }
 
 /// Return the desk's version floor, for SDK and devInspect reads.
@@ -153,6 +170,29 @@ public fun set_limits(
             settle_payout_batch,
         );
     queue_events::emit_policy_updated(desk.id(), desk.policy, clock.timestamp_ms());
+}
+
+/// Set which Block Scholes slots price a cohort: the spot and forward lag, the
+/// SVI lag, and the gap wait after which commit also accepts the next slot
+/// (`delayed_execution_config::BsTiming`). Commit reads it when it runs, so it
+/// applies to waiting cohorts too. Emits `BsTimingUpdated`.
+public fun set_bs_timing(
+    desk: &mut OrderDesk,
+    _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
+    value_lag_ms: u64,
+    svi_lag_ms: u64,
+    gap_wait_ms: u64,
+    clock: &Clock,
+) {
+    desk.assert_admin_allowed(config);
+    let timing = delayed_execution_config::new_bs_timing(value_lag_ms, svi_lag_ms, gap_wait_ms);
+    if (desk.id.exists_(BsTimingKey())) {
+        *desk.id.borrow_mut(BsTimingKey()) = timing;
+    } else {
+        desk.id.add(BsTimingKey(), timing);
+    };
+    queue_events::emit_bs_timing_updated(desk.id(), timing, clock.timestamp_ms());
 }
 
 /// Set the flat fee charged per queued order, in USDC base units. Applies to

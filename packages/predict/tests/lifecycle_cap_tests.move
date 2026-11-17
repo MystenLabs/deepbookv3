@@ -102,13 +102,15 @@ fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycle
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
-    let expiry_id = registry.create_and_share_expiry_market(
+    let expiry_id = registry.create_and_share_expiry_market_v2(
         &mut vault,
         &config,
-        &oracle_registry,
         lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
+        option::none(),
+        0,
+        std::u64::max_value!(),
         &clock,
         scenario.ctx(),
     );

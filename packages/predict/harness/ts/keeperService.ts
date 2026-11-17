@@ -22,6 +22,7 @@ import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, ensureMarketQueue, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
 import { type KeeperChain, type SettleResult, settleAndFlush, settleFailed } from "./keeperLanes.js";
+import { readLandedSnapshot, signedOracleFor } from "./signedOracle.js";
 import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { aggregateNetGasOf, appendTrace, errorTag, legComputationsOf, maxComputationOf } from "./trace.js";
 import {
@@ -32,6 +33,8 @@ import {
   clockTimestampMs,
   execute,
   executeAndWait,
+  type FlushMarket,
+  flushInstantMs,
   fundAddressUsdcTx,
   keeperFlushTxs,
   keeperTrySettleTx,
@@ -56,7 +59,8 @@ const CADENCE_IDS = Object.keys(CADENCES)
   .sort((a, b) => a - b);
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
-const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
+const INSTANCE_DIR = requiredEnv("INSTANCE_DIR");
+const MARKETS_PATH = `${INSTANCE_DIR}/markets.json`;
 const WORKLIST_PATH = `${requiredEnv("INSTANCE_DIR")}/keeper-worklist.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_USDC = BigInt(requiredEnv("TRADER_USDC"));
@@ -143,10 +147,7 @@ function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
         prices.set(m.id, price);
       }
       const r = await executeAndWait(
-        keeperTrySettleTx({
-          pythFeedId: feeds.pythFeedId, bsValueStoreId: feeds.bsValueStoreId, expiryMs: BigInt(m.expiryMs), price,
-          marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID,
-        }),
+        keeperTrySettleTx({ expiryMs: BigInt(m.expiryMs), price, marketId: m.id, protocolConfigId: PROTOCOL_CONFIG_ID }),
         "settle",
       );
       return r.events;
@@ -167,11 +168,26 @@ function keeperChain(feeds: Feeds, poolValuationCapId: string): KeeperChain {
         rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: m.id }),
         "settle-sweep",
       ),
-    flush: (marketIds) =>
-      execute(
-        keeperFlushTxs({ feeds, marketIds, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
+    // Each market is marked from the updater's latest landed values, signed at the latest
+    // Clock reading. A live market with no values in the snapshot aborts the snapshot stage, and
+    // the flush retries on the next tick.
+    flush: async (marketIds) => {
+      const expiries = await Promise.all(marketIds.map(expiryOf));
+      const snapshot = readLandedSnapshot(INSTANCE_DIR, expiries);
+      if (!snapshot || snapshot.spot1e9 === 0n) throw new Error("no landed oracle snapshot to mark the flush");
+      const instantMs = await flushInstantMs();
+      const at = Number(instantMs);
+      const markets: FlushMarket[] = marketIds.map((id, i) => ({
+        id,
+        expiryMs: BigInt(expiries[i]),
+        oracle: signedOracleFor(snapshot, expiries[i], at, at),
+      }));
+      const mark = { instantMs, spot1e9: snapshot.spot1e9 };
+      return execute(
+        keeperFlushTxs({ markets, mark, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
         "flush",
-      ),
+      );
+    },
   };
 }
 
@@ -271,8 +287,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
     }
   }
 
-  // Re-filter against a FRESH clock so a market that expired during step 1 is not passed to
-  // `load_live_pricer` (pricing:9) by the funding or roll lanes below.
+  // Re-filter against a FRESH clock so a market that expired during step 1 is neither funded nor
+  // advertised to traders by the lanes below.
   const liveClock = Number(await clockTimestampMs());
   const live = active.filter((m) => m.expiryMs > liveClock);
 

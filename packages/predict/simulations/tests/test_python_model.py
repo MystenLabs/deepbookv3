@@ -197,20 +197,24 @@ class QueuedExecutionTests(unittest.TestCase):
         self.assertEqual(replay.cash_need_sell(1_000_000_000), 750_000_001)
         self.assertEqual(replay.cash_need_sell(3), 4)  # ceil(2.25) + 1
 
-    def test_tick_pricer_reanchors_the_forward_and_rolls_the_snapshot_to_the_tick(self) -> None:
+    def test_tick_pricer_reanchors_the_forward_and_rolls_the_slot_svi_to_the_tick(self) -> None:
         record = {"vol": {
             "spot": 100_000_000_000, "forward": 101_000_000_000,
             "a": 3, "aNegative": False, "b": 5, "rho": 0, "rhoNegative": False,
             "m": 0, "mNegative": False, "sigma": 1, "riskFreeRate": 0,
-            "expiryMs": 1_000, "pricingTimestampMs": 600, "sviSourceTimestampMs": 600,
+            "expiryMs": 10_000, "pricingTimestampMs": 0, "sviSourceTimestampMs": 0,
         }}
-        oracle = replay.tick_oracle(record, 110_000_000_000, 800)
+        oracle = replay.tick_oracle(record, 110_000_000_000, 6_000)
 
-        # 110 * 101 / 100 = 111.1, and 200 ms left of a 400 ms anchor halves a and b.
+        # 110 * 101 / 100 = 111.1. The commit signs the SVI at τ's slot,
+        # floor((6_000 - 1_000) / 1_000) * 1_000 = 5_000, and the spot and forward at
+        # floor((6_000 - 500) / 500) * 500 = 5_500. 4_000 ms left of a 5_000 ms anchor keeps
+        # 4/5 of a and b.
         self.assertEqual(oracle["forward"], 111_100_000_000)
+        self.assertEqual((oracle["sviSourceTimestampMs"], oracle["priceSourceTimestampMs"]), (5_000, 5_500))
         svi = replay.pricing_svi(oracle)
-        self.assertEqual((svi["a"], svi["b"]), (1_500_000_000, 2_500_000_000))
-        self.assertIsNone(replay.tick_oracle(record, 110_000_000_000, 1_000))
+        self.assertEqual((svi["a"], svi["b"]), (2_400_000_000, 4_000_000_000))
+        self.assertIsNone(replay.tick_oracle(record, 110_000_000_000, 10_000))
 
     def test_fill_prices_at_the_committed_tick_and_pays_from_escrow(self) -> None:
         model, state = queued_market()
@@ -225,9 +229,10 @@ class QueuedExecutionTests(unittest.TestCase):
 
         updates = replay.commit_and_resolve(model, state, record_id, 90_000_000_000, 5_000_000)
         minted, filled = updates
-        # At the tick half the anchored time remains, so w = 0.02 and an at-the-money UP pays
-        # N(-sqrt(0.02) / 2). Priced at placement (w = 0.04) it would be N(-0.1), about 0.4602.
-        expected = normal_cdf(-math.sqrt(0.02) / 2)
+        # The commit signs the SVI at τ's slot, 4_999_000, so at the tick 5_000_000 of its
+        # 5_001_000 ms anchor remain: w = 0.04 * 5_000_000 / 5_001_000, and an at-the-money UP
+        # pays N(-sqrt(w) / 2).
+        expected = normal_cdf(-math.sqrt(0.04 * 5_000_000 / 5_001_000) / 2)
         self.assertAlmostEqual(int(minted["entry_probability"]) / 1e9, expected, delta=1e-6)
         all_in = int(filled["amount"])
         self.assertEqual(

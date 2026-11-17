@@ -21,7 +21,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
-use std::unit_test::destroy;
+use std::{string::String, unit_test::destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 // === Bounded assertion (math carve-out) ===
@@ -118,8 +118,39 @@ public fun finish_registry_test(
     scenario.end();
 }
 
-/// Admin-bind already-shared propbook feeds to `propbook_underlying_id()`,
-/// so the production `registry::create_and_share_expiry_market` binding check passes.
+/// The Pyth Lazer channel test oracle bindings name: `fixed_rate@200ms`.
+public fun binding_channel(): u8 { 3 }
+
+/// The SVI model test oracle bindings name.
+public fun binding_svi_model(): String { b"SVI".to_string() }
+
+/// Set Predict's oracle binding for `propbook_underlying_id()` through the
+/// production admin setter: Lazer feed `pyth_feed_id()` on `binding_channel()`,
+/// base asset `block_scholes_base_asset()`, and `binding_svi_model()` at
+/// `svi_decimals`. Market creation needs it.
+public fun set_oracle_binding(
+    config: &mut ProtocolConfig,
+    admin_cap: &AdminCap,
+    svi_decimals: u8,
+    ctx: &mut TxContext,
+) {
+    let clock = sui::clock::create_for_testing(ctx);
+    config.set_oracle_binding(
+        admin_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::pyth_feed_id(),
+        binding_channel(),
+        test_constants::block_scholes_base_asset(),
+        binding_svi_model(),
+        svi_decimals,
+        &clock,
+    );
+    clock.destroy_for_testing();
+}
+
+/// Admin-bind already-shared propbook feeds to `propbook_underlying_id()`. The
+/// feeds now serve tests only as data stores (`signed_data`), and Predict's own
+/// binding is `set_oracle_binding`.
 /// Operates within the CURRENT transaction; all feeds must already be shared.
 /// The caller keeps the propbook `RegistryAdminCap` for later rebind flows.
 /// Bind Pyth and create this underlying's Block Scholes store pair.

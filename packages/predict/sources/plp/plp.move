@@ -27,6 +27,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     vault_events
 };
+use deepbook_predict_math::{block_scholes::BsVol, lazer_price::LazerPrice};
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -58,6 +59,8 @@ const ESnapshotStageOpen: u64 = 11;
 const EBelowMinUsdcContribution: u64 = 12;
 const EContributionExceedsPriceCeiling: u64 = 13;
 const EInsufficientFeeIncentiveReserve: u64 = 14;
+/// An entry point of an earlier version that read Propbook objects. Use its `_v2`.
+const EUseV2: u64 = 15;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -71,7 +74,7 @@ public struct PoolValuationProof {}
 
 /// Transaction-local proof that the snapshot stage is still open.
 ///
-/// `start_pool_valuation` mints one, every `snapshot_expiry_pricer` borrows it,
+/// `start_pool_valuation` mints one, every `snapshot_expiry_pricer_v2` borrows it,
 /// and `seal_valuation_snapshot` consumes it. It has no abilities, so it cannot
 /// be stored, transferred, or dropped — which makes "the whole snapshot stage
 /// runs in ONE transaction" a property of the type system rather than a keeper
@@ -80,7 +83,7 @@ public struct PoolValuationProof {}
 /// the valuation stage can then span as many transactions as it needs (audit
 /// L10).
 ///
-/// It also scopes the stage to whoever started the flush: `snapshot_expiry_pricer`
+/// It also scopes the stage to whoever started the flush: `snapshot_expiry_pricer_v2`
 /// and `seal_valuation_snapshot` are otherwise permissionless, and a snapshot
 /// taken outside the starter's transaction could pick its own oracle instant per
 /// market.
@@ -108,7 +111,7 @@ public struct PoolVault has key {
 ///
 /// The flush runs in three stages. **Snapshot (one atomic PTB):**
 /// `start_pool_valuation` records the active expiry set and each LP queue's
-/// eligibility cutoff, then one `snapshot_expiry_pricer` per market freezes that
+/// eligibility cutoff, then one `snapshot_expiry_pricer_v2` per market freezes that
 /// market's oracle state and stamps the market (a settled member is swept there
 /// instead), and `seal_valuation_snapshot` proves the set is complete and
 /// freezes the vault-side figures (idle, the profit basis, the pending protocol
@@ -298,37 +301,55 @@ public fun start_pool_valuation(
     SnapshotStage {}
 }
 
+/// Retired: earlier versions froze a market's mark from Propbook's objects.
+/// Aborts `EUseV2`. Use `snapshot_expiry_pricer_v2`.
+public fun snapshot_expiry_pricer(
+    _vault: &mut PoolVault,
+    _stage: &SnapshotStage,
+    _market: &mut ExpiryMarket,
+    _config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    _clock: &Clock,
+    _ctx: &TxContext,
+) {
+    abort EUseV2
+}
+
 /// Freeze one snapshotted market's oracle state for this flush and stamp the
 /// market, capturing its cash rows and activating its payout-tree snapshot at
 /// this instant.
 ///
 /// Holding `SnapshotStage` is what admits this call, and that potato cannot leave
-/// the transaction `start_pool_valuation` minted it in — so every `Pricer` here is
-/// loaded at one instant, which is what lets the valuation stage span transactions
-/// without mixing marks (audit L10). This stage reads oracles only — it never
-/// walks a payout tree — so all markets fit one PTB regardless of book size.
-///
-/// The oracle feeding this stage must have been written in an EARLIER transaction:
-/// `pricing::resolve_live` refuses a read stamped with the current
-/// transaction digest (RP-24), so a keeper cannot refresh and snapshot in one PTB.
+/// the transaction `start_pool_valuation` minted it in. The market is marked at
+/// the instant its Pyth Lazer price is stamped, which must fall at or before the
+/// flush's start and at most `block_scholes_price_freshness_ms` before it, the
+/// same bound live pricing put on a Block Scholes price. `price` must be the
+/// market's price under its oracle binding, and `vol` its Block Scholes spot,
+/// forward, and SVI stamped exactly at that instant
+/// (`expiry_market::frozen_v2`). This stage reads no state but the market's own
+/// — it never walks a payout tree — so all markets fit one PTB regardless of book
+/// size.
 ///
 /// A market already settled at snapshot time is recorded with no pricer, gets no
-/// stamp (settled flows never touch live NAV), and contributes 0. An
-/// expired-but-unsettled market aborts: it has no well-defined mark, and because
-/// this stage is atomic the abort reverts the whole snapshot transaction, so the
-/// flag is never left engaged. Settle it first, then start the flush; settlement is
-/// never blocked by a flush, so that ordering is always available.
-public fun snapshot_expiry_pricer(
+/// stamp (settled flows never touch live NAV), and contributes 0. Its `price`
+/// and `vol` are ignored and may be none. An expired-but-unsettled market aborts:
+/// it has no well-defined mark, and because this stage is atomic the abort
+/// reverts the whole snapshot transaction, so the flag is never left engaged.
+/// Settle it first, then start the flush. Settlement is never blocked by a flush,
+/// so that ordering is always available. A market whose data is missing or does
+/// not price at the instant aborts the snapshot the same way, and the flush is
+/// retried.
+public fun snapshot_expiry_pricer_v2(
     vault: &mut PoolVault,
     _stage: &SnapshotStage,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
+    price: Option<LazerPrice>,
+    vol: Option<BsVol>,
     clock: &Clock,
-    ctx: &TxContext,
 ) {
     config.chk_version();
     config.chk_val();
@@ -343,13 +364,14 @@ public fun snapshot_expiry_pricer(
     // fail the whole flush (RP-31). Skipping is safe because
     // `expected_expiry_markets` is read on-chain here, not supplied: see
     // `seal_valuation_snapshot` for why nothing real can be skipped.
-    {
+    let started_at_ms = {
         let valuation = vault.valuation.borrow();
         if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;
         assert!(
             !valuation.frozen_pricers.contains(&expiry_market_id),
             EExpiryPricerAlreadySnapshotted,
         );
+        valuation.started_at_ms
     };
 
     let frozen = if (market.is_settled()) {
@@ -360,17 +382,7 @@ public fun snapshot_expiry_pricer(
         option::none()
     } else {
         assert!(clock.timestamp_ms() < market.expiry(), EExpiredMarketNotSettled);
-        option::some(market
-            .load_live_pricer(
-                config,
-                propbook_registry,
-                pyth,
-                bs_values,
-                bs_svi,
-                clock,
-                ctx,
-            )
-            .into_frozen())
+        option::some(market.frozen_v2(config, price, vol, started_at_ms))
     };
     let stamp = frozen.is_some();
     vault.valuation.borrow_mut().frozen_pricers.insert(expiry_market_id, frozen);

@@ -1,14 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Differential coverage for the exact single-expiry live NAV reader
-/// (`expiry_market::current_nav`). Every test builds protocol state through the
-/// production mint flow, then asserts `current_nav` exactly equals an INDEPENDENT
-/// per-order reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed
-/// straight from each order's atoms and `pricing::range_price`. The reference
-/// reuses NONE of `walk_linear` / `marked_liab` / `current_nav` /
-/// `expiry_cash::free_cash`, so it is a genuine oracle (unit-tests rule 1): it
-/// sums per order, while the contract nets per boundary.
+/// Differential coverage for a single expiry's exact NAV, read through the flush
+/// that marks it (`plp::value_expiry` over `expiry_market::snapshot_nav`). Every
+/// test builds protocol state through the mint flow, runs a one-market flush, and
+/// asserts the flush's active-market NAV exactly equals an INDEPENDENT per-order
+/// reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed straight
+/// from each order's atoms and `pricing::range_price` at the flush's own pricer.
+/// The reference reuses none of the tree walk or the NAV shape, so it is a
+/// genuine oracle (unit-tests rule 1): it sums per order, while the contract nets
+/// per boundary.
 ///
 /// All fixtures anchor every finite boundary at `strike_tick` (whose raw strike ==
 /// the seeded forward, so `UP(strike) = Φ(0) = 0.5` exactly with the SVI wing
@@ -27,11 +28,15 @@ use deepbook_predict::{
     pricing::{Self, Pricer},
     range_codec,
     strike_payout_tree,
-    test_constants
+    test_constants,
+    vault_events
 };
 use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::assert_eq;
+use sui::event;
 
+/// The pool's genesis lock, which every flush requires.
+const POOL_SEED: u64 = 10_000_000;
 /// ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
 const ATM_QUANTITY: u64 = 2_000_000_000;
 /// Second same-strike up order, quantity 4e9.
@@ -43,13 +48,14 @@ const NON_MONOTONE_HIGHER_TICK: u64 = 100;
 #[test]
 fun empty_live_market_values_at_free_cash() {
     let (mut fx, expiry_id, _trader) = helpers::setup_everything();
+    // A flush needs a bootstrapped pool.
+    fx.bootstrap_lock(POOL_SEED);
     fx.scenario_mut().next_tx(test_constants::alice());
-    let market = fx.take_market_bundle(expiry_id);
+    let mut market = fx.take_market_bundle(expiry_id);
 
     // No orders: NAV is exactly the seeded free cash (no fees yet -> rebate 0).
-    let nav = fx.current_nav_bundle(&market);
+    let nav = flush_nav(&mut fx, &mut market);
     assert_eq!(nav, test_constants::default_seeded_expiry_cash());
-    check_nav(&mut fx, &market, vector[], float!());
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -58,6 +64,8 @@ fun empty_live_market_values_at_free_cash() {
 #[test]
 fun single_atm_up_order() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    // A flush needs a bootstrapped pool.
+    fx.bootstrap_lock(POOL_SEED);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -70,7 +78,7 @@ fun single_atm_up_order() {
         ATM_QUANTITY,
     );
 
-    check_nav(&mut fx, &market, vector[id], float!());
+    check_nav(&mut fx, &mut market, vector[id]);
 
     helpers::return_account_bundle(account);
 
@@ -81,6 +89,8 @@ fun single_atm_up_order() {
 #[test]
 fun single_atm_down_order_anchored_at_neg_inf() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    // A flush needs a bootstrapped pool.
+    fx.bootstrap_lock(POOL_SEED);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -94,7 +104,7 @@ fun single_atm_down_order_anchored_at_neg_inf() {
     );
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
-    check_nav(&mut fx, &market, vector[id], float!());
+    check_nav(&mut fx, &mut market, vector[id]);
 
     helpers::return_account_bundle(account);
 
@@ -105,6 +115,8 @@ fun single_atm_down_order_anchored_at_neg_inf() {
 #[test]
 fun two_atm_orders_same_strike_collapse_to_one_node() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    // A flush needs a bootstrapped pool.
+    fx.bootstrap_lock(POOL_SEED);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -126,7 +138,7 @@ fun two_atm_orders_same_strike_collapse_to_one_node() {
 
     // Both up orders share the strike start boundary -> one tree node priced
     // once at P(strike); the aggregate quantity equals the per-order sum.
-    check_nav(&mut fx, &market, vector[id1, id2], float!());
+    check_nav(&mut fx, &mut market, vector[id1, id2]);
 
     helpers::return_account_bundle(account);
 
@@ -135,8 +147,10 @@ fun two_atm_orders_same_strike_collapse_to_one_node() {
 }
 
 #[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
-fun current_nav_rejects_non_monotone_active_book_surface() {
+fun the_flush_rejects_a_non_monotone_active_book_surface() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    // A flush needs a bootstrapped pool.
+    fx.bootstrap_lock(POOL_SEED);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -174,7 +188,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         test_constants::now_ms() + 2,
     );
 
-    fx.current_nav_bundle(&market);
+    flush_nav(&mut fx, &mut market);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -183,20 +197,61 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
 
 // === Helpers ===
 
-/// Assert `current_nav` equals the independent per-order reference and the market
-/// stays solvent (S1 backing). The contract builds its own pricer internally; we
-/// build an identical one (the oracle is frozen within the tx) for the reference.
+/// Assert the flush's NAV for the market equals the independent per-order
+/// reference at the flush's own pricer, and the market stays solvent (S1 backing).
 fun check_nav(
     fx: &mut helpers::Fixture,
-    market: &helpers::MarketBundle,
+    market: &mut helpers::MarketBundle,
     order_ids: vector<u256>,
-    _index_now: u64,
 ) {
-    let pricer = fx.load_pricer_bundle(market);
-    let nav = fx.current_nav_bundle(market);
+    let pricer = flush_pricer(fx, market);
+    let nav = flush_nav(fx, market);
     let expiry_market = helpers::market(market);
     assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids));
     helpers::assert_market_backed(expiry_market);
+}
+
+/// The pricer the flush builds for the market at the current clock: the feeds'
+/// latest Pyth spot and Block Scholes inputs, all signed at the clock
+/// (`helpers::flush_data_at`), through `pricing::snap_v2` and `pricing::pricer_at`.
+fun flush_pricer(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): Pricer {
+    let now = fx.clock().timestamp_ms();
+    let (price, vol) = helpers::flush_data_at(market, now);
+    let price = price.destroy_some();
+    let expiry_market = helpers::market(market);
+    let mut market_uid = object::new(fx.scenario_mut().ctx());
+    let snapshot = pricing::snap_v2(
+        vol.borrow(),
+        test_constants::pyth_feed_id(),
+        &mut market_uid,
+    );
+    let pricer = pricing::pricer_at(
+        &snapshot,
+        &market_uid,
+        price.spot(),
+        price.generation_us() / 1000,
+        now,
+        expiry_market.id(),
+        expiry_market.expiry(),
+    );
+    market_uid.delete();
+    pricer.destroy_some()
+}
+
+/// The market's NAV through a one-market flush at the current clock: the snapshot
+/// stage marks it from the feeds' rows signed at the clock, `value_expiry` values
+/// it, and the flush operator finishes. Returns the flush's active-market NAV.
+fun flush_nav(fx: &mut helpers::Fixture, market: &mut helpers::MarketBundle): u64 {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let stage = fx.start_flush_unsnapshotted(market);
+    let now = fx.clock().timestamp_ms();
+    let (price, vol) = helpers::flush_data_at(market, now);
+    fx.snapshot_v2_bundle(&stage, market, price, vol);
+    helpers::seal_snapshot_bundle(stage, market);
+    fx.value_expiry_bundle(market);
+    fx.finish_flush_bundle(market);
+    let events = event::events_by_type<vault_events::FlushExecuted>();
+    vault_events::flush_executed_active_market_nav(&events[events.length() - 1])
 }
 
 /// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ contribution` per

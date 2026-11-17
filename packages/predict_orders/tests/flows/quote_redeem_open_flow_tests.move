@@ -2,50 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Flow coverage for `quote_redeem_open`, the read-only early-sell quote of an
-/// Open record through Predict's `quote_close`: its hand-derived decomposition,
-/// its builder fee, that it carries no freeze or witness gate, that it equals a
-/// queued sell of the same record filled at the same tick, and
-/// `ERecordNotOpen` for a missing, Pending, or Closed record.
-///
-/// The position is a 4m (strike, +inf] mint filled from the queue at τ 121_000,
-/// at the money. At the live price every probability in the reference digital's
-/// ±21 band floors p * 4m to 1_999_974; the fixture's minimum fee is 0.005 per
-/// unit, so the trading fee is 20_000; inventory impact is off.
+/// Open record through Predict's `quote_close`. Predict retired `quote_close`
+/// with live pricing in version 6 (it aborts `EUseV2`), so the quote aborts there
+/// for an Open record, and still aborts `ERecordNotOpen` first for a missing,
+/// Pending, or Closed record.
 #[test_only]
 module deepbook_predict_orders::quote_redeem_open_flow_tests;
 
-use deepbook_predict::{expiry_market::RedeemQuote, flow_test_helpers as helpers};
-use deepbook_predict_orders::{
-    order_queue,
-    queue,
-    queue_event_views as events,
-    queue_fixture::{Self as fixture, QueueTest}
-};
+use deepbook_predict::expiry_market::{Self, RedeemQuote};
+use deepbook_predict_orders::{queue, queue_fixture::{Self as fixture, QueueTest}};
 use std::unit_test::assert_eq;
 
 const QUANTITY: u64 = 4_000_000;
 const MAX_COST: u64 = 3_000_000;
-/// floor(p * 4m) across the band.
-const REDEEM_VALUE: u64 = 1_999_974;
-/// 0.005 * 4m, below the redeem value it is capped at.
-const TRADING_FEE: u64 = 20_000;
-/// A sell's builder fee of 0.0005 per $1 contract, in FLOAT_SCALING, and that
-/// fee on 4m: 4m * 0.0005.
-const BUILDER_FEE_PER_CONTRACT: u64 = 500_000;
-const BUILDER_FEE: u64 = 2_000;
-/// The largest fee per contract a sell can name, u64::MAX, and the fee the
-/// default 5c cap leaves of it on 4m: 4m * 0.05.
-const MAX_FEE: u64 = 18_446_744_073_709_551_615;
-const DEFAULT_CAP_BUILDER_FEE: u64 = 200_000;
-/// The highest cap, a contract's whole $1 payout in FLOAT_SCALING; as a fee it
-/// is 4m * 1 = 4m on 4m, above the redeem value it is clamped at.
-const MAX_CAP: u64 = 1_000_000_000;
-/// A close the builder fee leaves nothing of.
-const NO_PROCEEDS: u64 = 0;
-const BUILDER_CODE_INDEX: u64 = 0;
 const TAU: u64 = 121_000;
-/// A placement at 121_000 lands on floor(122_000 / 200) * 200.
-const SELL_TAU: u64 = 122_000;
 const MAX_ORDERS: u64 = 10;
 /// The filled mint's record.
 const OPEN_RECORD: u64 = 0;
@@ -54,116 +24,11 @@ const MISSING_RECORD: u64 = 7;
 /// A close-side floor that accepts any fill.
 const NO_FLOOR: u64 = 0;
 
-#[test]
-fun quote_redeem_open_prices_the_close_before_the_order_fee() {
+#[test, expected_failure(abort_code = expiry_market::EUseV2)]
+fun quote_redeem_open_of_an_open_record_aborts_in_predict() {
     let mut q = market_with_filled_position();
-
-    let quote = quote_now(&mut q, OPEN_RECORD, QUANTITY);
-
-    helpers::assert_atm_entry_probability(quote.redeem_probability());
-    assert_eq!(quote.redeem_close_quantity(), QUANTITY);
-    assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
-    assert_eq!(quote.redeem_builder_fee(), 0);
-    assert_eq!(quote.redeem_inventory_impact_rebate(), 0);
-    assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE);
-    // A quote changes nothing: the record is still Open with its position.
-    assert_eq!(q.record(OPEN_RECORD).status(), order_queue::status_open());
-    q.finish();
-}
-
-/// A code attached to the account adds no builder fee to the plain quote; the
-/// builder-fee quote charges the fee the sell names.
-#[test]
-fun quote_redeem_open_with_builder_fee_charges_the_named_fee() {
-    let (mut q, _) = fixture::new().link_builder_code(BUILDER_CODE_INDEX);
-    fill_one_mint(&mut q);
-
-    let plain = quote_now(&mut q, OPEN_RECORD, QUANTITY);
-    assert_eq!(plain.redeem_builder_fee(), 0);
-    assert_eq!(plain.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE);
-
-    let pricer = q.load_pricer();
-    let quote = q.quote_redeem_open_with_builder_fee(
-        &pricer,
-        OPEN_RECORD,
-        QUANTITY,
-        BUILDER_FEE_PER_CONTRACT,
-    );
-    assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
-    assert_eq!(quote.redeem_builder_fee(), BUILDER_FEE);
-    assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE - BUILDER_FEE);
-    q.finish();
-}
-
-/// The builder-fee quote caps the named fee as admission does: u64::MAX quotes
-/// at the default cap.
-#[test]
-fun quote_redeem_open_with_builder_fee_charges_a_fee_above_the_cap_at_the_cap() {
-    let mut q = market_with_filled_position();
-
-    let pricer = q.load_pricer();
-    let quote = q.quote_redeem_open_with_builder_fee(&pricer, OPEN_RECORD, QUANTITY, MAX_FEE);
-    assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
-    assert_eq!(quote.redeem_builder_fee(), DEFAULT_CAP_BUILDER_FEE);
-    assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE - DEFAULT_CAP_BUILDER_FEE);
-    q.finish();
-}
-
-/// The builder-fee quote clamps the fee at the redeem value left after the
-/// trading fee, as the fill does: at the highest cap a fee of the whole $1
-/// payout quotes min(4m, 1_999_974 - 20_000) and no proceeds.
-#[test]
-fun quote_redeem_open_with_builder_fee_clamps_the_fee_at_the_redeem_value_left() {
-    let mut q = market_with_filled_position();
-    q.set_builder_fee_cap(MAX_CAP);
-
-    let pricer = q.load_pricer();
-    let quote = q.quote_redeem_open_with_builder_fee(&pricer, OPEN_RECORD, QUANTITY, MAX_CAP);
-    assert_eq!(quote.redeem_trading_fee(), TRADING_FEE);
-    assert_eq!(quote.redeem_builder_fee(), REDEEM_VALUE - TRADING_FEE);
-    assert_eq!(quote.redeem_proceeds(), NO_PROCEEDS);
-    q.finish();
-}
-
-#[test]
-fun quote_redeem_open_still_quotes_while_frozen_and_without_the_witness() {
-    let mut q = market_with_filled_position();
-    q.set_frozen(true);
-    q.set_witness(false);
-
-    let quote = quote_now(&mut q, OPEN_RECORD, QUANTITY);
-
-    assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE);
-    q.finish();
-}
-
-#[test]
-fun quote_redeem_open_equals_a_queued_sell_of_the_record_filled_at_the_same_tick() {
-    let mut q = market_with_filled_position();
-    // Reseed the feeds at 121_000, where the sell is placed.
-    q.refresh_oracle_at(TAU);
-
-    // Quote the Open record at the sell's τ from feeds sampled at 121_000. The
-    // live pricer rolls the surface from 121_000 to 122_000 and re-anchors on
-    // the same Pyth price the commit carries, exactly as the fill's tick pricer
-    // does. The quote runs on its own clock because the sell closes the record
-    // and the fixture clock cannot run back to place the sell afterwards.
-    let quote = q.quote_redeem_open_at(OPEN_RECORD, QUANTITY, SELL_TAU);
-    let sell_id = q.enqueue_sell(OPEN_RECORD, QUANTITY, NO_FLOOR, NO_FLOOR);
-    q.commit_at(SELL_TAU, fixture::live_price());
-    assert_eq!(q.resolve(MAX_ORDERS), 1);
-
-    let fills = events::fills();
-    let fill = fills[fills.length() - 1];
-    assert_eq!(fill.record_id(), sell_id);
-    assert_eq!(fill.tick_ms(), SELL_TAU);
-    assert_eq!(fill.quantity(), quote.redeem_close_quantity());
-    assert_eq!(fill.amount(), quote.redeem_proceeds());
-    assert_eq!(fill.trading_fee(), quote.redeem_trading_fee());
-    assert_eq!(fill.builder_fee(), quote.redeem_builder_fee());
-    assert_eq!(fill.inventory_impact(), quote.redeem_inventory_impact_rebate());
-    assert_eq!(quote.redeem_proceeds(), REDEEM_VALUE - TRADING_FEE);
-    q.finish();
+    quote_now(&mut q, OPEN_RECORD, QUANTITY);
+    abort 999
 }
 
 #[test, expected_failure(abort_code = queue::ERecordNotOpen)]

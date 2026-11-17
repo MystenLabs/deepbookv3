@@ -518,8 +518,8 @@ public fun redeem_settled(
     )
 }
 
-/// Queue an exact-quantity Predict mint in `market`'s order-flow queue for an
-/// Account with an active session. Returns the queue record ID.
+/// The oracle-free `enqueue_exact_quantity_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
 public fun enqueue_exact_quantity(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -528,10 +528,48 @@ public fun enqueue_exact_quantity(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_exact_quantity_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue an exact-quantity Predict mint in `market`'s order-flow queue for an
+/// Account with an active session. Returns the queue record ID.
+public fun enqueue_exact_quantity_v2(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
@@ -542,16 +580,58 @@ public fun enqueue_exact_quantity(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    queue.enqueue_exact_quantity(
+    queue.enqueue_exact_quantity_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
+        lower_tick,
+        higher_tick,
+        quantity,
+        max_cost,
+        max_probability,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_quantity_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_quantity_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    max_cost: u64,
+    max_probability: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_exact_quantity_with_builder_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
         lower_tick,
         higher_tick,
         quantity,
@@ -567,7 +647,7 @@ public fun enqueue_exact_quantity(
 /// `builder_fee_per_contract` must be the session's approved code and at most its
 /// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
 /// session checks. Returns the new queue record ID.
-public fun enqueue_exact_quantity_with_builder(
+public fun enqueue_exact_quantity_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -575,10 +655,6 @@ public fun enqueue_exact_quantity_with_builder(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     lower_tick: u64,
@@ -599,16 +675,12 @@ public fun enqueue_exact_quantity_with_builder(
         clock,
         ctx,
     );
-    queue.enqueue_exact_quantity_with_builder(
+    queue.enqueue_exact_quantity_with_builder_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         code,
         builder_fee_per_contract,
         lower_tick,
@@ -622,8 +694,8 @@ public fun enqueue_exact_quantity_with_builder(
     )
 }
 
-/// Queue a premium-budget Predict mint in `market`'s order-flow queue for an
-/// Account with an active session. Returns the queue record ID.
+/// The oracle-free `enqueue_exact_amount_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
 public fun enqueue_exact_amount(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -632,10 +704,48 @@ public fun enqueue_exact_amount(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_exact_amount_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        max_cost,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue a premium-budget Predict mint in `market`'s order-flow queue for an
+/// Account with an active session. Returns the queue record ID.
+public fun enqueue_exact_amount_v2(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
     lower_tick: u64,
     higher_tick: u64,
     max_premium: u64,
@@ -646,16 +756,58 @@ public fun enqueue_exact_amount(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    queue.enqueue_exact_amount(
+    queue.enqueue_exact_amount_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
+        lower_tick,
+        higher_tick,
+        max_premium,
+        min_quantity,
+        max_cost,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_amount_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_amount_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_premium: u64,
+    min_quantity: u64,
+    max_cost: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_exact_amount_with_builder_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
         lower_tick,
         higher_tick,
         max_premium,
@@ -671,7 +823,7 @@ public fun enqueue_exact_amount(
 /// `builder_fee_per_contract` must be the session's approved code and at most its
 /// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
 /// session checks. Returns the new queue record ID.
-public fun enqueue_exact_amount_with_builder(
+public fun enqueue_exact_amount_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -679,10 +831,6 @@ public fun enqueue_exact_amount_with_builder(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     lower_tick: u64,
@@ -703,16 +851,12 @@ public fun enqueue_exact_amount_with_builder(
         clock,
         ctx,
     );
-    queue.enqueue_exact_amount_with_builder(
+    queue.enqueue_exact_amount_with_builder_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         code,
         builder_fee_per_contract,
         lower_tick,
@@ -726,8 +870,8 @@ public fun enqueue_exact_amount_with_builder(
     )
 }
 
-/// Queue an all-in-budget Predict mint in `market`'s order-flow queue for an
-/// Account with an active session. Returns the queue record ID.
+/// The oracle-free `enqueue_exact_cost_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
 public fun enqueue_exact_cost(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -736,10 +880,46 @@ public fun enqueue_exact_cost(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_exact_cost_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue an all-in-budget Predict mint in `market`'s order-flow queue for an
+/// Account with an active session. Returns the queue record ID.
+public fun enqueue_exact_cost_v2(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
     lower_tick: u64,
     higher_tick: u64,
     max_cost: u64,
@@ -749,16 +929,56 @@ public fun enqueue_exact_cost(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    queue.enqueue_exact_cost(
+    queue.enqueue_exact_cost_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_exact_cost_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_exact_cost_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_exact_cost_with_builder_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
         lower_tick,
         higher_tick,
         max_cost,
@@ -773,7 +993,7 @@ public fun enqueue_exact_cost(
 /// `builder_fee_per_contract` must be the session's approved code and at most its
 /// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
 /// session checks. Returns the new queue record ID.
-public fun enqueue_exact_cost_with_builder(
+public fun enqueue_exact_cost_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -781,10 +1001,6 @@ public fun enqueue_exact_cost_with_builder(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     lower_tick: u64,
@@ -804,16 +1020,12 @@ public fun enqueue_exact_cost_with_builder(
         clock,
         ctx,
     );
-    queue.enqueue_exact_cost_with_builder(
+    queue.enqueue_exact_cost_with_builder_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         code,
         builder_fee_per_contract,
         lower_tick,
@@ -826,8 +1038,8 @@ public fun enqueue_exact_cost_with_builder(
     )
 }
 
-/// Queue an early sell of an Open order-flow queue record for an Account with
-/// an active session. Returns the new queue record ID.
+/// The oracle-free `enqueue_redeem_open_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
 public fun enqueue_redeem_open(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
@@ -836,10 +1048,46 @@ public fun enqueue_redeem_open(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_redeem_open_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Queue an early sell of an Open order-flow queue record for an Account with
+/// an active session. Returns the new queue record ID.
+public fun enqueue_redeem_open_v2(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
     record_id: u64,
     close_quantity: u64,
     min_probability: u64,
@@ -849,16 +1097,56 @@ public fun enqueue_redeem_open(
     ctx: &mut TxContext,
 ): u64 {
     let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
-    queue.enqueue_redeem_open(
+    queue.enqueue_redeem_open_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
+        record_id,
+        close_quantity,
+        min_probability,
+        min_proceeds,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// The oracle-free `enqueue_redeem_open_with_builder_v2` under the signature earlier versions
+/// published: the Propbook arguments are ignored.
+public fun enqueue_redeem_open_with_builder(
+    queue: &mut MarketQueue,
+    market: &mut ExpiryMarket,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
+    desk: &OrderDesk,
+    config: &ProtocolConfig,
+    _propbook_registry: &OracleRegistry,
+    _pyth: &PythFeed,
+    _bs_values: &BlockScholesValueStore,
+    _bs_svi: &BlockScholesSVIStore,
+    code: &BuilderCode,
+    builder_fee_per_contract: u64,
+    record_id: u64,
+    close_quantity: u64,
+    min_probability: u64,
+    min_proceeds: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    enqueue_redeem_open_with_builder_v2(
+        queue,
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        desk,
+        config,
+        code,
+        builder_fee_per_contract,
         record_id,
         close_quantity,
         min_probability,
@@ -873,7 +1161,7 @@ public fun enqueue_redeem_open(
 /// `builder_fee_per_contract` must be the session's approved code and at most its
 /// approved fee (`EBuilderNotApproved`, `EBuilderFeeAboveApproved`), after the
 /// session checks. Returns the new queue record ID.
-public fun enqueue_redeem_open_with_builder(
+public fun enqueue_redeem_open_with_builder_v2(
     queue: &mut MarketQueue,
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
@@ -881,10 +1169,6 @@ public fun enqueue_redeem_open_with_builder(
     sessions_config: &SessionsConfig,
     desk: &OrderDesk,
     config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
     code: &BuilderCode,
     builder_fee_per_contract: u64,
     record_id: u64,
@@ -904,16 +1188,12 @@ public fun enqueue_redeem_open_with_builder(
         clock,
         ctx,
     );
-    queue.enqueue_redeem_open_with_builder(
+    queue.enqueue_redeem_open_with_builder_v2(
         market,
         wrapper,
         auth,
         desk,
         config,
-        propbook_registry,
-        pyth,
-        bs_values,
-        bs_svi,
         code,
         builder_fee_per_contract,
         record_id,

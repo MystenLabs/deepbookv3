@@ -3,39 +3,35 @@
 
 /// Pricing for Predict markets.
 ///
-/// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
-/// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
-/// Scholes spot, forward, and SVI observations. The latest forward is paired with an exact
-/// source-timestamp spot from Propbook's bounded recent history. The live forward comes from one of
-/// two admin-selected sources (`PricingConfig.use_pyth_spot_for_forward`): a fresh
-/// positive Pyth spot carrying the Block Scholes basis, or the Block Scholes forward
-/// directly. A load falls back to the Block Scholes forward when the selected Pyth
-/// spot is stale or unavailable; valuation prices on that fallback, while every
-/// live trade (mints, mint quotes, and live redeems) refuses it through
-/// `assert_pyth_spot_fresh`. Exact-history reads do not apply live freshness policy.
+/// This module computes SVI-adjusted digital probabilities from Block Scholes
+/// inputs and a Pyth spot that arrive inline, signed, in the transaction that
+/// needs them. `snap_v2` turns a `block_scholes::BsVol` into the `VolSnapshot` a
+/// receipt or the flush stores, and `pricer_at` builds a `Pricer` from a snapshot
+/// at a committed Pyth tick: the Block Scholes basis re-anchored on the Pyth spot,
+/// and the SVI rolled down to the tick. It returns `none` where the inputs leave
+/// Predict's pricing envelope. The `try_*` reads price exactly as `up_price` and
+/// `range_price` do, and return `none` where those abort, so an order-flow fill
+/// never aborts on a surface.
 ///
-/// Delayed execution splits that read in two. `load_vol` validates the same live
-/// inputs when an order is admitted and returns the raw Block Scholes basis and SVI its receipt
-/// stores; `pricer_at` later rebuilds a `Pricer` from them at the order's committed Pyth tick.
-/// The `try_*` reads price exactly as `up_price` and `range_price` do, and return `none` where
-/// those abort, so an order-flow fill never aborts on a surface.
+/// Block Scholes signs SVI at `9` or `18` decimals. Pricing carries `a` and `b`
+/// at 1e18 either way, exactly when they were signed at 18. A snapshot keeps
+/// them at 1e9, so a snapshot from 18 decimals also records the full-precision
+/// tuple in its market's SVI cache, a dynamic field this module keeps on the
+/// market's UID (`SviKey`), and pricing reads that entry when it still holds it.
 ///
-/// A Propbook SVI store signs its parameters at the decimals the admin set on it, `9` or `18`. Every
-/// load prices `a` and `b` at 1e18 either way, exactly when the store is at 18. A receipt's
-/// snapshot keeps them at 1e9, so an admission at 18 also records the full-precision tuple in its
-/// market's SVI cache, a dynamic field this module keeps on the market's UID (`SviKey`), and
-/// the fill prices from that entry when it still holds it.
+/// Earlier package versions read Propbook's stores here. Version 6 removed those
+/// readers.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{pricing_config::PricingConfig, range_codec::Strike};
-use deepbook_predict_math::math as pmath;
+use deepbook_predict::range_codec::Strike;
+use deepbook_predict_math::{block_scholes::BsVol, math as pmath};
 use fixed_math::{i64::{Self, I64}, math};
-use propbook::{
-    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
-    pyth_feed::PythFeed,
-    registry::{BlockScholesStorePair, OracleRegistry}
-};
-use sui::{clock::Clock, dynamic_field as df, vec_map::{Self, VecMap}};
+use sui::{dynamic_field as df, vec_map::{Self, VecMap}};
+
+#[test_only]
+use deepbook_predict::pricing_config::PricingConfig;
+#[test_only]
+use sui::clock::Clock;
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -46,18 +42,13 @@ use fun df::exists as UID.exists_;
 ///
 /// `Pricer` has NO `store` ability, by design: a non-`store` value cannot enter
 /// an object or a dynamic field, so it cannot survive the transaction that
-/// loaded it. `load_live_pricer` is the only constructor whose result a trade path
-/// accepts from a caller (package-only `thaw` rebuilds one solely inside the flush's
-/// `snapshot_nav`, and the queue's `load_vol` and `pricer_at` build ones no
-/// public function returns) and validates oracle freshness, the same-transaction-digest
-/// guard, and `clock < expiry` at load; the live trade paths then gate a supplied `&Pricer`
-/// on market-id (`chk_pricer`) and on the Pyth spot this snapshot
-/// recorded (`assert_pyth_spot_fresh`), never on a second oracle read. The
-/// non-`store` ability is therefore the structural
-/// guarantee that every fund-moving trade prices against a mark loaded in its
-/// OWN transaction — a persisted, stale-favorable mark can never reach a trade.
-/// The full-pool flush, which must carry one mark per market across
-/// transactions, uses the separate `FrozenPricer` below (which no trade
+/// built it. Only `pricer_at` builds one, inside a fill or the flush's snapshot
+/// stage, and package-only `thaw` rebuilds one solely inside the flush's
+/// `snapshot_nav`, and no public function returns one. The non-`store` ability is
+/// therefore the structural guarantee that every fund-moving trade prices against
+/// a mark built in its OWN transaction — a persisted, stale-favorable mark can
+/// never reach a trade. The full-pool flush, which must carry one mark per market
+/// across transactions, uses the separate `FrozenPricer` below (which no trade
 /// entrypoint accepts). See RP-32.
 public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
@@ -135,19 +126,20 @@ public struct PricingSVI has copy, drop, store {
 }
 
 /// Dynamic-field key of a market's SVI cache under the market's UID: a `VecMap` from SVI source time
-/// to the full-precision tuple an admission read from a Propbook store at 18 decimals, or a poisoned
-/// entry when two different tuples share a time (`keep_svi`). Created by the first such admission,
-/// so that trader pays its storage, and capped at `svi_cache_capacity`.
+/// to the full-precision tuple of an 18-decimal snapshot (`snap_v2`), or a poisoned entry when two
+/// different tuples share a time (`keep_svi`). Created by the first such snapshot and capped at
+/// `svi_cache_capacity`.
 public struct SviKey() has copy, drop, store;
 
-/// The raw volatility inputs an order-flow admission read, stored in the order's
-/// receipt so its fill can rebuild a `Pricer` at the committed Pyth tick (RP-32:
-/// the rebuilt `Pricer` never leaves a package function). Captured by
-/// `load_vol` in the trader's transaction and never written by a keeper.
+/// The raw volatility inputs an order prices from, stored in its receipt so its
+/// fill can rebuild a `Pricer` at the committed Pyth tick (RP-32: the rebuilt
+/// `Pricer` never leaves a package function). Admission records only the Pyth
+/// feed, and `commit_v2` writes the Block Scholes inputs for the order's τ. Orders
+/// admitted by package versions before 6 captured them at placement instead.
 /// Read through BCS; Predict exposes no field getters.
 public struct VolSnapshot has copy, drop, store {
-    /// Canonical Propbook Pyth source for the market's underlying; commit finds
-    /// this feed in each Lazer update.
+    /// The market's Pyth Lazer feed, from its oracle binding at admission. Commit
+    /// finds this feed in each Lazer update.
     pyth_source_id: u32,
     /// The matched Block Scholes spot and forward, narrowed to Predict's width.
     bs_spot: u64,
@@ -174,22 +166,6 @@ const ECannotBeNegative: u64 = 1;
 #[test_only]
 const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
-const EBlockScholesPriceStale: u64 = 4;
-const EBlockScholesInputsInvalid: u64 = 5;
-const EPythSpotInvalid: u64 = 6;
-const EWrongPythFeed: u64 = 7;
-const EWrongBlockScholesValueStore: u64 = 8;
-const ELivePricingExpired: u64 = 9;
-const EBlockScholesSVIStale: u64 = 10;
-const EWrongBlockScholesSVIStore: u64 = 11;
-const EBlockScholesPriceUnavailable: u64 = 12;
-const EBlockScholesSVIUnavailable: u64 = 13;
-const EBlockScholesMinVarianceInvalid: u64 = 14;
-/// A live pricer may not be built from an oracle observation written in this
-/// transaction. Named for the observation's provenance (`writer_digest` vs
-/// `tx_context::digest()`), not sender identity — not every read of a same-tx
-/// write is prohibited (Pyth is checked only on the re-anchor branch).
-const EOracleWrittenInThisTransaction: u64 = 15;
 const EBlockScholesInputTooWide: u64 = 16;
 /// The config selects Pyth for the live forward, but this pricer fell back to the
 /// Block Scholes forward because the feed held no usable spot: no observation yet,
@@ -202,9 +178,6 @@ const EPythSpotUnavailable: u64 = 17;
 /// `pyth_spot_freshness_ms`.
 #[test_only]
 const EPythSpotStale: u64 = 18;
-/// A volatility snapshot requires `use_pyth_spot_for_forward`: resolve re-anchors
-/// the snapshotted Block Scholes basis on the committed Pyth price.
-const EPythForwardRequired: u64 = 19;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -231,10 +204,6 @@ macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_f
 /// rounding, and a larger rise fails closed. Re-measure when pricing or the SVI
 /// envelope changes.
 public(package) macro fun price_monotonicity_tolerance(): u64 { 2 }
-
-/// The higher-precision Propbook SVI decimals: `a` and `b` arrive at the 1e18 they are priced at.
-/// Any other value than this and `9` aborts the load.
-macro fun precise_svi_decimals(): u8 { 18 }
 
 /// Recent full-precision tuples a market keeps for its fills. An admission reads the latest
 /// publication, so the first admission on one inserts its entry and every later insertion is a newer
@@ -342,110 +311,64 @@ public(package) fun thaw(frozen: &FrozenPricer): Pricer {
     }
 }
 
-/// Validate the current live pricing boundary and snapshot oracle inputs for
-/// one market's repeated quote calculations.
-///
-/// The supplied feeds must be the current Propbook bindings for the underlying,
-/// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
-/// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
-/// pricing-safe envelope. SVI `a` and `b` are then rolled down from the tuple's provider source
-/// timestamp to the current remaining time. Under
-/// `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot reanchors the
-/// Block Scholes forward basis, and a missing, non-normalizable, or stale Pyth spot
-/// is ignored; with it off the Block Scholes forward is always used directly.
-/// Valuation accepts a pricer that ignored Pyth that way; live trades do not
-/// (`assert_pyth_spot_fresh`).
-public(package) fun load_live_pricer(
-    config: &PricingConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    expiry_market_id: ID,
-    propbook_underlying_id: u32,
-    expiry: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): Pricer {
-    chk_oracles(
-        propbook_registry,
-        propbook_underlying_id,
-        pyth,
-        bs_values,
-        bs_svi,
-    );
-    assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    let (_, pricer, _, _) = resolve_live(
-        config,
-        pyth,
-        bs_values,
-        bs_svi,
-        expiry_market_id,
-        expiry,
-        clock,
-        ctx,
-    );
-    pricer
-}
-
-/// Validate the live pricing boundary as `load_live_pricer` does, and also capture
-/// the raw volatility inputs a queued order stores. Returns the snapshot, the
-/// t₀ `Pricer` the enqueue dry run prices with. From a store at 18 decimals it also
-/// records the full-precision tuple in the SVI cache on `market_uid` for the order's fill.
-///
-/// On top of `load_live_pricer`'s checks it requires the SVI to be at most
-/// `svi_max_age_ms` old with a source time before expiry, and requires
-/// `use_pyth_spot_for_forward` (`EPythForwardRequired`). The on-chain Pyth spot
-/// need not be fresh: a stale or missing one makes the t₀ `Pricer` fall back to
-/// the Block Scholes forward.
-public(package) fun load_vol(
-    config: &PricingConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    expiry_market_id: ID,
-    propbook_underlying_id: u32,
-    expiry: u64,
-    svi_max_age_ms: u64,
-    market_uid: &mut UID,
-    clock: &Clock,
-    ctx: &TxContext,
-): (VolSnapshot, Pricer) {
-    chk_oracles(
-        propbook_registry,
-        propbook_underlying_id,
-        pyth,
-        bs_values,
-        bs_svi,
-    );
-    assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
-    assert!(config.pyth_fwd(), EPythForwardRequired);
-    let (snapshot, pricer, svi, precise) = resolve_live(
-        config,
-        pyth,
-        bs_values,
-        bs_svi,
-        expiry_market_id,
-        expiry,
-        clock,
-        ctx,
-    );
-    // The policy's SVI age bound, on top of the live SVI window. The live window already
-    // proved the source is at or before now, and now is before expiry, so the stored
-    // roll-down anchor is before expiry without a separate check.
-    assert!(
-        is_fresh(snapshot.svi_source_timestamp_ms, svi_max_age_ms, clock),
-        EBlockScholesSVIStale,
-    );
-    if (precise) keep_svi(market_uid, &snapshot, svi);
-    (snapshot, pricer)
-}
-
-/// The Propbook Pyth source a volatility snapshot was captured against, so the
-/// order-flow companion reads the matching feed from each Lazer update.
+/// The Pyth Lazer feed a volatility snapshot names, so the order-flow companion
+/// reads the matching feed from each Lazer update.
 public(package) fun pyth_source_id(snapshot: &VolSnapshot): u32 {
     snapshot.pyth_source_id
+}
+
+/// The receipt snapshot of an admission: only the Pyth feed, with no Block
+/// Scholes inputs until `commit_v2` writes them.
+public(package) fun feed_snap(pyth_source_id: u32): VolSnapshot {
+    let zero = i64::zero();
+    VolSnapshot {
+        pyth_source_id,
+        bs_spot: 0,
+        bs_forward: 0,
+        svi_a: zero,
+        svi_b: 0,
+        svi_rho: zero,
+        svi_m: zero,
+        svi_sigma: 0,
+        bs_spot_source_timestamp_ms: 0,
+        bs_forward_source_timestamp_ms: 0,
+        svi_source_timestamp_ms: 0,
+    }
+}
+
+/// The `VolSnapshot` a committed order or a flush mark prices from: `vol`'s spot,
+/// forward, and SVI, with `a` and `b` rounded half up to 1e9, and the Pyth feed
+/// `pyth_source_id`. A tuple signed at 18 decimals is also kept at full precision
+/// in the SVI cache on `market_uid` (`keep_svi`), which `pricer_at` prices from.
+public(package) fun snap_v2(vol: &BsVol, pyth_source_id: u32, market_uid: &mut UID): VolSnapshot {
+    let snapshot = VolSnapshot {
+        pyth_source_id,
+        bs_spot: vol.spot(),
+        bs_forward: vol.forward(),
+        svi_a: i64::from_parts(narrow_input(vol.a_magnitude(), true), vol.a_is_negative()),
+        svi_b: narrow_input(vol.b(), true),
+        svi_rho: vol.rho(),
+        svi_m: vol.m(),
+        svi_sigma: vol.sigma(),
+        bs_spot_source_timestamp_ms: vol.value_ms(),
+        bs_forward_source_timestamp_ms: vol.value_ms(),
+        svi_source_timestamp_ms: vol.svi_ms(),
+    };
+    if (vol.svi_decimals() == 18) {
+        keep_svi(
+            market_uid,
+            &snapshot,
+            PricingSVI {
+                a_magnitude: vol.a_magnitude(),
+                a_is_negative: vol.a_is_negative(),
+                b: vol.b(),
+                rho: vol.rho(),
+                m: vol.m(),
+                sigma: vol.sigma(),
+            },
+        );
+    };
+    snapshot
 }
 
 /// Whether a committed Pyth `spot` is pricing-safe: positive and at most
@@ -461,12 +384,15 @@ public(package) fun safe_spot(spot: u64): bool {
 /// full-precision tuple from the SVI cache on `market_uid` when it still holds one, and
 /// otherwise the snapshot's own `a` and `b` scaled to 1e18.
 ///
-/// Never aborts. `none` when `tick_ms >= expiry`, when the forward is zero (or
-/// leaves `u64`, which a spot inside the pricing-safe ceiling cannot reach), or
-/// when the rolled surface's minimum total variance is not positive. A tick may
-/// precede the SVI source time by less than one Pyth tick when the policy delay
-/// is shorter than the tick; the roll-down then scales `a` and `b` up by that
-/// sliver, as the same linear model gives.
+/// Never aborts. `none` when `tick_ms >= expiry`, when the snapshot's inputs
+/// leave Predict's pricing-safe envelope (`pmath::inputs_ok`: a positive spot and
+/// forward, the basis and SVI bounds), when the forward is zero (or leaves `u64`,
+/// which a spot inside the pricing-safe ceiling cannot reach), or when the rolled
+/// surface's minimum total variance is not positive. A snapshot with no Block
+/// Scholes inputs has a zero spot, so it never prices. A tick may precede the SVI
+/// source time by less than one Pyth tick only on a snapshot admitted before
+/// version 6. The roll-down then scales `a` and `b` up by that sliver, as the same
+/// linear model gives.
 public(package) fun pricer_at(
     snapshot: &VolSnapshot,
     market_uid: &UID,
@@ -476,8 +402,18 @@ public(package) fun pricer_at(
     expiry_market_id: ID,
     expiry: u64,
 ): Option<Pricer> {
-    if (tick_ms >= expiry) return option::none();
-    // The re-anchoring `resolve_live` applies to a fresh Pyth spot.
+    if (
+        tick_ms >= expiry
+            || !pmath::inputs_ok(
+                snapshot.bs_spot,
+                snapshot.bs_forward,
+                snapshot.svi_b,
+                snapshot.svi_rho,
+                snapshot.svi_m,
+                snapshot.svi_sigma,
+            )
+    ) return option::none();
+    // The Block Scholes basis, re-anchored on the committed Pyth spot.
     let forward = math::try_mul_div_down(
         spot,
         snapshot.bs_forward,
@@ -516,10 +452,8 @@ public(package) fun try_range(pricer: &Pricer, lower: Strike, higher: Strike): O
 /// Abort unless the selected Pyth spot was usable and fresh when this pricer was
 /// loaded.
 ///
-/// `load_live_pricer` treats a missing, non-normalizable, or stale Pyth spot as a
-/// fallback to the Block Scholes forward, which keeps valuation reads
-/// (`current_nav`, `live_order_value`, and the flush snapshot) priced through a
-/// gap in Pyth updates. Every live trade (mint, mint quote, and live redeem)
+/// The live pricer of earlier versions treated a missing, non-normalizable, or
+/// stale Pyth spot as a fallback to the Block Scholes forward. Every live trade (mint, mint quote, and live redeem)
 /// calls this to refuse the fallback instead: a mint or close moves pool cash at
 /// the pricer's mark (a quote refuses what its mint would), and the fallback
 /// moves that mark onto the lower-frequency Block Scholes forward. It
@@ -534,286 +468,12 @@ public(package) fun try_range(pricer: &Pricer, lower: Strike, higher: Strike): O
 public(package) fun assert_pyth_spot_fresh(pricer: &Pricer, config: &PricingConfig, clock: &Clock) {
     if (!config.pyth_fwd()) return;
     assert!(pricer.pyth_spot_source_timestamp_ms > 0, EPythSpotUnavailable);
-    assert!(
-        is_fresh(
-            pricer.pyth_spot_source_timestamp_ms,
-            config.pyth_age(),
-            clock,
-        ),
-        EPythSpotStale,
-    );
-}
-
-/// Validate the canonical Pyth binding and read its normalized spot at exactly
-/// `source_timestamp_ms`. The returned option preserves absence so the
-/// reference-tick and settlement flows can retain distinct missing-data policies.
-public(package) fun exact_spot(
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    propbook_underlying_id: u32,
-    source_timestamp_ms: u64,
-): Option<u64> {
-    chk_pyth(propbook_registry, propbook_underlying_id, pyth);
-    let read = pyth.normalized_spot_at(source_timestamp_ms);
-    if (read.is_some()) {
-        option::some(read.destroy_some().read_value())
-    } else {
-        option::none()
-    }
-}
-
-/// Validate the canonical Block Scholes value-store binding and read its exact spot at
-/// `source_timestamp_ms`. Missing, zero, and values outside Predict's settlement width remain
-/// unavailable so the permissionless settlement flow can retry without aborting.
-public(package) fun bs_spot_at(
-    propbook_registry: &OracleRegistry,
-    bs_values: &BlockScholesValueStore,
-    propbook_underlying_id: u32,
-    source_timestamp_ms: u64,
-): Option<u64> {
-    let binding = bs_binding(propbook_registry, propbook_underlying_id);
-    assert!(
-        binding.block_scholes_value_store_id() == bs_values.value_store_id(),
-        EWrongBlockScholesValueStore,
-    );
-    let read = bs_values.spot_at(source_timestamp_ms);
-    if (read.is_none()) return option::none();
-
-    let value = read.destroy_some().read_value();
-    if (value == 0 || value > (std::u64::max_value!() as u128)) return option::none();
-    option::some(value as u64)
+    let source_ms = pricer.pyth_spot_source_timestamp_ms;
+    let now = clock.timestamp_ms();
+    assert!(source_ms <= now && now - source_ms <= config.pyth_age(), EPythSpotStale);
 }
 
 // === Private Functions ===
-
-/// Validate all supplied feed objects against Propbook's canonical bindings.
-fun chk_oracles(
-    propbook_registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-) {
-    chk_pyth(propbook_registry, propbook_underlying_id, pyth);
-    let block_scholes_binding = bs_binding(
-        propbook_registry,
-        propbook_underlying_id,
-    );
-    assert!(
-        block_scholes_binding.block_scholes_value_store_id() == bs_values.value_store_id(),
-        EWrongBlockScholesValueStore,
-    );
-    assert!(
-        block_scholes_binding.block_scholes_svi_store_id() == bs_svi.svi_store_id(),
-        EWrongBlockScholesSVIStore,
-    );
-}
-
-fun bs_binding(
-    propbook_registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-): BlockScholesStorePair {
-    let binding = propbook_registry.propbook_block_scholes_store_pair_for_underlying(
-        propbook_underlying_id,
-    );
-    // Unreachable for a market: creation requires the binding and Propbook never removes it. The
-    // unwrap still needs a code, so it shares the value-store mismatch used by both callers.
-    assert!(binding.is_some(), EWrongBlockScholesValueStore);
-    binding.destroy_some()
-}
-
-fun chk_pyth(propbook_registry: &OracleRegistry, propbook_underlying_id: u32, pyth: &PythFeed) {
-    assert!(
-        propbook_registry
-            .propbook_pyth_id_for_underlying(propbook_underlying_id)
-            .contains(&pyth.id()),
-        EWrongPythFeed,
-    );
-}
-
-/// Resolve live forward and SVI inputs and retain every feed's source timestamp.
-/// Under `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot
-/// re-anchors the Block Scholes forward basis; otherwise the Block Scholes
-/// forward is used directly. Returns the validated inputs as a `VolSnapshot`
-/// beside the `Pricer` built from them, so a queued order stores exactly what
-/// its enqueue dry run priced.
-///
-/// Aborts if any observation that feeds the returned price was written in this
-/// transaction. Pyth is checked only on the re-anchor branch: when the flag is
-/// off or the read is stale, the observation is provenance-only and must not
-/// trip the guard.
-fun resolve_live(
-    config: &PricingConfig,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    expiry_market_id: ID,
-    expiry: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): (VolSnapshot, Pricer, PricingSVI, bool) {
-    let (snapshot, svi, precise) = read_inputs(config, pyth, bs_values, bs_svi, expiry, clock, ctx);
-
-    // Read whatever the config does with it: the Pyth observation is retained on
-    // every `Pricer` for trade-event provenance, including while
-    // `use_pyth_spot_for_forward` keeps it out of the forward, and for the
-    // live-trade gate (`assert_pyth_spot_fresh`), which reads this timestamp and
-    // its `0`.
-    let pyth_spot = pyth.normalized_spot();
-    let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
-        pyth_spot.borrow().read_source_timestamp_ms()
-    } else {
-        0
-    };
-    let mut forward = snapshot.bs_forward;
-    if (
-        config.pyth_fwd()
-            && pyth_spot.is_some()
-            && is_fresh(
-                pyth_spot_source_timestamp_ms,
-                config.pyth_age(),
-                clock,
-            )
-    ) {
-        let pyth_spot = pyth_spot.destroy_some();
-        chk_not_tx(&pyth_spot.read_writer_digest(), ctx);
-        let spot = pyth_spot.read_value();
-        assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
-        // The re-anchored forward may exceed the input spot ceiling. The basis and
-        // spot bounds still guarantee this multiplication and result fit in u64.
-        forward = math::mul_div_down(spot, snapshot.bs_forward, snapshot.bs_spot);
-    };
-
-    let pricer = pricer_of(
-        &snapshot,
-        &svi,
-        expiry_market_id,
-        expiry,
-        forward,
-        pyth_spot_source_timestamp_ms,
-        clock.timestamp_ms(),
-    );
-    (snapshot, pricer, svi, precise)
-}
-
-/// Read and validate the live volatility inputs for `expiry`: the latest Block
-/// Scholes forward, the spot at that forward's exact source timestamp, and the SVI
-/// tuple. Each read must not have been written in this transaction (RP-24) and must
-/// pass its freshness window, and the narrowed set must fit the pricing-safe
-/// envelope. The live pricer and the queue's snapshot both validate through here.
-/// Also returns the raw tuple with `a` and `b` at 1e18, and whether the store signed
-/// them there (18 decimals) rather than at 1e9.
-fun read_inputs(
-    config: &PricingConfig,
-    pyth: &PythFeed,
-    bs_values: &BlockScholesValueStore,
-    bs_svi: &BlockScholesSVIStore,
-    expiry: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): (VolSnapshot, PricingSVI, bool) {
-    let bs_forward_read = bs_values.forward(expiry);
-    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
-    let bs_forward_read = bs_forward_read.destroy_some();
-    chk_not_tx(&bs_forward_read.read_writer_digest(), ctx);
-    let bs_spot_read = bs_values.recent_spot_at(bs_forward_read.read_source_timestamp_ms());
-    assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
-    let bs_spot_read = bs_spot_read.destroy_some();
-    chk_not_tx(&bs_spot_read.read_writer_digest(), ctx);
-    // Freshness reads the provider's per-update source timestamp: `value_timestamp` for spot and
-    // forward, and `svi_timestamp` for SVI. A newer batch carrying an unchanged update cannot
-    // refresh pricing. The same source timestamp is snapshotted below, so trade events report the
-    // clock pricing validated.
-    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
-    assert!(
-        is_fresh(
-            block_scholes_spot_source_timestamp_ms,
-            config.bs_age(),
-            clock,
-        ),
-        EBlockScholesPriceStale,
-    );
-    let bs_spot = narrow_input(bs_spot_read.read_value(), false);
-
-    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
-    assert!(
-        is_fresh(
-            block_scholes_forward_source_timestamp_ms,
-            config.bs_age(),
-            clock,
-        ),
-        EBlockScholesPriceStale,
-    );
-    let bs_forward = narrow_input(bs_forward_read.read_value(), false);
-
-    let svi_read = bs_svi.svi(expiry);
-    assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
-    let svi_read = svi_read.destroy_some();
-    chk_not_tx(&svi_read.read_writer_digest(), ctx);
-    // One clock serves every job: the SVI source timestamp the freshness gate accepts is also the
-    // roll-down anchor and the snapshot trade events emit, so the parameters, their anchor, and
-    // the reported clock always come from the same read. The gate's `source_timestamp <= now` bound
-    // plus the pre-expiry check keep the anchor strictly before expiry, so the roll-down's
-    // `expiry - anchor` never underflows.
-    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
-    assert!(
-        is_fresh(
-            block_scholes_svi_source_timestamp_ms,
-            config.svi_age(),
-            clock,
-        ),
-        EBlockScholesSVIStale,
-    );
-    let decimals = bs_svi.svi_decimals();
-    assert!(decimals == 9 || decimals == precise_svi_decimals!(), EBlockScholesInputsInvalid);
-    let precise = decimals != 9;
-    let params = svi_read.read_value();
-    // The provider carries every parameter at 128 bits; Predict prices them at 64, so the
-    // narrowing happens once here and every bound reads these widths. A value too large for them
-    // aborts `EBlockScholesInputTooWide` before the cast, and `chk_inputs` then checks `b`, `rho`,
-    // `m`, and `sigma` against limits far tighter than the widths, and `a` only through the
-    // minimum total variance it leaves. An 18-decimal tuple rounds every parameter half up to
-    // 1e9: `rho`, `m`, and `sigma` keep enough digits there (a `sigma` at the 1e-7 floor still has
-    // a hundred raw units), and `a` and `b` are taken at 1e18 below, because on a final-seconds
-    // slice they are only a raw unit or two at 1e9.
-    let snapshot = VolSnapshot {
-        // `chk_oracles` bound `pyth` as the underlying's canonical feed, so
-        // its source is the registry binding's.
-        pyth_source_id: pyth.pyth_source_id(),
-        bs_spot,
-        bs_forward,
-        svi_a: i64::from_parts(
-            narrow_input(params.svi_a_magnitude(), precise),
-            params.svi_a_is_negative(),
-        ),
-        svi_b: narrow_input(params.svi_b(), precise),
-        svi_rho: i64::from_parts(
-            narrow_input(params.svi_rho_magnitude(), precise),
-            params.svi_rho_is_negative(),
-        ),
-        svi_m: i64::from_parts(
-            narrow_input(params.svi_m_magnitude(), precise),
-            params.svi_m_is_negative(),
-        ),
-        svi_sigma: narrow_input(params.svi_sigma(), precise),
-        bs_spot_source_timestamp_ms: block_scholes_spot_source_timestamp_ms,
-        bs_forward_source_timestamp_ms: block_scholes_forward_source_timestamp_ms,
-        svi_source_timestamp_ms: block_scholes_svi_source_timestamp_ms,
-    };
-    let own = own_svi(&snapshot);
-    let mut svi = own;
-    if (precise) {
-        svi.a_magnitude = params.svi_a_magnitude();
-        svi.a_is_negative = params.svi_a_is_negative();
-        svi.b = params.svi_b();
-    };
-    chk_inputs(&snapshot, &own, &svi, precise);
-    (snapshot, svi, precise)
-}
-
-fun chk_not_tx(writer_digest: &vector<u8>, ctx: &TxContext) {
-    assert!(writer_digest != ctx.digest(), EOracleWrittenInThisTransaction);
-}
 
 /// A snapshot's tuple with its own `a` and `b` at 1e18, exactly.
 fun own_svi(snapshot: &VolSnapshot): PricingSVI {
@@ -921,41 +581,6 @@ fun roll_svi(svi: &PricingSVI, expiry_ms: u64, priced_at_ms: u64, source_ms: u64
     rolled.a_magnitude = ((svi.a_magnitude as u256) * remaining / anchor) as u128;
     rolled.b = ((svi.b as u256) * remaining / anchor) as u128;
     rolled
-}
-
-fun is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
-    let now = clock.timestamp_ms();
-    source_timestamp_ms > 0 && source_timestamp_ms <= now && now - source_timestamp_ms <= max_age_ms
-}
-
-/// Abort unless a snapshot's narrowed Block Scholes inputs fit Predict's pricing-safe
-/// envelope (`EBlockScholesInputsInvalid`) and the raw SVI tuple's minimum total
-/// variance is positive (`EBlockScholesMinVarianceInvalid`). A 9-decimal tuple's
-/// minimum is checked at 1e9 with its floors, as it always was. A `precise` one's is
-/// checked at 1e18, where the increment `b·sigma·sqrt(1 − rho²)` is not floored to a
-/// raw unit, so a final-seconds slice whose `a` rounds to zero still shows its positive
-/// minimum, and on both forms: `svi`, the stored `a` and `b` every live price uses, and
-/// `own`, the snapshot's rounded ones, so an admitted snapshot also prices without its
-/// full-precision tuple, before roll-down, for a fill that no longer finds that tuple
-/// in the market's SVI cache.
-fun chk_inputs(snapshot: &VolSnapshot, own: &PricingSVI, svi: &PricingSVI, precise: bool) {
-    assert!(
-        pmath::inputs_ok(
-            snapshot.bs_spot,
-            snapshot.bs_forward,
-            snapshot.svi_b,
-            snapshot.svi_rho,
-            snapshot.svi_m,
-            snapshot.svi_sigma,
-        ),
-        EBlockScholesInputsInvalid,
-    );
-    assert!(
-        if (precise) var_ok(own) && var_ok(svi)
-        else
-            pmath::raw_var_ok(snapshot.svi_a, snapshot.svi_b, snapshot.svi_rho, snapshot.svi_sigma),
-        EBlockScholesMinVarianceInvalid,
-    );
 }
 
 /// Whether a tuple's minimum total variance over all strikes is positive at the 1e18 its `a` and

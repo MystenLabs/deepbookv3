@@ -1,9 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Unit coverage for `strike_payout_tree::walk_linear` — the NAV linear walk —
-/// driven by a real live `Pricer` over standalone trees. These exercise paths
-/// `current_nav` cannot reach directly: the skip-zero-delta path over an equal
+/// Unit coverage for the payout tree's NAV linear walk — read through the
+/// production `walk_frozen` over a fresh generation (`tree_walk::liability`) —
+/// driven by a real `Pricer` over standalone trees. These exercise paths the
+/// market-level flush cannot reach directly: the skip-zero-delta path over an equal
 /// live start/end boundary, and the boundary-aggregation dust clamp — the
 /// flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
 ///
@@ -24,7 +25,8 @@ use deepbook_predict::{
     pricing_reference_data as ref_data,
     range_codec::{Self, Strike},
     strike_payout_tree::{Self, StrikePayoutTree},
-    test_constants
+    test_constants,
+    tree_walk
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
@@ -155,7 +157,7 @@ const HALF_UNIT_QUANTITY: u64 = 500_000_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
-/// Regression for the boundary-skip bug: `walk_linear` once skipped pricing a node
+/// Regression for the boundary-skip bug: the walk once skipped pricing a node
 /// whose start and end quantities cancel, which silently disarmed the monotonicity
 /// guard for any inversion sitting on such a node. The construction below is the
 /// one that distinguishes the two behaviours — the cancelling tick is the LAST
@@ -173,7 +175,7 @@ fun inversion_on_a_cancelling_last_boundary_still_aborts() {
     tree.insert_range(CANCEL_LOWER_TICK, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
     insert_up(&mut tree, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
 
-    tree.walk_linear(&pricer, tick_size());
+    tree_walk::liability(&mut tree, &pricer, tick_size());
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -191,7 +193,7 @@ fun exact_walk_matches_per_order_reference() {
 
     // The exact walk equals the independent per-order sum bit-for-bit: each
     // one-sided order is its own node, so there is no aggregation dust.
-    let exact = walk_linear(&tree, &pricer);
+    let exact = walk(&mut tree, &pricer);
     assert_eq!(exact, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
 
     destroy(tree);
@@ -199,7 +201,7 @@ fun exact_walk_matches_per_order_reference() {
 }
 
 #[test]
-fun walk_linear_nets_same_total_regardless_of_insertion_order() {
+fun the_walk_nets_same_total_regardless_of_insertion_order() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
@@ -209,14 +211,14 @@ fun walk_linear_nets_same_total_regardless_of_insertion_order() {
     insert_up(&mut tree, t1, Q1);
     // Insertion order is intentionally not sorted; the in-order walk must still
     // net the same total.
-    let walk = tree.walk_linear(&pricer, tick_size());
+    let walk = tree_walk::liability(&mut tree, &pricer, tick_size());
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
     destroy(tree);
     cleanup(fixture, oracle);
 }
 
 #[test]
-fun walk_linear_clamps_boundary_aggregation_dust() {
+fun the_walk_clamps_boundary_aggregation_dust() {
     let (mut fixture, oracle, pricer) = live_pricer_at(FLAT_REGION_FORWARD);
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
@@ -238,7 +240,7 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
         math::mul_down(pricer.range_price(raw(lower_a), raw(higher)).probability(), DUST_QUANTITY) +
         math::mul_down(pricer.range_price(raw(lower_b), raw(higher)).probability(), DUST_QUANTITY);
     assert_eq!(reference, 0);
-    assert_eq!(walk_linear(&tree, &pricer), 0);
+    assert_eq!(walk(&mut tree, &pricer), 0);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -274,8 +276,8 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     assert_eq!(settled_c_only, rebuilt.liab_at(settlement_c_only, tick_size()));
     assert_eq!(settled_c_only, GC_SURVIVOR_C_QUANTITY);
 
-    let mutated_walk = walk_linear(&tree, &pricer);
-    let rebuilt_walk = walk_linear(&rebuilt, &pricer);
+    let mutated_walk = walk(&mut tree, &pricer);
+    let rebuilt_walk = walk(&mut rebuilt, &pricer);
     let reference = range_reference(
         &pricer,
         vector[GC_SURVIVOR_A_LOWER, GC_SURVIVOR_C_LOWER],
@@ -333,7 +335,7 @@ fun a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted() {
     // prices the inverted boundary at its quote, so admitting the dust costs the
     // mark nothing.
     assert_eq!(
-        walk_linear(&tree, &pricer),
+        walk(&mut tree, &pricer),
         range_reference(
             &pricer,
             vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
@@ -420,7 +422,7 @@ fun a_two_unit_rise_on_a_valid_surface_is_walked() {
     insert_up(&mut tree, TWO_UNIT_LOWER_TICK, RIPPLE_QUANTITY);
     insert_up(&mut tree, TWO_UNIT_HIGHER_TICK, RIPPLE_QUANTITY);
     assert_eq!(
-        tree.walk_linear(&pricer, CENT_TICK_SIZE),
+        tree_walk::liability(&mut tree, &pricer, CENT_TICK_SIZE),
         math::mul_down(lower_price, RIPPLE_QUANTITY) + math::mul_down(higher_price, RIPPLE_QUANTITY),
     );
 
@@ -452,7 +454,7 @@ fun a_valid_surface_at_the_butterfly_edge_fails_closed() {
 
     insert_up(&mut tree, BUTTERFLY_EDGE_LOWER_TICK, RIPPLE_QUANTITY);
     insert_up(&mut tree, BUTTERFLY_EDGE_HIGHER_TICK, RIPPLE_QUANTITY);
-    tree.walk_linear(&pricer, tick_size());
+    tree_walk::liability(&mut tree, &pricer, tick_size());
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -485,7 +487,7 @@ fun a_self_inverted_order_is_charged_its_rise() {
     );
 
     assert_eq!(
-        walk_linear(&tree, &pricer),
+        walk(&mut tree, &pricer),
         range_reference(
             &pricer,
             vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
@@ -523,7 +525,7 @@ fun a_risen_boundary_charges_only_the_quantity_ending_there() {
     );
 
     assert_eq!(
-        walk_linear(&tree, &pricer),
+        walk(&mut tree, &pricer),
         range_reference(
             &pricer,
             vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
@@ -573,7 +575,7 @@ fun the_frozen_walk_charges_a_self_inverted_order_it_still_holds() {
         ),
     );
     assert_eq!(
-        walk_linear(&tree, &pricer),
+        walk(&mut tree, &pricer),
         range_reference(
             &pricer,
             vector[DUST_INVERSION_HIGHER_TICK],
@@ -605,7 +607,7 @@ fun a_rise_is_charged_against_the_running_minimum() {
 
     // The finite order inverts, so it is worth nothing per order.
     assert_eq!(
-        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE),
         math::mul_down(middle_price, SELF_INVERTED_QUANTITY),
     );
 
@@ -629,7 +631,7 @@ fun a_rise_charge_rounds_up() {
     tree.insert_range(DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK, HALF_UNIT_QUANTITY);
 
     assert_eq!(
-        walk_linear(&tree, &pricer),
+        walk(&mut tree, &pricer),
         up_reference(&pricer, vector[DEEP_LOWER_TICK], vector[SELF_INVERTED_QUANTITY])
             + range_reference(
                 &pricer,
@@ -662,7 +664,7 @@ fun a_cancelling_boundary_still_lowers_the_running_minimum() {
 
     // The first order is worth its spread; the second inverts and is worth nothing.
     assert_eq!(
-        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE),
         math::mul_down(left_price - first_price, SELF_INVERTED_QUANTITY),
     );
 
@@ -700,7 +702,7 @@ fun a_rise_overcharges_an_order_that_does_not_invert() {
                 vector[SELF_INVERTED_QUANTITY],
             );
     assert_eq!(
-        walk_linear(&tree, &pricer) - reference,
+        walk(&mut tree, &pricer) - reference,
         math::mul_down(risen_price - low_price, SELF_INVERTED_QUANTITY),
     );
 
@@ -726,7 +728,7 @@ fun a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices() {
     insert_up(&mut tree, STAIR_TICK_2, STAIR_QUANTITY);
 
     assert_eq!(
-        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE),
         math::mul_down(lower_price, STAIR_QUANTITY) + math::mul_down(higher_price, STAIR_QUANTITY),
     );
 
@@ -745,7 +747,7 @@ fun a_rise_one_unit_past_the_tolerance_aborts() {
 
     insert_up(&mut tree, STAIR_TICK_0, STAIR_QUANTITY);
     insert_up(&mut tree, STAIR_TICK_3, STAIR_QUANTITY);
-    tree.walk_linear(&pricer, STAIR_TICK_SIZE);
+    tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -770,7 +772,7 @@ fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
     assert!(previous_price - first_price > pricing::price_monotonicity_tolerance!());
 
     ticks.do_ref!(|tick| insert_up(&mut tree, *tick, STAIR_QUANTITY));
-    tree.walk_linear(&pricer, STAIR_TICK_SIZE);
+    tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -795,7 +797,7 @@ fun the_running_minimum_follows_a_falling_price() {
     vector[STAIR_LEFT_TICK, STAIR_TICK_0, STAIR_TICK_3].do!(|tick| {
         insert_up(&mut tree, tick, STAIR_QUANTITY);
     });
-    tree.walk_linear(&pricer, STAIR_TICK_SIZE);
+    tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -807,7 +809,7 @@ fun the_running_minimum_follows_a_falling_price() {
 #[test]
 fun the_live_walk_drops_the_staircase_husks() {
     let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
-    let tree = husked_staircase(&mut fixture);
+    let mut tree = husked_staircase(&mut fixture);
 
     let interior_lower_price = stair_up_price(&pricer, STAIR_TICK_1);
     let interior_higher_price = stair_up_price(&pricer, STAIR_TICK_2);
@@ -815,7 +817,7 @@ fun the_live_walk_drops_the_staircase_husks() {
         interior_higher_price - interior_lower_price <= pricing::price_monotonicity_tolerance!(),
     );
     assert_eq!(
-        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        tree_walk::liability(&mut tree, &pricer, STAIR_TICK_SIZE),
         math::mul_down(interior_lower_price, STAIR_QUANTITY)
             + math::mul_down(interior_higher_price, STAIR_QUANTITY),
     );
@@ -889,7 +891,7 @@ fun assert_ripple_is_walked(
     insert_up(&mut tree, lower_tick, RIPPLE_QUANTITY);
     insert_up(&mut tree, higher_tick, RIPPLE_QUANTITY);
     assert_eq!(
-        walk_linear(&tree, pricer),
+        walk(&mut tree, pricer),
         up_reference(
             pricer,
             vector[lower_tick, higher_tick],
@@ -901,9 +903,9 @@ fun assert_ripple_is_walked(
     cleanup(fixture, oracle);
 }
 
-/// Run the exact linear walk.
-fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
-    tree.walk_linear(pricer, tick_size())
+/// The tree's liability through the production walk (`tree_walk::liability`).
+fun walk(tree: &mut StrikePayoutTree, pricer: &Pricer): u64 {
+    tree_walk::liability(tree, pricer, tick_size())
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
@@ -913,7 +915,7 @@ fun clustered_ticks(): (u64, u64, u64) {
 }
 
 /// Insert a one-sided up range `(tick, pos_inf]` carrying `quantity`;
-/// `walk_linear` reads only the quantity.
+/// The walk reads only the quantity.
 fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
     tree.insert_range(tick, constants::pos_inf_tick!(), quantity);
 }
