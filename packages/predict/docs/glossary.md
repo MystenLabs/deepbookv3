@@ -118,7 +118,7 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   fungible claim on `PoolVault`. Code `PLP`.
 - **`current_nav`** — an `ExpiryMarket`'s **exact** live NAV: free cash minus the
   live liability (the payout tree's boundary-linear walk
-  `strike_payout_tree::walk_linear`, `Σ quantity × P(range)`, with no per-order
+  `strike_payout_tree::walk_frozen`, `Σ quantity × P(range)`, with no per-order
   correction), floored at zero. There is no approximation or
   uncertainty band — it is the true per-expiry recoverable value at the
   valuation instant, up to fixed-point dust. Code `current_nav`. Since package version 6, which builds no live `Pricer`, it aborts `EUseV2`, and the flush evaluates the same NAV from its snapshot (`snapshot_nav`).

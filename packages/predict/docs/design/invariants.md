@@ -135,7 +135,7 @@ See [../concepts/delayed-execution.md](../concepts/delayed-execution.md).
 - **The per-expiry NAV is the exact mark.** A market's NAV is
   `free_cash − live_marked_liability`, floored at zero, where `free_cash =
   cash − inventory_impact_reserve` and the liability is the
-  payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
+  payout tree's boundary-linear walk (`strike_payout_tree::walk_frozen`,
   `Σ quantity × P(range)`) with no per-order correction. The flush evaluates it from its snapshot (`snapshot_nav`), and `expiry_market::current_nav`, which returned it for a live `Pricer` through package version 5, aborts `EUseV2` since version 6.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
   reserve and proven on every trade); the `saturating_sub` cash floor marks a

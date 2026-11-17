@@ -146,7 +146,7 @@ nav = max(0, free_cash − live_marked_liability)
 where:
 
 - **`free_cash = cash_balance − inventory_impact_reserve`** — the expiry's USDC net of the isolated impact escrow it still owes. Inventory-impact escrow is not LP value while live.
-- **`marked_liab = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so the walk carries no per-order correction term. (The flush's snapshot capture is not such a term either: it runs the same walk over the book's captured shadows.)
+- **`live_marked_liability`** (`frozen_liab`, the payout tree's `walk_frozen`), floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so the walk carries no per-order correction term. (The flush's snapshot capture is not such a term either: the walk reads each node's captured shadow.)
 
 The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding, and by a conservative charge of at most 2e-9 of the quantity ending at a boundary whose price rose by fixed-point dust, plus a raw unit of rounding (response policy RP-15); it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 

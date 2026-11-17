@@ -206,7 +206,7 @@ An Open record leaves the Open status in one of two ways:
 
 `queue::quote_redeem_open` and `quote_redeem_open_with_builder_fee` keep their signatures. They check the queue's market (`EWrongMarket`) and that the record is Open (`ERecordNotOpen`), then abort `EUseV2` through Predict's `quote_close`, because no transaction can build the live `Pricer` they take since package version 6.
 
-Position reads such as `live_order_value` and `settled_order_payout` take the packed order ID, which `queue::order(record_id)` returns in the record's `OrderView`.
+Position reads such as `settled_order_payout` take the packed order ID, which `queue::order(record_id)` returns in the record's `OrderView`.
 
 ## Refunds
 
