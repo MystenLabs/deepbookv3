@@ -15,9 +15,9 @@ use std::unit_test::{assert_eq, destroy};
 use sui::{event, test_scenario::{Self as test, Scenario, return_shared}, vec_set};
 
 const ADMIN: address = @0xAD;
-const OLDER_VERSION: u64 = 3; // The Mainnet v3 floor this upgrade retires.
-const CURRENT_VERSION: u64 = 4;
-const FUTURE_VERSION: u64 = 5;
+const OLDER_VERSION: u64 = 4; // The Mainnet v4 floor this upgrade retires.
+const CURRENT_VERSION: u64 = 5;
+const FUTURE_VERSION: u64 = 6;
 const POOL_A: address = @0xB00A;
 const POOL_B: address = @0xB00B;
 const POOL_C: address = @0xB00C;

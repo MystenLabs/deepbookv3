@@ -53,11 +53,18 @@ macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
 
 macro fun max_sessions(): u64 { 20 }
 
-/// The Sessions version floor at which builder approvals and spend budgets open:
-/// the first version whose `authorize_session` clears ones left on a new grant.
-/// An older `authorize_session` would keep them, so approvals wait until the
-/// watermark retires every older version.
-macro fun grant_terms_version(): u64 { 4 }
+/// The Sessions version floor at which builder approvals open: the first version
+/// whose `authorize_session` clears an approval left on a new grant. An older
+/// `authorize_session` would keep it, so approvals wait until the watermark
+/// retires every older version.
+macro fun builder_approval_version(): u64 { 4 }
+
+/// The Sessions version floor at which spend budgets open: the first version
+/// whose spot wrappers charge them and whose `authorize_session` and
+/// `revoke_session` clear them. Budgets set while an older version is callable
+/// would not bind its orders and could outlive a revocation, so approvals wait
+/// until the watermark retires every older version.
+macro fun spend_budget_version(): u64 { 5 }
 
 // === Structs ===
 
@@ -237,7 +244,7 @@ public fun approve_session_builder(
 ) {
     sessions_config.assert_version();
     assert!(
-        sessions_config.version_watermark() >= grant_terms_version!(),
+        sessions_config.version_watermark() >= builder_approval_version!(),
         EBuilderApprovalsNotEnabled,
     );
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
@@ -286,7 +293,7 @@ public fun approve_session_spend<T>(
 ) {
     sessions_config.assert_version();
     assert!(
-        sessions_config.version_watermark() >= grant_terms_version!(),
+        sessions_config.version_watermark() >= spend_budget_version!(),
         ESpendApprovalsNotEnabled,
     );
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
