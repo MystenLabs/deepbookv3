@@ -167,11 +167,11 @@ public struct VolSnapshot has copy, drop, store {
 
 // The digital's undefined points. `deepbook_predict_math::math::digital` reports
 // these codes and `up_price` / `range_price` abort with them here.
-#[allow(unused_const)]
+#[test_only]
 const EZeroForward: u64 = 0;
-#[allow(unused_const)]
+#[test_only, allow(unused_const)]
 const ECannotBeNegative: u64 = 1;
-#[allow(unused_const)]
+#[test_only]
 const ENonPositiveVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
 const EBlockScholesPriceStale: u64 = 4;
@@ -196,11 +196,11 @@ const EBlockScholesInputTooWide: u64 = 16;
 /// or one that does not normalize to a positive value. Raised only by the live
 /// trades that refuse the fallback (mints, mint quotes, and live redeems); the load
 /// itself never aborts on it, so valuation keeps pricing.
-#[allow(unused_const)]
+#[test_only]
 const EPythSpotUnavailable: u64 = 17;
 /// As `EPythSpotUnavailable`, but the feed held a usable spot older than
 /// `pyth_spot_freshness_ms`.
-#[allow(unused_const)]
+#[test_only]
 const EPythSpotStale: u64 = 18;
 /// A volatility snapshot requires `use_pyth_spot_for_forward`: resolve re-anchors
 /// the snapshotted Block Scholes basis on the committed Pyth price.
@@ -970,13 +970,13 @@ fun var_ok(svi: &PricingSVI): bool {
 fun eval_range(pricer: &Pricer, lower: Strike, higher: Strike): (Option<RangePrice>, u64) {
     if (lower.value() >= higher.value()) return (option::none(), EInvalidRange);
     let mut lower_up = option::none();
-    if (!lower.is_neg_inf()) {
+    if (!lower.is_ninf()) {
         let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, lower);
         if (price.is_none()) return (option::none(), abort_code);
         lower_up = price;
     };
     let mut higher_up = option::none();
-    if (!higher.is_pos_inf()) {
+    if (!higher.is_pinf()) {
         let (price, abort_code) = eval_up(&pricer.svi, pricer.forward, higher);
         if (price.is_none()) return (option::none(), abort_code);
         higher_up = price;
@@ -988,8 +988,8 @@ fun eval_range(pricer: &Pricer, lower: Strike, higher: Strike): (Option<RangePri
 /// `none` with the abort code `up_price` raises. The code is meaningless alongside
 /// a price. The infinite sentinels price before any surface check.
 fun eval_up(svi: &PricingSVI, forward: u64, strike: Strike): (Option<u64>, u64) {
-    if (strike.is_neg_inf()) return (option::some(math::float_scaling!()), 0);
-    if (strike.is_pos_inf()) return (option::some(0), 0);
+    if (strike.is_ninf()) return (option::some(math::float_scaling!()), 0);
+    if (strike.is_pinf()) return (option::some(0), 0);
     pmath::digital(
         svi.a_magnitude,
         svi.a_is_negative,

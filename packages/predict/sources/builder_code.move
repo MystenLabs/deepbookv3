@@ -81,7 +81,7 @@ public fun claim_all_builder_fees(
     if (amount == 0) return balance::zero<USDC>().into_coin(ctx);
     let withdrawal = balance::withdraw_funds_from_object<USDC>(&mut code.id, amount);
     let coin = balance::redeem_funds(withdrawal).into_coin(ctx);
-    builder_code_events::fees_claimed(code.id(), code.owner, amount);
+    builder_code_events::fees_out(code.id(), code.owner, amount);
     coin
 }
 

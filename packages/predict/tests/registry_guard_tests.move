@@ -1001,7 +1001,7 @@ fun create_expiry_market_with_band_without_expected_expiry_creates_the_next_slot
 fun record_expiry_creation_duplicate_expiry_aborts() {
     let mut scenario = test_scenario::begin(test_constants::admin());
     let mut manager = market_manager::new(scenario.ctx());
-    let periods = market_manager::base_periods();
+    let periods = market_manager::base_per();
     let expiry = constants::one_week_ms!();
 
     manager.register_underlying(test_constants::propbook_underlying_id());

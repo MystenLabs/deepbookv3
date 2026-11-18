@@ -243,7 +243,7 @@ fun allocate_mint_order_existing_fills_over_ensured_nodes() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     // Placement creates the one finite boundary both ranges share.
-    exposure.ensure_nodes(STRIKE, pos_inf());
+    exposure.ens_nodes(STRIKE, pos_inf());
     assert_eq!(exposure.tree_nodes(), 1);
     assert!(exposure.nodes_exist(STRIKE, pos_inf()));
     assert!(exposure.nodes_exist(0, STRIKE));
@@ -279,7 +279,7 @@ fun allocate_mint_order_existing_with_terms_from_another_exposure_aborts() {
     let (mut fx, oracle, exposure) = fixture::setup(default_config(), IMPACT_SCALE);
     let mut other = fixture::other_exposure(&mut fx, default_config(), IMPACT_SCALE);
     let pricer = fx.load_pricer_bundle(&oracle);
-    other.ensure_nodes(STRIKE, pos_inf());
+    other.ens_nodes(STRIKE, pos_inf());
 
     let terms = exposure.quote_mint_terms(&pricer, STRIKE, pos_inf(), 0, Q_B, true);
     other.allocate(terms);
@@ -296,19 +296,19 @@ fun try_process_settled_close_pays_each_winner_once() {
     let order_b = mint(&mut exposure, &pricer, STRIKE, pos_inf(), Q_B);
 
     // Nothing to pay while the book is live.
-    assert!(exposure.try_settled(&order_a).is_none());
+    assert!(exposure.try_pay(&order_a).is_none());
 
     exposure.set_settled(SETTLEMENT_IN_A);
     assert_eq!(exposure.payout_liability(), Q_A);
 
     // B lost: it pays zero and leaves the liability alone.
-    assert_eq!(exposure.try_settled(&order_b), option::some(0));
+    assert_eq!(exposure.try_pay(&order_b), option::some(0));
     assert_eq!(exposure.payout_liability(), Q_A);
     // A won its full quantity.
-    assert_eq!(exposure.try_settled(&order_a), option::some(Q_A));
+    assert_eq!(exposure.try_pay(&order_a), option::some(Q_A));
     assert_eq!(exposure.payout_liability(), 0);
     // Paying A again would underflow the settled liability: skipped, unchanged.
-    assert!(exposure.try_settled(&order_a).is_none());
+    assert!(exposure.try_pay(&order_a).is_none());
     assert_eq!(exposure.payout_liability(), 0);
 
     fixture::finish(fx, oracle, exposure);
@@ -326,7 +326,7 @@ fun mint_and_check(
     expected_liability: u64,
 ) {
     let range = exposure.quote_mint_range(pricer, lower_tick, higher_tick);
-    assert_eq!(exposure.liab_minted(&range, quantity), expected_liability);
+    assert_eq!(exposure.liab_add(&range, quantity), expected_liability);
     let terms = exposure.mint_terms(range, quantity, quantity);
     exposure.allocate_mint_order(terms);
     assert_eq!(exposure.payout_liability(), expected_liability);
@@ -342,7 +342,7 @@ fun close_and_check(
     expected_liability: u64,
 ): Option<Order> {
     assert_eq!(
-        exposure.liab_closed(order.lower_tick(), order.higher_tick(), close_quantity),
+        exposure.liab_sub(order.lower_tick(), order.higher_tick(), close_quantity),
         expected_liability,
     );
     let terms = exposure.quote_live_close(pricer, order, close_quantity);

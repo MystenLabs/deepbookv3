@@ -9,9 +9,9 @@ deepbook = { local = "../deepbook" }
 token = { local = "../token" }
 
 [dep-replacements.mainnet]
-deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "2f83e49f21c3aaf96b779f24be0fd6951bc75b29" }
+deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "8a46552dfac02f2225965dda243bdea1ddcbec89" }
 token = { local = "../../vendor/deep", override = true }
 
 [dep-replacements.testnet]
-deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "ce0e5cd052d7d1eb195bb486396730c550f8f92a" }
+deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "90a64c4933d909857a3acd70928639171b6cf17e" }
 token = { local = "../../vendor/deep", override = true }

@@ -55,7 +55,7 @@ const TWO_OPEN_ORDERS: u64 = 2;
 const ZERO_BALANCE: u64 = 0;
 const ZERO_ORDER_ID: u128 = 0;
 const EUnexpectedSuccess: u64 = 999;
-const FUTURE_VERSION: u64 = 5;
+const FUTURE_VERSION: u64 = 6;
 // Spend budgets, in multiples of the minimum order size the tests trade.
 const TWO_ORDERS: u64 = 2;
 const FIVE_ORDERS: u64 = 5;
@@ -66,7 +66,7 @@ const NO_BUDGET: u64 = 0;
 // floor(10_000 * 1.25 * 0.0005) = floor(6.25).
 const TAKER_FEE_ON_MIN_ORDER: u64 = 12;
 const MAKER_FEE_ON_MIN_ORDER: u64 = 6;
-const LAST_VERSION_BEFORE_GRANT_TERMS: u64 = 3;
+const LAST_VERSION_BEFORE_SPEND_BUDGETS: u64 = 4;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
@@ -1068,7 +1068,7 @@ fun new_grant_clears_a_budget_the_pre_upgrade_revoke_left() {
 }
 
 #[test, expected_failure(abort_code = sessions::ESpendApprovalsNotEnabled)]
-fun approving_spend_before_the_watermark_reaches_4_aborts() {
+fun approving_spend_before_the_watermark_reaches_5_aborts() {
     let mut fixture = setup_spot_fixture();
     authorize_session(&mut fixture);
     let sessions_config_id = fixture.sessions_config_id;
@@ -1078,7 +1078,7 @@ fun approving_spend_before_the_watermark_reaches_4_aborts() {
         .take_shared_by_id<SessionsConfig>(sessions_config_id);
     session_config::set_version_watermark_for_testing(
         &mut sessions_config,
-        LAST_VERSION_BEFORE_GRANT_TERMS,
+        LAST_VERSION_BEFORE_SPEND_BUDGETS,
     );
     return_shared(sessions_config);
 

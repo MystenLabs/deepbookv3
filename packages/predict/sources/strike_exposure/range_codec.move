@@ -30,11 +30,11 @@ public(package) fun value(strike: Strike): u64 {
     strike.0
 }
 
-public(package) fun is_neg_inf(strike: Strike): bool {
+public(package) fun is_ninf(strike: Strike): bool {
     strike.0 == constants::neg_inf!()
 }
 
-public(package) fun is_pos_inf(strike: Strike): bool {
+public(package) fun is_pinf(strike: Strike): bool {
     strike.0 == constants::pos_inf!()
 }
 
