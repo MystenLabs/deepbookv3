@@ -70,6 +70,6 @@ public(package) fun set_block_scholes_price_freshness_ms(config: &mut PricingCon
 }
 
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfig, value: u64) {
-    config_constants::chk_svi_age(value);
+    config_constants::chk_svi(value);
     config.block_scholes_svi_freshness_ms = value;
 }

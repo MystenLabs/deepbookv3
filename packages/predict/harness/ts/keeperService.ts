@@ -334,8 +334,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: st
 
 async function main() {
   console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
-  // Traders run the cleanout strategy's permissionless settled redeems, which need the allowlist.
-  const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS, TRADER_ADDRESSES);
+  const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS);
   await bootstrapPool(poolValuationCapId);
   await rebuildWorklist();
   for (const addr of TRADER_ADDRESSES) {

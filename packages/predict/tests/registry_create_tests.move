@@ -827,7 +827,7 @@ fun set_cadence_config_window_budget_is_per_underlying() {
 fun builtin_terms_after_add_cadence_keep_six_stored_rows() {
     let mut ctx = tx_context::dummy();
     let mut manager = market_manager::new(&mut ctx);
-    let mut periods = market_manager::base_periods();
+    let mut periods = market_manager::base_per();
     manager.register_underlying(UNDERLYING_BTC);
     let fifteen = market_manager::add_period(&mut periods, FIFTEEN_MINUTES_MS);
 

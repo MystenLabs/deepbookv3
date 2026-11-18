@@ -48,7 +48,7 @@ use deepbook_predict::{
     order_events,
     predict_account,
     pricing::{Self, Pricer, FrozenPricer, RangePrice, VolSnapshot},
-    protocol_config::ProtocolConfig,
+    protocol_config::{Self, ProtocolConfig},
     range_codec,
     strike_exposure::{Self, LiveCloseTerms, MintRange, MintTerms, StrikeExposure},
     strike_exposure_config::StrikeExposureConfig
@@ -78,21 +78,21 @@ use fun df::exists as UID.exists_;
 
 const EMintPaused: u64 = 0;
 const EMarketNotSettled: u64 = 1;
-#[allow(unused_const)]
+#[test_only]
 const EMintCostAboveMax: u64 = 2;
-#[allow(unused_const)]
+#[test_only]
 const EMintProbabilityAboveMax: u64 = 3;
 const EWrongPricer: u64 = 4;
 const EReferenceTickObservationMissing: u64 = 5;
-#[allow(unused_const)]
+#[test_only]
 const EMintRedeemSameTimestamp: u64 = 6;
-#[allow(unused_const)]
+#[test_only]
 const ERedeemProbabilityBelowMin: u64 = 7;
-#[allow(unused_const)]
+#[test_only]
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
-#[allow(unused_const)]
+#[test_only]
 const EMintCostAboveMaxPayout: u64 = 11;
 const EDelayedExecutionRequired: u64 = 13;
 const EOrderFailsLimits: u64 = 14;
@@ -410,7 +410,7 @@ public fun load_live_pricer(
     ctx: &TxContext,
 ): Pricer {
     pricing::load_live_pricer(
-        config.pricing_cfg(),
+        config.pr_cfg(),
         propbook_registry,
         pyth,
         bs_values,
@@ -1023,8 +1023,8 @@ public fun try_settle(
     market.strike_exposure.set_settled(settlement_price);
     // Live-close rebates are no longer reachable after settlement. Release the
     // residual inventory-impact escrow so the settled sweep returns it to LPs.
-    market.cash.free_impact();
-    config_events::mkt_settled(
+    market.cash.free_imp();
+    config_events::mkt_stl(
         market.id(),
         market.propbook_underlying_id,
         market.expiry,
@@ -1548,12 +1548,12 @@ public fun try_pay_settled(
     assert!(market.is_settled(), EMarketNotSettled);
     let order = order::from_id(receipt.order_id);
     let payout = market.strike_exposure.settled_order_payout(&order);
-    // Every check runs before `try_settled` moves the liability, its own check
+    // Every check runs before `try_pay` moves the liability, its own check
     // last, so a skip changes nothing.
     if (
         payout > market.cash.balance()
             || (payout > 0 && denied(deny_list, receipt.parties.receive_address, ctx))
-            || market.strike_exposure.try_settled(&order).is_none()
+            || market.strike_exposure.try_pay(&order).is_none()
     ) {
         return (payout, option::some(receipt))
     };
@@ -1580,7 +1580,7 @@ public(package) fun recv_cash(market: &mut ExpiryMarket, cash: Balance<USDC>) {
 }
 
 /// Receive sponsor-funded fee incentives allocated by the pool vault.
-public(package) fun recv_incent(market: &mut ExpiryMarket, incentives: Balance<USDC>) {
+public(package) fun inc_in(market: &mut ExpiryMarket, incentives: Balance<USDC>) {
     market.fee_incentive_balance.join(incentives);
 }
 
@@ -1645,7 +1645,7 @@ public(package) fun wait_need(market: &ExpiryMarket): u64 {
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
-public(package) fun free_incent(market: &mut ExpiryMarket): Balance<USDC> {
+public(package) fun free_inc(market: &mut ExpiryMarket): Balance<USDC> {
     let amount = market.fee_incentive_balance.value();
     if (amount == 0) return balance::zero();
     market.fee_incentive_balance.split(amount)
@@ -1657,7 +1657,7 @@ public(package) fun rel_cash(market: &mut ExpiryMarket, amount: u64): Balance<US
         return balance::zero()
     };
     let payout_liability = market.payout_liability();
-    let released_cash = market.cash.free_surplus(amount, payout_liability);
+    let released_cash = market.cash.free_sur(amount, payout_liability);
     market.chk_backed();
     released_cash
 }
@@ -1674,11 +1674,12 @@ public(package) fun free_settled(market: &mut ExpiryMarket): Balance<USDC> {
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market stores the underlying, accounting/admission tick sizes, and `strike_exposure_config`
-/// (the caller's snapshot of the template) and starts with zero expiry cash; it needs no live spot
-/// at creation (strikes are absolute ticks, so there is no grid to center). Current oracle bindings
-/// stay in Propbook and are resolved on every priced flow.
+/// The market stores the underlying, accounting/admission tick sizes, `strike_exposure_config`
+/// (the caller's snapshot of the template), and a copy of the fee-band template, and starts with
+/// zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so there is no
+/// grid to center). Current oracle bindings stay in Propbook and are resolved on every priced flow.
 public(package) fun create_and_share(
+    config: &ProtocolConfig,
     strike_exposure_config: StrikeExposureConfig,
     propbook_underlying_id: u32,
     expiry: u64,
@@ -1688,8 +1689,9 @@ public(package) fun create_and_share(
     inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): ID {
-    let id = object::new(ctx);
+    let mut id = object::new(ctx);
     let expiry_market_id = id.to_inner();
+    config.bands_to(&mut id);
     let market = ExpiryMarket {
         id,
         propbook_underlying_id,
@@ -1807,7 +1809,7 @@ fun assert_live_flow_allowed(
     // fallback, so the flush does not stall on a stale or unavailable Pyth spot,
     // and a client previewing a close through `live_order_value` gets a value
     // while the close itself aborts.
-    pricer.assert_pyth_spot_fresh(config.pricing_cfg(), clock);
+    pricer.assert_pyth_spot_fresh(config.pr_cfg(), clock);
 }
 
 #[test_only]
@@ -1864,7 +1866,7 @@ fun mint_prepared(
 /// subsidy grows at most one unit per fee unit because the configured rate is
 /// capped below one; the builder fee is a `min` of
 /// nondecreasing terms; the penalty's firing condition is quantity-independent;
-/// and the impact charge is monotone (`mint_impact`). The probe
+/// and the impact charge is monotone (`mint_imp`). The probe
 /// is the helper the charge uses, and the premium-only fit bounds the domain from
 /// above because every other term is nonnegative.
 ///
@@ -1975,7 +1977,7 @@ fun all_in_cost_at(
             range.range_px(),
             quantity,
             range.range_prem(quantity),
-            market.strike_exposure.mint_impact(range, quantity),
+            market.strike_exposure.mint_imp(range, quantity),
             market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
             fee_incentive_subsidy_rate,
             clock,
@@ -2058,7 +2060,7 @@ fun compute_mint_quote(
     clock: &Clock,
 ): MintQuote {
     let quote = market.mint_quote_at(
-        terms.mint_price(),
+        terms.mint_px(),
         terms.quantity(),
         terms.premium(),
         terms.inventory_impact_charge(),
@@ -2191,7 +2193,7 @@ fun redeem_live_with_auth(
     // Charge against the pre-trade EWMA distribution, then fold this gas price.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
-    let redeem_amount = terms.redeem_amt();
+    let redeem_amount = terms.rdm_amt();
     let range_probability = terms.close_prob();
     // Close-side slippage floor: reject if the quoted per-contract probability
     // has slipped below the caller's bound. `0` disables.
@@ -2203,7 +2205,7 @@ fun redeem_live_with_auth(
         .strike_exposure
         .trading_fee(
             market.expiry,
-            terms.close_price(),
+            terms.close_px(),
             close_quantity,
             clock,
         )
@@ -2423,7 +2425,7 @@ fun admit_mnt(
     // misses at its tick never touches cash, and the fill checks cash again.
     assert!(cash_need <= market.cash.balance() - market.required_cash(), EInsufficientMarketCash);
     // Pinning both boundary nodes now means a fill never creates one.
-    market.strike_exposure.ensure_nodes(lower_tick, higher_tick);
+    market.strike_exposure.ens_nodes(lower_tick, higher_tick);
     let ledger = market.ledger_mut();
     pin(&mut ledger.pins, lower_tick);
     pin(&mut ledger.pins, higher_tick);
@@ -2605,7 +2607,7 @@ fun admit_gates(
     );
     assert!(svi_max_age_ms <= constants::max_svi_max_age_ms!(), EInvalidOrderTerms);
     pricing::load_vol(
-        config.pricing_cfg(),
+        config.pr_cfg(),
         propbook_registry,
         pyth,
         bs_values,
@@ -2803,10 +2805,10 @@ fun fill_close(
     );
     if (reason != 0) return (reason, false, quote);
     let terms = terms.destroy_some();
-    let redeem_amount = terms.redeem_amt();
+    let redeem_amount = terms.rdm_amt();
     let liability_after = market
         .strike_exposure
-        .liab_closed(
+        .liab_sub(
             position_order.lower_tick(),
             position_order.higher_tick(),
             close_quantity,
@@ -3083,6 +3085,9 @@ fun price_mint(
         return (option::none(), empty_mint_q(), 0, constants::fill_reason_admission!())
     };
     let range = range.destroy_some();
+    // The band depends only on the range's price, so read it once here rather
+    // than from storage on every budget probe.
+    let mult = protocol_config::band_mult(&market.id, range.range_px().probability());
     let exact_quantity = kind == constants::mint_kind_exact_quantity!();
     let quantity = if (exact_quantity) {
         quantity
@@ -3092,6 +3097,7 @@ fun price_mint(
         market.cost_qty_at(
             &range,
             bfee,
+            mult,
             cost_cap,
             subsidy_rate,
             subsidy_cap,
@@ -3099,18 +3105,19 @@ fun price_mint(
         )
     };
     let min_quantity = if (exact_quantity) quantity else min_quantity;
-    let liability_after = market.strike_exposure.liab_minted(&range, quantity);
+    let liability_after = market.strike_exposure.liab_add(&range, quantity);
     let (terms, reason) = market.strike_exposure.try_terms(range, quantity, min_quantity);
     if (terms.is_none()) return (terms, empty_mint_q(), 0, reason);
 
     let quote = {
         let terms = terms.borrow();
         market.mint_q_at(
-            terms.mint_price(),
+            terms.mint_px(),
             terms.quantity(),
             terms.premium(),
             terms.inventory_impact_charge(),
             bfee,
+            mult,
             subsidy_rate,
             subsidy_cap,
             tick_ms,
@@ -3144,6 +3151,7 @@ fun cost_qty_at(
     market: &ExpiryMarket,
     range: &MintRange,
     bfee: u64,
+    mult: u64,
     max_cost: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
@@ -3157,6 +3165,7 @@ fun cost_qty_at(
         let cost = market.cost_at_tick(
             range,
             bfee,
+            mult,
             mid * lot,
             subsidy_rate,
             subsidy_cap,
@@ -3174,6 +3183,7 @@ fun cost_qty_at(
             || market.cost_at_tick(
                 range,
                 bfee,
+                mult,
                 budget_quantity,
                 subsidy_rate,
                 subsidy_cap,
@@ -3189,6 +3199,7 @@ fun cost_qty_at(
         let cost = market.cost_at_tick(
             range,
             bfee,
+            mult,
             quantity,
             subsidy_rate,
             subsidy_cap,
@@ -3209,6 +3220,7 @@ fun cost_at_tick(
     market: &ExpiryMarket,
     range: &MintRange,
     bfee: u64,
+    mult: u64,
     quantity: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
@@ -3219,8 +3231,9 @@ fun cost_at_tick(
             range.range_px(),
             quantity,
             range.range_prem(quantity),
-            market.strike_exposure.mint_impact(range, quantity),
+            market.strike_exposure.mint_imp(range, quantity),
             bfee,
+            mult,
             subsidy_rate,
             subsidy_cap,
             tick_ms,
@@ -3230,10 +3243,12 @@ fun cost_at_tick(
 }
 
 /// `mint_quote_at` at a committed tick: no congestion penalty, the trading fee
-/// at `tick_ms`, and the subsidy capped by both `subsidy_rate` and the reserved
-/// `subsidy_cap`. Like `mint_quote_at` it applies neither admission nor the
-/// maximum-payout bound. `none` at or past expiry, where the fee ramp is
-/// undefined.
+/// at `tick_ms` times `mult`, the market's fee-band multiplier for `price`, and
+/// the subsidy capped by both `subsidy_rate` and the reserved `subsidy_cap`.
+/// `mult` depends on the price, not the quantity, so the fee stays
+/// nondecreasing in quantity for the budget search. Like `mint_quote_at` it
+/// applies neither admission nor the maximum-payout bound. `none` at or past
+/// expiry, where the fee ramp is undefined.
 fun mint_q_at(
     market: &ExpiryMarket,
     price: &RangePrice,
@@ -3241,12 +3256,16 @@ fun mint_q_at(
     premium: u64,
     inventory_impact_charge: u64,
     bfee: u64,
+    mult: u64,
     subsidy_rate: u64,
     subsidy_cap: u64,
     tick_ms: u64,
 ): Option<MintQuote> {
     if (tick_ms >= market.expiry) return option::none();
-    let trading_fee = market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms);
+    let trading_fee = math::mul_down(
+        market.strike_exposure.fee_at(market.expiry, price, quantity, tick_ms),
+        mult,
+    );
     let fee_incentive_subsidy = math::mul_down(trading_fee, subsidy_rate).min(subsidy_cap);
     let builder_fee = bldr_fee_amt(bfee, quantity);
     option::some(MintQuote {
@@ -3295,8 +3314,9 @@ fun price_close(
     (terms, quote, 0)
 }
 
-/// Price a live close's fees at `tick_ms`: the trading fee capped at the redeem
-/// value and the builder fee at what remains, as `redeem_live` charged, with no
+/// Price a live close's fees at `tick_ms`: the trading fee times the market's
+/// fee band for the close price, capped at the redeem value, and the builder fee
+/// at what remains, as `redeem_live` charged, with no
 /// congestion penalty. Shared by queued sells and `quote_close`.
 fun rdm_q_at(
     market: &ExpiryMarket,
@@ -3305,11 +3325,11 @@ fun rdm_q_at(
     close_quantity: u64,
     tick_ms: u64,
 ): RedeemQuote {
-    let redeem_amount = terms.redeem_amt();
-    let trading_fee = market
-        .strike_exposure
-        .fee_at(market.expiry, terms.close_price(), close_quantity, tick_ms)
-        .min(redeem_amount);
+    let redeem_amount = terms.rdm_amt();
+    let trading_fee = math::mul_down(
+        market.strike_exposure.fee_at(market.expiry, terms.close_px(), close_quantity, tick_ms),
+        protocol_config::band_mult(&market.id, terms.close_prob()),
+    ).min(redeem_amount);
     let builder_fee = bldr_fee_amt(bfee, close_quantity).min(redeem_amount - trading_fee);
     let inventory_impact_rebate = terms.rebate();
     RedeemQuote {

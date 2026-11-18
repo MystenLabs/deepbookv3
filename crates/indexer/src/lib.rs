@@ -62,6 +62,7 @@ const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0xf0a090340d74ea598d59868378f27d2cc5e46a562ec3a5b26b5117572905d9f3",
     "0x32e32dd608c4d83f82c64331a547bcb4bbfb819d4591197f2fe442b1661873d8",
     "0xd6a42f4df4db73d68cbeb52be66698d2fe6a9464f45ad113ca52b0c6ebd918b6",
+    "0x0ad965f35189c7eca57d4718c8f5bf1b7f9f7eb4ced6d5b7aa6496a16d71e8d2", // v17: new partial-order event origin
 ];
 
 // Module definitions

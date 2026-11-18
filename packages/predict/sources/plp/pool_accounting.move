@@ -97,7 +97,7 @@ public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 
 }
 
 /// Sum the net USDC the pool has funded into its active expiries (sent minus
-/// received, per expiry, floored at zero). Cash that `send_expiry` moved out of
+/// received, per expiry, floored at zero). Cash that `send_exp` moved out of
 /// idle is still pool value — each market's NAV counts its cash — so a bound on pool
 /// value that reads idle alone can be sidestepped by moving idle into a market. The
 /// per-expiry floor means idle sent into an expiry that has already returned more than
@@ -219,7 +219,7 @@ public(package) fun take_idle(ledger: &mut Ledger, amount: u64): Balance<USDC> {
 
 /// Split idle USDC into an expiry while recording the funding flow and enforcing
 /// the expiry's snapshotted allocation cap.
-public(package) fun send_expiry(
+public(package) fun send_exp(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     amount: u64,
@@ -249,11 +249,7 @@ public(package) fun note_alloc(
 }
 
 /// Receive USDC returned from an expiry.
-public(package) fun recv_expiry(
-    ledger: &mut Ledger,
-    cash: Balance<USDC>,
-    expiry_market_id: ID,
-): u64 {
+public(package) fun exp_in(ledger: &mut Ledger, cash: Balance<USDC>, expiry_market_id: ID): u64 {
     let amount = cash.value();
     if (amount == 0) {
         cash.destroy_zero();

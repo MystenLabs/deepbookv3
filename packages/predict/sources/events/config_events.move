@@ -21,6 +21,13 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the fee-band template for future markets changes: flat
+/// `[low, high, multiplier]` triples, empty when cleared.
+public struct FeeBandsUpdated has copy, drop, store {
+    bands: vector<u64>,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when live pricing policy changes.
 public struct PricingConfigUpdated has copy, drop, store {
     use_pyth_spot_for_forward: bool,
@@ -87,8 +94,10 @@ public struct ProtocolFrozenUpdated has copy, drop, store {
     frozen: bool,
 }
 
-/// Emitted when admin adds (`allowed = true`) or removes (`allowed = false`) a
-/// keeper allowed to call `expiry_market::redeem_settled_permissionless`.
+/// Emitted by package versions before 5 when admin added (`allowed = true`) or
+/// removed (`allowed = false`) a keeper allowed to call
+/// `expiry_market::redeem_settled_permissionless`. No longer emitted: the
+/// allowlist setters always abort.
 public struct SettledRedeemKeeperUpdated has copy, drop, store {
     keeper: address,
     allowed: bool,
@@ -257,6 +266,10 @@ public(package) fun bc_upd(builder_fee_cap: u64, onchain_timestamp_ms: u64) {
     event::emit(BuilderFeeCapUpdated { builder_fee_cap, onchain_timestamp_ms });
 }
 
+public(package) fun bands_upd(bands: vector<u64>, onchain_timestamp_ms: u64) {
+    event::emit(FeeBandsUpdated { bands, onchain_timestamp_ms });
+}
+
 public(package) fun rates_upd(
     fee_incentive_live_target_rate: u64,
     fee_incentive_lifetime_cap_rate: u64,
@@ -281,10 +294,6 @@ public(package) fun frozen_upd(protocol_config_id: ID, frozen: bool) {
         protocol_config_id,
         frozen,
     });
-}
-
-public(package) fun keeper_upd(keeper: address, allowed: bool) {
-    event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
 }
 
 public(package) fun flow_upd(order_flow: TypeName, enabled: bool, onchain_timestamp_ms: u64) {
@@ -379,7 +388,7 @@ public(package) fun ref_set(
     });
 }
 
-public(package) fun mkt_settled(
+public(package) fun mkt_stl(
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     expiry: u64,

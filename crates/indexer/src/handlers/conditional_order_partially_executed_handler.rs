@@ -34,3 +34,30 @@ define_handler! {
         onchain_timestamp: event.timestamp as i64,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::models::deepbook_margin::tpsl::ConditionalOrderPartiallyExecuted;
+    use crate::traits::MoveStruct;
+    use crate::DeepbookEnv;
+    use move_core_types::language_storage::StructTag;
+    use std::str::FromStr;
+
+    // Testnet margin v17's on-chain type_origin_table assigns this new event to
+    // the upgrade package, rather than to the original margin package address.
+    #[test]
+    fn matches_testnet_partial_order_event_origin() {
+        let event = StructTag::from_str(
+            "0x0ad965f35189c7eca57d4718c8f5bf1b7f9f7eb4ced6d5b7aa6496a16d71e8d2::tpsl::ConditionalOrderPartiallyExecuted",
+        )
+        .unwrap();
+        assert!(ConditionalOrderPartiallyExecuted::matches_event_type(
+            &event,
+            DeepbookEnv::Testnet,
+        ));
+        assert!(!ConditionalOrderPartiallyExecuted::matches_event_type(
+            &event,
+            DeepbookEnv::Mainnet,
+        ));
+    }
+}

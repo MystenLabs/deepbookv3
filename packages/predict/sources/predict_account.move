@@ -20,8 +20,9 @@ use deepbook_predict::{builder_code::BuilderCode, builder_code_events};
 use std::internal::permit;
 use sui::table::{Self, Table};
 
-#[allow(unused_const)]
+#[test_only]
 const EPositionAlreadyExists: u64 = 0;
+#[test_only]
 const EPositionNotFound: u64 = 1;
 
 /// App witness that namespaces Predict's data slot on an `Account`. Only this
@@ -101,6 +102,7 @@ public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mu
 
 // === Public-Package Functions ===
 
+#[test_only]
 /// Generate Predict's package-issued authority to mutably load any account.
 public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
     registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
@@ -139,6 +141,7 @@ public(package) fun add_position(
 }
 
 /// Remove an order position and return its root order ID for event attribution.
+#[test_only]
 public(package) fun remove_pos(
     account: &mut Account,
     expiry_market_id: ID,
