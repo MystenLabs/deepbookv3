@@ -44,6 +44,8 @@ struct HistoricalPriceKey {
 /// Authenticated Pyth Pro access exposed through Hermes- and TradingView-like HTTP GET routes.
 #[derive(Clone)]
 pub struct PythProxy {
+    pub(super) stream: Option<super::stream::Hub>,
+    stream_key: Option<String>,
     client: PythProClient,
     allowed_feed_ids: Arc<Vec<u32>>,
     latest: Cache<(), Arc<LatestSnapshot>>,
@@ -58,6 +60,16 @@ pub struct PythProxy {
 }
 
 impl PythProxy {
+    pub(crate) fn start_stream(
+        &self,
+        registry: &prometheus::Registry,
+    ) -> anyhow::Result<Option<tokio_util::sync::CancellationToken>> {
+        self.stream
+            .as_ref()
+            .zip(self.stream_key.as_ref())
+            .map(|(hub, key)| hub.start(key.clone(), registry))
+            .transpose()
+    }
     pub fn new(
         upstream_url: Url,
         api_key: Option<String>,
@@ -100,6 +112,31 @@ impl PythProxy {
         config.chart_history.symbols.sort();
         config.chart_history.symbols.dedup();
 
+        if let Some(stream) = &config.stream {
+            anyhow::ensure!(
+                !stream.allowed_origins.is_empty(),
+                "Pyth WebSocket requires allowed origins"
+            );
+            anyhow::ensure!(
+                stream.trusted_proxy_hops <= 16,
+                "too many trusted proxy hops"
+            );
+            for origin in &stream.allowed_origins {
+                let url = url::Url::parse(origin)?;
+                anyhow::ensure!(
+                    matches!(url.scheme(), "http" | "https")
+                        && url.origin().ascii_serialization() == *origin,
+                    "Pyth WebSocket origins must be exact http(s) origins without paths"
+                );
+            }
+        }
+        let stream = config
+            .stream
+            .map(|stream_config| super::stream::Hub::new(&config.allowed_feed_ids, stream_config));
+        let stream_key = api_key
+            .as_ref()
+            .map(|key| key.trim().to_owned())
+            .filter(|key| !key.is_empty());
         let client = PythProClient::new(
             upstream_url,
             config.chart_history.upstream_url.clone(),
@@ -138,6 +175,12 @@ impl PythProxy {
             .time_to_live(config.chart_history.cache_ttl)
             .build();
         Ok(Self {
+            stream: if stream_key.is_some() && !config.allowed_feed_ids.is_empty() {
+                stream
+            } else {
+                None
+            },
+            stream_key,
             client,
             allowed_feed_ids: Arc::new(config.allowed_feed_ids),
             latest,
@@ -436,6 +479,7 @@ fn json_bytes_response(body: Bytes) -> Response {
 
 pub fn routes(proxy: PythProxy) -> Router {
     Router::new()
+        .route("/ws", get(super::stream::upgrade))
         .route(LATEST_PRICE_PATH, get(latest_price))
         .route(PRICE_AT_TIMESTAMP_PATH, get(price_at_timestamp))
         .route(TRADINGVIEW_HISTORY_PATH, get(tradingview_history))

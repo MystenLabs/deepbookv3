@@ -45,6 +45,7 @@ impl Default for PythChartHistoryConfig {
 
 #[derive(Clone, Debug)]
 pub struct PythProConfig {
+    pub stream: Option<super::PythStreamConfig>,
     pub allowed_feed_ids: Vec<u32>,
     pub latest_cache_ttl: Duration,
     pub history_cache_ttl: Duration,
@@ -55,6 +56,7 @@ pub struct PythProConfig {
 impl Default for PythProConfig {
     fn default() -> Self {
         Self {
+            stream: None,
             allowed_feed_ids: Vec::new(),
             latest_cache_ttl: Duration::from_millis(DEFAULT_LATEST_CACHE_TTL_MS),
             history_cache_ttl: Duration::from_secs(DEFAULT_HISTORY_CACHE_TTL_SECS),

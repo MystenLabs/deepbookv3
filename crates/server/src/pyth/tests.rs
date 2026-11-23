@@ -143,6 +143,7 @@ async fn spawn_mock(mock: MockPyth) -> (Url, JoinHandle<()>) {
 
 fn test_config(feed_ids: Vec<u32>) -> PythProConfig {
     PythProConfig {
+        stream: None,
         allowed_feed_ids: feed_ids,
         latest_cache_ttl: Duration::from_secs(1),
         history_cache_ttl: Duration::from_secs(60),
