@@ -203,3 +203,36 @@ curl \
 curl \
   "http://localhost:9008/pyth/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1704067200&to=1704070800"
 ```
+
+### Live Pyth WebSocket (opt-in)
+
+`GET /pyth/ws` upgrades to a parsed-only WebSocket. It reuses `PYTH_PRO_API_KEY` and `PYTH_PRO_ALLOWED_FEED_IDS`; the existing HTTP routes and their caches retain their behavior. Enable the relay with `PYTH_WS_ALLOWED_ORIGINS`, a comma-separated list of exact browser origins such as `https://app.example.com,http://localhost:5173` (no trailing slash or paths). Without origins, a key, or allowed feeds, the route returns HTTP 503 and opens no upstream connections. Missing or unlisted origins are rejected with HTTP 403. Origin checks restrict browser use; they do not authenticate scripts or grant data redistribution rights.
+
+Each enabled server replica starts three authenticated upstream WebSockets, one to each Pyth Pro endpoint, subscribes to the allowlisted feeds on `fixed_rate@200ms`, and reconnects with exponential backoff and jitter. Browser count does not change upstream connection count. Frames are parsed JSON with no signed payload. Feeds unsupported on the 200 ms channel are ignored upstream and remain stale; verify the deployed feed allowlist's channel support before enabling. The relay forwards every advancing envelope, including repeated prices, and drops duplicate or older envelopes from redundant endpoints. It never samples the HTTP latest cache or substitutes server time for Pyth time.
+
+Client messages:
+
+```json
+{"type":"subscribe","feed_ids":[1]}
+{"type":"unsubscribe","feed_ids":[1]}
+```
+
+Server messages:
+
+```json
+{"type":"subscribed","feed_ids":[1],"rejected":[]}
+{"type":"price","feed_id":1,"price":"9512345678901","exponent":-8,"timestamp_us":"1795025640000000","feed_update_us":"1795025639987000"}
+{"type":"status","feed_id":1,"stale":false,"last_timestamp_us":"1795025640000000"}
+{"type":"unsubscribed","feed_ids":[1]}
+{"type":"error","code":"invalid_message","message":"expected subscribe or unsubscribe with feed_ids"}
+```
+
+A new subscription receives the latest cached price, if present, and current health before live frames. Duplicate subscriptions are idempotent. `rejected` lists disallowed feeds or feeds exceeding the connection's 16-feed cap. Price in USD is `price × 10^exponent`. `timestamp_us` is the Pyth envelope time on the 200 ms grid; `feed_update_us` is when Pyth generated the underlying price and can be older. Large integers are strings. Missing prices are skipped, never replaced by zero. A feed starts stale, becomes healthy with an advancing price frame, and becomes stale after two seconds without one; checks run every 100 ms. A cached price can be stale, so clients must honor the status message and also detect silence locally.
+
+The server pings every 15 seconds and closes clients missing two pongs. Clients must subscribe to at least one allowed feed within ten seconds. Each socket accepts messages up to 4 KiB and at most ten text commands per second. Per replica, the relay caps connections at 4,096 and connections per client IP at 20. The shared broadcast buffer holds 128 events; lagging clients are disconnected rather than silently skipping frames. Writes have a five-second timeout. Clients should reconnect with jittered backoff, re-subscribe, and recover missed exact-expiry frames with `/pyth/updates/price/{publish_time}` (whole-second expiries). The socket offers no replay or delivery guarantee across disconnects.
+
+`PYTH_WS_TRUSTED_PROXY_HOPS` defaults to `0`, using the TCP peer IP and ignoring `X-Forwarded-For`. Behind a trusted proxy, set this to the number of trusted entries counted from the right of `X-Forwarded-For`, including the desired client entry. For GKE's appended `..., client, load-balancer` suffix this is normally `2`; verify the actual header chain before rollout. Only enable header trust when network policy prevents bypassing the trusted proxy. Otherwise callers can spoof IP-based limits. A missing or malformed required forwarded entry is rejected. Connection caps are per process, not a distributed quota; apply edge rate limits as well.
+
+Prometheus metrics (under the server's `deepbook_api` namespace) cover connected clients, subscriptions by feed, upstream disconnects by endpoint, duplicate/late frames, slow-client disconnects, and upstream envelope lag by feed. Alert on lag above five seconds and on missing lag series after startup. Upstream errors are deliberately not logged verbatim because handshake errors can contain credentials.
+
+Before enabling in production, confirm Pyth quota and public streaming permissions, configure origins and the trusted proxy chain, verify frame timestamps against HTTP history, restart one upstream, test 1,000 browsers per replica with bounded memory, and hold a connection through the real gateway for at least 30 minutes. Check gateway behavior during upstream outages while pings continue. This PR does not change gateway policy, frontend subscriptions, on-chain oracle behavior, or keeper publishing; migrate consumers and decide the on-chain pricing implications before disabling any keeper lane. Roll back by removing `PYTH_WS_ALLOWED_ORIGINS` and restarting the server.
