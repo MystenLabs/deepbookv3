@@ -173,7 +173,25 @@ async fn main() -> Result<(), anyhow::Error> {
     // Read the secret from the environment only so it never needs to appear in
     // process arguments or clap's help output.
     let pyth_pro_api_key = std::env::var("PYTH_PRO_API_KEY").ok();
+    let stream_origins = std::env::var("PYTH_WS_ALLOWED_ORIGINS").unwrap_or_default();
+    let stream_origins: Vec<String> = stream_origins
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let stream = if stream_origins.is_empty() {
+        None
+    } else {
+        Some(deepbook_server::pyth::PythStreamConfig {
+            allowed_origins: stream_origins,
+            trusted_proxy_hops: std::env::var("PYTH_WS_TRUSTED_PROXY_HOPS")
+                .unwrap_or_else(|_| "0".into())
+                .parse()?,
+        })
+    };
     let pyth_pro_config = PythProConfig {
+        stream,
         allowed_feed_ids: pyth_pro_allowed_feed_ids,
         latest_cache_ttl: Duration::from_millis(pyth_pro_latest_cache_ttl_ms),
         history_cache_ttl: Duration::from_secs(pyth_pro_history_cache_ttl_secs),

@@ -6,6 +6,8 @@ mod config;
 mod error;
 mod models;
 mod proxy;
+mod stream;
+pub use stream::PythStreamConfig;
 
 pub use config::{
     PythChartHistoryConfig, PythProConfig, DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES,

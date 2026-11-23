@@ -23,7 +23,7 @@ prometheus.workspace = true
 sui-futures.workspace = true
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.7", features = ["json", "ws"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sui-pg-db.workspace = true
 tower-http = { version = "0.5", features = ["cors"] }
@@ -38,6 +38,8 @@ tokio-util = "0.7"
 subtle = "2.5"
 tracing.workspace = true
 governor = "0.6"
+rand = "0.8"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 secrecy = "0.8"
 
 [[bin]]

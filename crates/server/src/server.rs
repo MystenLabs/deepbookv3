@@ -368,6 +368,7 @@ pub async fn run_server(
         );
     }
 
+    let pyth_stream_shutdown = state.pyth_proxy.start_stream(metrics.registry())?;
     let s_metrics = metrics.run().await?;
 
     let listener = TcpListener::bind(socket_address).await?;
@@ -376,14 +377,20 @@ pub async fn run_server(
     Service::new()
         .attach(s_metrics)
         .with_shutdown_signal(async move {
+            if let Some(shutdown) = pyth_stream_shutdown {
+                shutdown.cancel();
+            }
             let _ = stx.send(());
         })
         .spawn(async move {
-            axum::serve(listener, make_router(Arc::new(state)))
-                .with_graceful_shutdown(async move {
-                    let _ = srx.await;
-                })
-                .await?;
+            axum::serve(
+                listener,
+                make_router(Arc::new(state)).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = srx.await;
+            })
+            .await?;
 
             Ok(())
         })
