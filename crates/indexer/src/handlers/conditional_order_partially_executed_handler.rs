@@ -60,4 +60,21 @@ mod tests {
             DeepbookEnv::Mainnet,
         ));
     }
+
+    // Mainnet margin v8 introduced this event at checkpoint 339512960.
+    #[test]
+    fn matches_mainnet_partial_order_event_origin() {
+        let event = StructTag::from_str(
+            "0x40fa183b5602cd0f6c4d7b16c08766ad8d7d581608fbe3b2570fe72ab4f5625f::tpsl::ConditionalOrderPartiallyExecuted",
+        )
+        .unwrap();
+        assert!(ConditionalOrderPartiallyExecuted::matches_event_type(
+            &event,
+            DeepbookEnv::Mainnet,
+        ));
+        assert!(!ConditionalOrderPartiallyExecuted::matches_event_type(
+            &event,
+            DeepbookEnv::Testnet,
+        ));
+    }
 }
