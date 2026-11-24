@@ -17,7 +17,7 @@ bcs.workspace = true
 anyhow.workspace = true
 moka = { version = "0.12", features = ["future"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
 url.workspace = true
 prometheus.workspace = true
 sui-futures.workspace = true
