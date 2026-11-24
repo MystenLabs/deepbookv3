@@ -203,3 +203,7 @@ curl \
 curl \
   "http://localhost:9008/pyth/shims/tradingview/history?symbol=Crypto.BTC%2FUSD&resolution=1&from=1704067200&to=1704070800"
 ```
+
+### `/get_net_deposits/:asset_ids/:timestamp`
+
+Returns an object mapping asset IDs to net-deposit totals as JSON numbers. Totals are calculated with PostgreSQL NUMERIC and serialized without an i64 limit or floating-point conversion. The response keeps the existing number-valued format; it does not switch amounts to quoted strings. Clients needing exact integers beyond JavaScript's safe integer range must use a JSON parser that preserves large numeric values.
