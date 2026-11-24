@@ -1966,7 +1966,7 @@ async fn margin_supply(
 async fn get_net_deposits(
     Path((asset_ids, timestamp)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<HashMap<String, String>>, DeepBookError> {
+) -> Result<Json<HashMap<String, serde_json::Number>>, DeepBookError> {
     let timestamp_ms = timestamp
         .parse::<i64>()
         .map_err(|_| DeepBookError::bad_request("Invalid timestamp"))?
@@ -1979,7 +1979,7 @@ async fn get_net_deposits(
         .get_net_deposits_from_view(&assets, timestamp_ms)
         .await?;
 
-    Ok(Json(net_deposits))
+    net_deposits_response(net_deposits)
 }
 
 async fn pool_created(
@@ -2841,4 +2841,57 @@ async fn portfolio(
 ) -> Result<Json<PortfolioQueryResult>, DeepBookError> {
     let result = state.reader.get_portfolio(&wallet_address).await?;
     Ok(Json(result))
+}
+
+fn net_deposits_response(
+    amounts: HashMap<String, String>,
+) -> Result<Json<HashMap<String, serde_json::Number>>, DeepBookError> {
+    // Keep the existing JSON-number contract without narrowing NUMERIC totals
+    // to i64 or rounding them through f64. arbitrary_precision preserves digits.
+    amounts
+        .into_iter()
+        .map(|(asset, amount)| {
+            amount
+                .parse::<serde_json::Number>()
+                .map(|number| (asset, number))
+                .map_err(|_| DeepBookError::internal("Invalid numeric net deposit total"))
+        })
+        .collect::<Result<HashMap<_, _>, _>>()
+        .map(Json)
+}
+
+#[cfg(test)]
+mod net_deposit_number_tests {
+    use super::net_deposits_response;
+    use std::collections::HashMap;
+
+    #[test]
+    fn preserves_number_response_for_small_and_large_totals() {
+        for value in [
+            "0",
+            "100",
+            "-100",
+            "9223372036854775807",
+            "9223372036854775808",
+            "18446744073709551615",
+            "64563604257983430653",
+            "-64563604257983430653",
+        ] {
+            let response =
+                net_deposits_response(HashMap::from([("0xa".to_owned(), value.to_owned())]))
+                    .unwrap();
+            let encoded = serde_json::to_string(&response.0).unwrap();
+            assert_eq!(encoded, format!("{{\"0xa\":{value}}}"));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_numeric_output() {
+        for value in ["NaN", "Infinity", "null", "1,\"other\":2"] {
+            assert!(
+                net_deposits_response(HashMap::from([("0xa".to_owned(), value.to_owned())]))
+                    .is_err()
+            );
+        }
+    }
 }
